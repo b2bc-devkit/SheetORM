@@ -1,0 +1,27 @@
+{
+  "scripts": {
+    "build": "rm -rf build && tsc && webpack",
+    "push": "npm run build && clasp push -f",
+    "deploy": "npm run push && clasp deploy",
+    "lint": "eslint",
+    "format": "prettier . --write",
+    "login": "clasp login"
+  },
+  "license": "GPL",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/google-apps-script": "^1.0.97",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "@google/clasp": "^2.5.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-plugin-googleappsscript": "^1.0.5",
+    "gas-webpack-plugin": "^2.6.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "webpack": "^5.99.9",
+    "webpack-cli": "^6.0.1"
+  },
+  "private": true
+}

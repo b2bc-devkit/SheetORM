@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "outDir": "build",
+    "lib": ["ESNext"],
+    "types": ["google-apps-script"]
+  },
+  "include": ["src"],
+  "files": ["src/index.ts"]
+}
