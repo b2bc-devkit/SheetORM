@@ -3,6 +3,7 @@ import { SheetRepository } from "../core/SheetRepository";
 import { SheetORM } from "../SheetORM";
 import { IndexStore } from "../index/IndexStore";
 import { QueryBuilder } from "../query/QueryBuilder";
+import { Record as BaseRecord } from "../core/Record";
 import {
   executeQuery,
   filterEntities,
@@ -47,7 +48,7 @@ class RuntimeParityState {
     if (typeof SpreadsheetApp === "undefined") {
       throw new Error("SpreadsheetApp is not available. Run this function in Google Apps Script runtime.");
     }
-    this.spreadsheet = SpreadsheetApp.create(`SheetORM Runtime Parity ${this.runId}`);
+    this.spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     return this.spreadsheet;
   }
 
@@ -1192,6 +1193,443 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(uuids.size, 100, "100 generated UUIDs should be unique");
     },
   },
+  "record.test.ts": (() => {
+    // Build Record subclasses inside a factory to avoid top-level side-effects
+    function createRecordClasses(adapter: GoogleSpreadsheetAdapter, suffix: string) {
+      SheetORM.reset();
+      SheetORM.initialize({ adapter });
+
+      class Car extends BaseRecord {
+        static tableName = `Cars_${suffix}`;
+        static fields: FieldDefinition[] = [
+          { name: "make", type: "string", required: true },
+          { name: "model", type: "string", required: true },
+          { name: "year", type: "number" },
+          { name: "color", type: "string" },
+        ];
+        static indexes = [{ field: "make" }];
+        declare make: string;
+        declare model: string;
+        declare year: number;
+        declare color: string;
+      }
+
+      class Product extends BaseRecord {
+        static tableName = `Products_${suffix}`;
+        static fields: FieldDefinition[] = [
+          { name: "name", type: "string", required: true },
+          { name: "price", type: "number", required: true },
+          { name: "category", type: "string" },
+        ];
+        static indexes = [{ field: "category" }];
+        declare name: string;
+        declare price: number;
+        declare category: string;
+      }
+
+      return { Car, Product };
+    }
+
+    function setup(ctx: RuntimeCaseContext) {
+      const adapter = ctx.state.getAdapter();
+      const suffix = ctx.state.nextTableName("rec");
+      return createRecordClasses(adapter, suffix);
+    }
+
+    return {
+      "creates a new entity with auto-generated ID": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.year = 2024;
+        car.save();
+        assertTrue(Boolean(car.__id), "car should have __id after save");
+        assertTrue(Boolean(car.__createdAt), "car should have __createdAt");
+        assertTrue(Boolean(car.__updatedAt), "car should have __updatedAt");
+        assertEqual(car.make, "Toyota", "make should be Toyota");
+      },
+      "auto-creates the table on first save": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Honda";
+        car.model = "Civic";
+        car.save();
+        assertTrue(Boolean(car.__id), "table should be auto-created on save");
+      },
+      "updates an existing entity": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.year = 2024;
+        car.color = "blue";
+        car.save();
+        car.color = "red";
+        car.save();
+        assertEqual(car.color, "red", "color should be updated to red");
+      },
+      "returns this for chaining": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        const result = car.save();
+        assertTrue(result === car, "save() should return this");
+      },
+      "persists update via findById round-trip": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.color = "blue";
+        car.save();
+        const loaded = Car.findById(car.__id);
+        assertTrue(loaded !== null, "should find car by id");
+        assertEqual(loaded!.color, "blue", "loaded color should be blue");
+        loaded!.color = "red";
+        loaded!.save();
+        const reloaded = Car.findById(car.__id);
+        assertEqual(reloaded!.color, "red", "reloaded color should be red after update");
+      },
+      "throws on missing required field": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.color = "blue";
+        assertThrows(() => car.save(), /required/i, "should throw for missing required field");
+      },
+      "sets a field value and returns this": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        const result = car.set("make", "BMW");
+        assertTrue(result === car, "set() should return this");
+        assertEqual(car.make, "BMW", "field should be set");
+      },
+      "supports chaining set calls": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.set("make", "BMW").set("model", "M3").set("year", 2024);
+        assertEqual(car.make, "BMW", "make should be BMW");
+        assertEqual(car.model, "M3", "model should be M3");
+        assertEqual(car.year, 2024, "year should be 2024");
+      },
+      "get() retrieves a field value": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        assertEqual(car.get("make") as string, "Toyota", "get should return field value");
+      },
+      "deletes a saved entity": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        const id = car.__id;
+        const deleted = car.delete();
+        assertTrue(deleted, "delete should return true");
+        const found = Car.findById(id);
+        assertTrue(found === null, "deleted entity should not be found");
+      },
+      "returns false for unsaved entity": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        const deleted = car.delete();
+        assertTrue(!deleted, "delete should return false for unsaved entity");
+      },
+      "returns a plain object with all fields": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.year = 2024;
+        car.color = "blue";
+        car.save();
+        const json = car.toJSON();
+        assertEqual(json.make, "Toyota", "toJSON make should match");
+        assertEqual(json.model, "Corolla", "toJSON model should match");
+        assertEqual(json.year, 2024, "toJSON year should match");
+        assertTrue(Boolean(json.__id), "toJSON should include __id");
+      },
+      "initializes fields from data object": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car({ make: "BMW", model: "X5", year: 2023 });
+        assertEqual(car.make, "BMW", "constructor should set make");
+        assertEqual(car.model, "X5", "constructor should set model");
+      },
+      "finds a saved entity by ID": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        const found = Car.findById(car.__id);
+        assertTrue(found !== null, "findById should return the entity");
+        assertEqual(found!.make, "Toyota", "found entity should match");
+      },
+      "returns null for non-existent ID": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        // Ensure table exists
+        const car = new Car();
+        car.make = "Test";
+        car.model = "Test";
+        car.save();
+        const found = Car.findById("non-existent-id");
+        assertTrue(found === null, "findById should return null for non-existent id");
+      },
+      "returns all entities": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Honda";
+        c2.model = "Civic";
+        c2.save();
+        const all = Car.find();
+        assertEqual(all.length, 2, "find should return 2 entities");
+      },
+      "returns entities matching query": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Honda";
+        c2.model = "Civic";
+        c2.save();
+        const toyotas = Car.find({ where: [{ field: "make", operator: "=", value: "Toyota" }] });
+        assertEqual(toyotas.length, 1, "find with filter should return 1");
+        assertEqual(toyotas[0].make, "Toyota", "filtered entity should be Toyota");
+      },
+      "returns first matching entity": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Toyota";
+        c2.model = "Camry";
+        c2.save();
+        const found = Car.findOne({ where: [{ field: "make", operator: "=", value: "Toyota" }] });
+        assertTrue(found !== null, "findOne should find a match");
+        assertEqual(found!.make, "Toyota", "findOne should return Toyota");
+      },
+      "returns null when no match": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c = new Car();
+        c.make = "Toyota";
+        c.model = "Corolla";
+        c.save();
+        const found = Car.findOne({ where: [{ field: "make", operator: "=", value: "BMW" }] });
+        assertTrue(found === null, "findOne should return null when no match");
+      },
+      "returns a QueryBuilder and chains": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.year = 2020;
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Toyota";
+        c2.model = "Camry";
+        c2.year = 2024;
+        c2.save();
+        const results = Car.where("make", "=", "Toyota").orderBy("year", "desc").execute();
+        assertEqual(results.length, 2, "where query should return 2 results");
+        assertEqual(results[0].year, 2024, "first result should be 2024");
+      },
+      "returns a QueryBuilder": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c = new Car();
+        c.make = "Toyota";
+        c.model = "Corolla";
+        c.save();
+        const qb = Car.query();
+        const results = qb.execute();
+        assertEqual(results.length, 1, "query() should return builder that executes");
+      },
+      "counts all entities": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        assertEqual(Car.count(), 1, "count should be 1");
+      },
+      "counts with filter": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Honda";
+        c2.model = "Civic";
+        c2.save();
+        assertEqual(
+          Car.count({ where: [{ field: "make", operator: "=", value: "Toyota" }] }),
+          1,
+          "count with filter should be 1",
+        );
+      },
+      "deletes matching entities": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Honda";
+        c2.model = "Civic";
+        c2.save();
+        const deleted = Car.deleteAll({ where: [{ field: "make", operator: "=", value: "Toyota" }] });
+        assertEqual(deleted, 1, "deleteAll should return 1");
+        assertEqual(Car.count(), 1, "count after deleteAll should be 1");
+      },
+      "returns paginated results": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        for (let i = 0; i < 5; i++) {
+          const c = new Car();
+          c.make = "Make" + i;
+          c.model = "Model" + i;
+          c.save();
+        }
+        const page = Car.select(0, 2);
+        assertEqual(page.items.length, 2, "select should return 2 items");
+        assertEqual(page.total, 5, "select total should be 5");
+      },
+      "groups entities by field": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Toyota";
+        c2.model = "Camry";
+        c2.save();
+        const c3 = new Car();
+        c3.make = "Honda";
+        c3.model = "Civic";
+        c3.save();
+        const groups = Car.groupBy("make");
+        assertTrue(groups.length >= 2, "groupBy should return at least 2 groups");
+      },
+      "creates separate tables for each class": (ctx: RuntimeCaseContext) => {
+        const { Car, Product } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        const prod = new Product();
+        prod.name = "Widget";
+        prod.price = 9.99;
+        prod.save();
+        assertEqual(Car.count(), 1, "car count should be 1");
+        assertEqual(Product.count(), 1, "product count should be 1");
+      },
+      "works with class reference (typed)": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c = new Car();
+        c.make = "Toyota";
+        c.model = "Corolla";
+        c.save();
+        const results = QueryBuilder.from(Car).execute();
+        assertEqual(results.length, 1, "QueryBuilder.from(class) should work");
+      },
+      "works with string name": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c = new Car();
+        c.make = "Toyota";
+        c.model = "Corolla";
+        c.save();
+        const results = QueryBuilder.from("Car").execute();
+        assertEqual(results.length, 1, "QueryBuilder.from(string) should work");
+      },
+      "works with table name string": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c = new Car();
+        c.make = "Toyota";
+        c.model = "Corolla";
+        c.save();
+        const results = QueryBuilder.from(Car.tableName).execute();
+        assertEqual(results.length, 1, "QueryBuilder.from(tableName) should work");
+      },
+      "supports full fluent chain": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.year = 2020;
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Toyota";
+        c2.model = "Camry";
+        c2.year = 2024;
+        c2.save();
+        const c3 = new Car();
+        c3.make = "Honda";
+        c3.model = "Civic";
+        c3.year = 2022;
+        c3.save();
+        const results = QueryBuilder.from(Car)
+          .where("make", "=", "Toyota")
+          .orderBy("year", "desc")
+          .limit(1)
+          .execute();
+        assertEqual(results.length, 1, "fluent chain should return 1 result");
+        assertEqual(results[0].year, 2024, "fluent chain should return newest Toyota");
+      },
+      "throws for unknown class name": (ctx: RuntimeCaseContext) => {
+        setup(ctx);
+        assertThrows(
+          () => QueryBuilder.from("UnknownClassName"),
+          /unknown|not found|not registered/i,
+          "QueryBuilder.from with unknown name should throw",
+        );
+      },
+      "create → query → update → delete cycle": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.year = 2024;
+        car.color = "blue";
+        car.save();
+        const found = Car.findById(car.__id);
+        assertTrue(found !== null, "should find created car");
+        assertEqual(found!.color, "blue", "color should be blue");
+        found!.color = "red";
+        found!.save();
+        const updated = Car.findById(car.__id);
+        assertEqual(updated!.color, "red", "color should be updated to red");
+        updated!.delete();
+        const deleted = Car.findById(car.__id);
+        assertTrue(deleted === null, "deleted car should not be found");
+      },
+      "works with QueryBuilder.from() end-to-end": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.year = 2024;
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Honda";
+        c2.model = "Civic";
+        c2.year = 2023;
+        c2.save();
+        const results = QueryBuilder.from(Car).where("make", "=", "Toyota").execute();
+        assertEqual(results.length, 1, "QueryBuilder.from e2e should return 1");
+        assertEqual(results[0].make, "Toyota", "result should be Toyota");
+      },
+    } as Record<string, RuntimeCaseHandler>;
+  })(),
 };
 
 function getRuntimeCaseHandler(id: string): RuntimeCaseHandler {
@@ -1238,26 +1676,40 @@ export function runSheetOrmRuntimeParity(): string {
 
   const state = new RuntimeParityState();
   const results: RuntimeCaseResult[] = [];
+  const total = PARITY_CASE_IDS.length;
+
+  const log = (msg: string): void => {
+    if (typeof Logger !== "undefined" && typeof Logger.log === "function") {
+      Logger.log(msg);
+    }
+  };
+
+  log(`[SheetORM] Starting parity suite — ${total} test cases`);
 
   for (const suite of PARITY_SUITES) {
+    log(`[Suite] ${suite.file} (${suite.tests.length} tests)`);
+
     for (const testName of suite.tests) {
       const id = toParityCaseId(suite.file, testName);
+      const num = results.length + 1;
       try {
         const handler = getRuntimeCaseHandler(id);
         handler({ state });
         results.push({ id, ok: true });
+        log(`  PASS [${num}/${total}] ${testName}`);
       } catch (error) {
-        results.push({
-          id,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        const errMsg = error instanceof Error ? error.message : String(error);
+        results.push({ id, ok: false, error: errMsg });
+        log(`  FAIL [${num}/${total}] ${testName}`);
+        log(`       ${errMsg}`);
       }
     }
   }
 
   const failures = results.filter((result) => !result.ok);
   const passed = results.length - failures.length;
+
+  log(`[SheetORM] Done — ${passed}/${total} passed, ${failures.length} failed`);
 
   if (failures.length > 0) {
     const summary = failures
@@ -1278,9 +1730,6 @@ export function runSheetOrmRuntimeParity(): string {
     spreadsheetUrl,
   };
 
-  if (typeof Logger !== "undefined" && typeof Logger.log === "function") {
-    Logger.log(JSON.stringify(report));
-  }
-
+  log(JSON.stringify(report));
   return JSON.stringify(report);
 }

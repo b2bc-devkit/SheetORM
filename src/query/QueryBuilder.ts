@@ -3,19 +3,27 @@
 
 import {
   Entity,
+  FieldDefinition,
   Filter,
   FilterOperator,
+  IndexDefinition,
   SortClause,
   QueryOptions,
   PaginatedResult,
   GroupResult,
-} from '../core/types';
-import {
-  filterEntities,
-  sortEntities,
-  paginateEntities,
-  groupEntities,
-} from './QueryEngine';
+} from "../core/types";
+import { filterEntities, sortEntities, paginateEntities, groupEntities } from "./QueryEngine";
+
+type FromResolver = (
+  classOrName:
+    | string
+    | {
+        new (data?: { [key: string]: unknown }): Entity;
+        tableName: string;
+        fields: FieldDefinition[];
+        indexes: IndexDefinition[];
+      },
+) => () => Entity[];
 
 export class QueryBuilder<T extends Entity> {
   private filters: Filter[] = [];
@@ -23,6 +31,27 @@ export class QueryBuilder<T extends Entity> {
   private _limit?: number;
   private _offset?: number;
   private dataProvider: () => T[];
+
+  private static _fromResolverFn: FromResolver | null = null;
+
+  static _setFromResolver(resolver: FromResolver): void {
+    QueryBuilder._fromResolverFn = resolver;
+  }
+
+  static from<U extends Entity>(ctor: {
+    new (data?: { [key: string]: unknown }): U;
+    tableName: string;
+    fields: FieldDefinition[];
+    indexes: IndexDefinition[];
+  }): QueryBuilder<U>;
+  static from(name: string): QueryBuilder<Entity>;
+  static from(classOrName: unknown): QueryBuilder<Entity> {
+    if (!QueryBuilder._fromResolverFn) {
+      throw new Error("QueryBuilder.from() is not available. Import Record from SheetORM to enable it.");
+    }
+    const provider = QueryBuilder._fromResolverFn(classOrName as Parameters<FromResolver>[0]);
+    return new QueryBuilder<Entity>(provider);
+  }
 
   constructor(dataProvider: () => T[]) {
     this.dataProvider = dataProvider;
@@ -45,7 +74,7 @@ export class QueryBuilder<T extends Entity> {
     return this;
   }
 
-  orderBy(field: string, direction: 'asc' | 'desc' = 'asc'): QueryBuilder<T> {
+  orderBy(field: string, direction: "asc" | "desc" = "asc"): QueryBuilder<T> {
     this.sorts.push({ field, direction });
     return this;
   }

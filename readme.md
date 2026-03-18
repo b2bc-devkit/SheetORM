@@ -1,12 +1,16 @@
 # SheetORM
 
-A TypeScript ORM for Google Sheets running in Google Apps Script (GAS). Inspired by Dari/Brightspot ORM
-patterns, SheetORM brings a structured, type-safe persistence layer to spreadsheet-based applications.
+A TypeScript ORM for Google Sheets running in Google Apps Script (GAS). SheetORM brings a structured,
+type-safe persistence layer to spreadsheet-based applications with an **ActiveRecord** API — define a class,
+extend `Record`, and everything just works.
 
 ## Features
 
-- **Type-safe repository pattern** — Generic `SheetRepository<T>` with full CRUD operations
+- **ActiveRecord pattern** — Extend `Record`, define fields, and call `save()` / `find()` / `delete()`
+  directly on instances and classes
+- **Zero configuration** — Tables, schemas, indexes, and repositories are auto-created on first use
 - **Fluent query builder** — `where()`, `and()`, `or()`, `orderBy()`, `limit()`, `offset()`
+- **`QueryBuilder.from()`** — Start queries from a class reference or string name
 - **Secondary indexes** — Stored in dedicated sheets for fast lookup by indexed fields
 - **Schema migrations** — Tracked in `_meta` sheet with addField / removeField support
 - **In-memory caching** — Configurable TTL cache to reduce sheet reads
@@ -15,136 +19,197 @@ patterns, SheetORM brings a structured, type-safe persistence layer to spreadshe
 - **Pagination & grouping** — `select()` returns `PaginatedResult<T>`, `groupBy()` returns `GroupResult<T>`
 - **Zero runtime dependencies** — Bundles into a single `Code.js` via Webpack
 
-## Architecture
-
-```
-src/
-  core/types.ts          — All interfaces, types, constants
-  core/SheetRepository.ts — Generic repository with CRUD, batch, hooks, cache
-  utils/uuid.ts          — UUID v4 generation (GAS / fallback)
-  utils/cache.ts         — MemoryCache (ICacheProvider)
-  utils/serialization.ts — Row ↔ Entity conversion, header management
-  storage/GoogleSheetsAdapter.ts — ISheetAdapter / ISpreadsheetAdapter wrappers
-  query/QueryEngine.ts   — filter, sort, paginate, group pipeline
-  query/QueryBuilder.ts  — Fluent query builder
-  index/IndexStore.ts    — Secondary index management
-  schema/SchemaMigrator.ts — Schema versioning & migrations
-  SheetORM.ts            — Facade: register schemas, get repositories
-  index.ts               — Barrel exports + GAS trigger stubs
-```
-
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Install & build
 
 ```bash
 npm install
-```
-
-### 2. Build
-
-```bash
 npm run build
 ```
 
-This compiles TypeScript (`tsc`) and bundles via Webpack into a single `Code.js` file.
-
-### 3. Deploy to Google Apps Script
+### 2. Deploy to Google Apps Script
 
 ```bash
 npm run login   # once per device
 npm run push    # build + push to GAS
 ```
 
-### 4. Use in your GAS project
+### 3. Define a model
 
 ```ts
-import { SheetORM, TableSchema } from "./SheetORM";
+class Car extends Record {
+  static tableName = "Cars";
+  static fields: FieldDefinition[] = [
+    { name: "make", type: "string", required: true },
+    { name: "model", type: "string", required: true },
+    { name: "year", type: "number" },
+    { name: "color", type: "string" },
+  ];
+  static indexes: IndexDefinition[] = [{ field: "make" }];
 
-interface User {
-  __id: string;
-  __createdAt: string;
-  __updatedAt: string;
-  name: string;
-  email: string;
-  age: number;
+  declare make: string;
+  declare model: string;
+  declare year: number;
+  declare color: string;
 }
-
-const userSchema: TableSchema = {
-  tableName: "Users",
-  fields: {
-    name: { type: "string", required: true },
-    email: { type: "string", required: true, unique: true },
-    age: { type: "number", required: false, defaultValue: 0 },
-  },
-  indexes: [{ fields: ["email"], unique: true }],
-};
-
-// Initialize
-const ss = SpreadsheetApp.getActiveSpreadsheet();
-const orm = SheetORM.create(ss);
-orm.register(userSchema);
-
-// CRUD
-const users = orm.getRepository<User>("Users");
-const user = users.save({ name: "Alice", email: "alice@example.com", age: 30 } as any);
-
-const found = users.findById(user.__id);
-const adults = users.query().where("age", ">=", 18).orderBy("name", "asc").limit(10).execute();
-
-users.delete(user.__id);
 ```
 
-## API Overview
+### 4. Use it
 
-### SheetORM (Facade)
+```ts
+// Create — table auto-created on first save
+const car = new Car();
+car.make = "Toyota";
+car.model = "Corolla";
+car.year = 2024;
+car.color = "blue";
+car.save();
 
-| Method                         | Description                |
-| ------------------------------ | -------------------------- |
-| `SheetORM.create(spreadsheet)` | Create an ORM instance     |
-| `register(schema)`             | Register a table schema    |
-| `getRepository<T>(tableName)`  | Get a typed repository     |
-| `getMigrator()`                | Access the schema migrator |
-| `getIndexStore()`              | Access the index store     |
-| `clearCache()`                 | Clear all cached data      |
+// Fluent set + save (chainable)
+new Car().set("make", "Honda").set("model", "Civic").set("year", 2023).save();
 
-### SheetRepository\<T\>
+// Static queries — return typed Car[]
+const toyotas = Car.where("make", "=", "Toyota").execute();
+const found = Car.findById(car.__id);
+const all = Car.find();
+
+// QueryBuilder.from() — class ref (typed) or string
+const recent = QueryBuilder.from(Car).where("year", ">=", 2023).orderBy("year", "desc").limit(10).execute();
+
+// Update
+car.color = "red";
+car.save();
+
+// Delete
+car.delete();
+
+// Count, pagination, grouping
+Car.count();
+Car.select(0, 10);
+Car.groupBy("make");
+```
+
+> See [`examples/cars-crud.ts`](examples/cars-crud.ts) for a complete runnable example.
+
+## Architecture
+
+```
+src/
+  core/Record.ts          — ActiveRecord base class (primary API)
+  core/Registry.ts        — Global singleton: adapter, repos, class map
+  core/SheetRepository.ts — Generic repository: CRUD, batch, hooks, cache
+  core/types.ts           — All interfaces, types, constants
+  query/QueryBuilder.ts   — Fluent query builder + QueryBuilder.from()
+  query/QueryEngine.ts    — filter, sort, paginate, group pipeline
+  index/IndexStore.ts     — Secondary index management
+  schema/SchemaMigrator.ts— Schema versioning & migrations
+  storage/GoogleSheetsAdapter.ts — ISheetAdapter / ISpreadsheetAdapter wrappers
+  utils/uuid.ts           — UUID v4 generation (GAS / fallback)
+  utils/cache.ts          — MemoryCache (ICacheProvider)
+  utils/serialization.ts  — Row ↔ Entity conversion
+  testing/                — Runtime parity test suite
+  SheetORM.ts             — Legacy facade (still supported)
+  index.ts                — Barrel exports + GAS trigger stubs
+examples/
+  cars-crud.ts            — Full ActiveRecord example
+```
+
+## API Reference
+
+### Record (ActiveRecord base class)
+
+Extend `Record` to define a model. Override three static properties:
+
+| Static property | Type                | Description                  |
+| --------------- | ------------------- | ---------------------------- |
+| `tableName`     | `string`            | Sheet name (required)        |
+| `fields`        | `FieldDefinition[]` | Column definitions           |
+| `indexes`       | `IndexDefinition[]` | Secondary indexes (optional) |
+
+#### Instance methods
+
+| Method              | Returns   | Description                   |
+| ------------------- | --------- | ----------------------------- |
+| `save()`            | `this`    | Insert or update (chainable)  |
+| `delete()`          | `boolean` | Delete from sheet             |
+| `set(field, value)` | `this`    | Set a field value (chainable) |
+| `get(field)`        | `unknown` | Get a field value             |
+| `toJSON()`          | `object`  | Plain object with all fields  |
+
+#### Static methods
+
+| Method                            | Returns              | Description                           |
+| --------------------------------- | -------------------- | ------------------------------------- |
+| `findById(id)`                    | `T \| null`          | Find by primary key                   |
+| `find(options?)`                  | `T[]`                | Find all (with optional filters/sort) |
+| `findOne(options?)`               | `T \| null`          | Find first matching entity            |
+| `where(field, op, value)`         | `QueryBuilder<T>`    | Start a filtered query chain          |
+| `query()`                         | `QueryBuilder<T>`    | Start an empty query chain            |
+| `count(options?)`                 | `number`             | Count matching entities               |
+| `deleteAll(options?)`             | `number`             | Delete matching entities              |
+| `select(offset, limit, options?)` | `PaginatedResult<T>` | Paginated query                       |
+| `groupBy(field, options?)`        | `GroupResult<T>[]`   | Group by field                        |
+
+### QueryBuilder\<T\>
+
+```ts
+Car.where("make", "=", "Toyota")
+  .and("year", ">=", 2020)
+  .or("color", "=", "red")
+  .orderBy("year", "desc")
+  .limit(20)
+  .offset(40)
+  .execute(); // T[]
+// .first()      // T | null
+// .count()      // number
+// .groupBy("field") // GroupResult<T>[]
+```
+
+Start from any class:
+
+```ts
+QueryBuilder.from(Car).where("year", ">=", 2023).execute();
+QueryBuilder.from("Car").where("make", "=", "Toyota").first();
+```
+
+### Filter operators
+
+`=`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `in`
+
+### Field types
+
+`string`, `number`, `boolean`, `json`, `date`, `reference`
+
+### SheetORM (legacy facade)
+
+The original `SheetORM` facade still works for manual repository management:
+
+| Method                        | Description                |
+| ----------------------------- | -------------------------- |
+| `SheetORM.create(options?)`   | Create an ORM instance     |
+| `register(schema)`            | Register a table schema    |
+| `getRepository<T>(tableName)` | Get a typed repository     |
+| `getMigrator()`               | Access the schema migrator |
+| `getIndexStore()`             | Access the index store     |
+| `clearCache()`                | Clear all cached data      |
+
+### SheetRepository\<T\> (advanced)
 
 | Method                                               | Description                            |
 | ---------------------------------------------------- | -------------------------------------- |
 | `save(entity)`                                       | Insert or update an entity             |
 | `saveAll(entities)`                                  | Bulk insert                            |
 | `findById(id)`                                       | Find by primary key                    |
-| `find(filters?, sort?, options?)`                    | Find with filters and sorting          |
-| `findOne(filters)`                                   | Find first matching entity             |
+| `find(options?)`                                     | Find with filters and sorting          |
+| `findOne(options?)`                                  | Find first matching entity             |
 | `delete(id)`                                         | Delete by ID                           |
-| `deleteAll()`                                        | Remove all rows                        |
-| `count(filters?)`                                    | Count matching entities                |
-| `select(options)`                                    | Paginated query → `PaginatedResult<T>` |
-| `groupBy(field, filters?)`                           | Group → `GroupResult<T>`               |
+| `deleteAll(options?)`                                | Remove matching rows                   |
+| `count(options?)`                                    | Count matching entities                |
+| `select(offset, limit, options?)`                    | Paginated query → `PaginatedResult<T>` |
+| `groupBy(field, options?)`                           | Group → `GroupResult<T>[]`             |
 | `query()`                                            | Start a fluent `QueryBuilder<T>`       |
 | `beginBatch()` / `commitBatch()` / `rollbackBatch()` | Batch operations                       |
-
-### QueryBuilder\<T\>
-
-```ts
-repo
-  .query()
-  .where("status", "=", "active")
-  .and("age", ">=", 18)
-  .or("role", "=", "admin")
-  .orderBy("name", "asc")
-  .limit(20)
-  .offset(40)
-  .execute(); // Entity[]
-// .first()       // Entity | null
-// .count()       // number
-// .groupBy('field') // GroupResult<T>
-```
-
-### Filter Operators
-
-`=`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `in`
 
 ## Testing
 
@@ -152,45 +217,45 @@ repo
 npm test
 ```
 
-Runs 109 unit tests across 9 test suites using Jest + ts-jest with in-memory mock adapters:
+Runs **146 unit tests** across 11 test suites using Jest + ts-jest with in-memory mock adapters:
 
-- `uuid.test.ts` — UUID generation
-- `cache.test.ts` — MemoryCache TTL behavior
-- `serialization.test.ts` — Row ↔ Entity conversion
-- `query-engine.test.ts` — Filter, sort, paginate, group
-- `query-builder.test.ts` — Fluent builder API
-- `index-store.test.ts` — Secondary index CRUD
-- `schema-migrator.test.ts` — Schema versioning
-- `repository.test.ts` — Full repository CRUD + batch + hooks
-- `sheetorm.test.ts` — Facade integration
+| Suite                      | Tests | Description                              |
+| -------------------------- | ----- | ---------------------------------------- |
+| `record.test.ts`           | 34    | ActiveRecord API (save, find, query, QB) |
+| `repository.test.ts`       | 21    | Full repository CRUD + batch + hooks     |
+| `query-engine.test.ts`     | 21    | Filter, sort, paginate, group            |
+| `serialization.test.ts`    | 14    | Row ↔ Entity conversion                  |
+| `schema-migrator.test.ts`  | 12    | Schema versioning                        |
+| `query-builder.test.ts`    | 11    | Fluent builder API                       |
+| `index-store.test.ts`      | 11    | Secondary index CRUD                     |
+| `sheetorm.test.ts`         | 9     | Legacy facade integration                |
+| `cache.test.ts`            | 8     | MemoryCache TTL behavior                 |
+| `uuid.test.ts`             | 2     | UUID generation                          |
+| `parity-validator.test.ts` | 3     | Jest ↔ GAS runtime parity check          |
 
 ### Jest ↔ GAS Runtime Parity (1:1)
 
-Project includes a strict parity mechanism to keep Jest tests and Google Apps Script runtime tests aligned:
+Every Jest test has a matching handler in the GAS runtime parity suite. This ensures the library works
+identically with real Google Sheets:
 
-- `src/testing/parityCatalog.ts` — canonical list of Jest test cases
-- `src/testing/runtimeParity.ts` — runtime suite for Google Apps Script with matching case IDs
-- `tests/parity-validator.test.ts` — validator that fails when Jest and runtime cases diverge
+- `src/testing/parityCatalog.ts` — canonical list of all Jest test cases
+- `src/testing/runtimeParity.ts` — runtime suite executing against real Sheets API
+- `tests/parity-validator.test.ts` — fails when Jest and runtime cases diverge
 
-Run locally:
+Run locally (mock adapters):
 
 ```bash
 npm test
 ```
 
-`parity-validator.test.ts` automatically checks:
+Run in Google Apps Script (real Sheets API):
 
-1. real `tests/*.test.ts` case titles vs parity catalog,
-2. parity catalog vs runtime parity handlers.
-
-Run in Google Apps Script runtime (real Sheets API):
-
-- `runSheetOrmRuntimeParity()` — executes full runtime parity suite and throws on any failure
+- `runSheetOrmRuntimeParity()` — executes full runtime parity suite against the active spreadsheet
 - `validateSheetOrmRuntimeParity()` — validates mapping only (fast drift check)
 
 ## CI
 
-GitHub Actions workflow at `.github/workflows/ci.yml` runs:
+GitHub Actions workflow at `.github/workflows/ci.yml`:
 
 1. TypeScript type-check (`tsc --noEmit`)
 2. Unit tests (`npm test`)
@@ -198,6 +263,10 @@ GitHub Actions workflow at `.github/workflows/ci.yml` runs:
 4. Verify `Code.js` output exists
 
 Matrix: Node 18, 20, 22.
+
+## License
+
+[GPL](license.md)
 
 ## Available Scripts
 

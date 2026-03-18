@@ -12,18 +12,18 @@ import {
   LifecycleHooks,
   ICacheProvider,
   SYSTEM_COLUMNS,
-} from '../core/types';
-import { generateUUID } from '../utils/uuid';
-import { buildHeaders, entityToRow, rowToEntity } from '../utils/serialization';
-import { IndexStore } from '../index/IndexStore';
-import { QueryBuilder } from '../query/QueryBuilder';
+} from "../core/types";
+import { generateUUID } from "../utils/uuid";
+import { buildHeaders, entityToRow, rowToEntity } from "../utils/serialization";
+import { IndexStore } from "../index/IndexStore";
+import { QueryBuilder } from "../query/QueryBuilder";
 import {
   executeQuery,
   filterEntities,
   sortEntities,
   paginateEntities,
   groupEntities,
-} from '../query/QueryEngine';
+} from "../query/QueryEngine";
 
 export class SheetRepository<T extends Entity> {
   private adapter: ISpreadsheetAdapter;
@@ -32,7 +32,7 @@ export class SheetRepository<T extends Entity> {
   private cache: ICacheProvider | null;
   private hooks: LifecycleHooks<T>;
   private headers: string[];
-  private batchBuffer: Array<{ type: 'save' | 'delete'; data: unknown }> | null = null;
+  private batchBuffer: Array<{ type: "save" | "delete"; data: unknown }> | null = null;
 
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -56,7 +56,7 @@ export class SheetRepository<T extends Entity> {
    */
   save(partial: Partial<T> & { __id?: string }): T {
     if (this.batchBuffer) {
-      this.batchBuffer.push({ type: 'save', data: partial });
+      this.batchBuffer.push({ type: "save", data: partial });
       // Return a placeholder (will be committed in batch)
       const now = new Date().toISOString();
       return {
@@ -73,13 +73,13 @@ export class SheetRepository<T extends Entity> {
   private doSave(partial: Partial<T> & { __id?: string }): T {
     const sheet = this.getSheet();
     const now = new Date().toISOString();
-    const isNew = !partial.__id || !this.rowIndexById(sheet, partial.__id);
+    const isNew = !partial.__id || this.rowIndexById(sheet, partial.__id) === null;
 
     // Lifecycle: validate
     if (this.hooks.onValidate) {
       const errors = this.hooks.onValidate(partial as Partial<T>);
       if (errors && errors.length > 0) {
-        throw new Error(`Validation failed: ${errors.join(', ')}`);
+        throw new Error(`Validation failed: ${errors.join(", ")}`);
       }
     }
 
@@ -101,7 +101,9 @@ export class SheetRepository<T extends Entity> {
     for (const field of this.schema.fields) {
       if (
         field.required &&
-        (entityData[field.name] === undefined || entityData[field.name] === null || entityData[field.name] === '')
+        (entityData[field.name] === undefined ||
+          entityData[field.name] === null ||
+          entityData[field.name] === "")
       ) {
         throw new Error(`Required field "${field.name}" is missing for table "${this.schema.tableName}"`);
       }
@@ -120,6 +122,7 @@ export class SheetRepository<T extends Entity> {
 
       const row = entityToRow(entity, this.schema.fields, this.headers);
       sheet.appendRow(row);
+      sheet.flush(); // force GAS to commit the write before any subsequent reads
 
       // Add to indexes
       this.addToIndexes(entity);
@@ -199,7 +202,7 @@ export class SheetRepository<T extends Entity> {
    */
   delete(id: string): boolean {
     if (this.batchBuffer) {
-      this.batchBuffer.push({ type: 'delete', data: id });
+      this.batchBuffer.push({ type: "delete", data: id });
       return true;
     }
 
@@ -311,9 +314,9 @@ export class SheetRepository<T extends Entity> {
     this.batchBuffer = null;
 
     for (const op of buffer) {
-      if (op.type === 'save') {
+      if (op.type === "save") {
         this.doSave(op.data as Partial<T> & { __id?: string });
-      } else if (op.type === 'delete') {
+      } else if (op.type === "delete") {
         this.doDelete(op.data as string);
       }
     }
@@ -355,9 +358,7 @@ export class SheetRepository<T extends Entity> {
 
     const sheet = this.getSheet();
     const data = sheet.getAllData();
-    const entities: T[] = data.map((row) =>
-      rowToEntity<T>(row, this.headers, this.schema.fields),
-    );
+    const entities: T[] = data.map((row) => rowToEntity<T>(row, this.headers, this.schema.fields));
 
     if (this.cache) {
       this.cache.set(cacheKey, entities);
@@ -389,7 +390,7 @@ export class SheetRepository<T extends Entity> {
     const indexedFields = this.indexStore.getIndexedFields(this.schema.tableName);
     for (const meta of indexedFields) {
       const value = entity[meta.field];
-      if (value !== undefined && value !== null && value !== '') {
+      if (value !== undefined && value !== null && value !== "") {
         this.indexStore.add(this.schema.tableName, meta.field, value, entity.__id);
       }
     }

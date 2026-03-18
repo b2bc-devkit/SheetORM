@@ -22,11 +22,19 @@ export type {
 
 export { SYSTEM_COLUMNS, META_TABLE_NAME, INDEX_PREFIX } from "./core/types";
 
+// ActiveRecord base class (primary API)
+export { Record } from "./core/Record";
+export type { RecordConstructor } from "./core/Record";
+
+// Global registry
+export { Registry } from "./core/Registry";
+export type { RecordStatic } from "./core/Registry";
+
 // Main ORM facade
 export { SheetORM } from "./SheetORM";
 export type { SheetORMOptions } from "./SheetORM";
 
-// Repository
+// Repository (advanced / legacy)
 export { SheetRepository } from "./core/SheetRepository";
 
 // Query
@@ -60,9 +68,6 @@ export {
   rowToEntity,
 } from "./utils/serialization";
 export { runSheetOrmRuntimeParity, validateSheetOrmRuntimeParity } from "./testing/runtimeParity";
-
-// Re-export example for GAS triggers (keep backward compat)
-export { helloWorld } from "./example";
 
 // GAS Triggers
 function onOpen(

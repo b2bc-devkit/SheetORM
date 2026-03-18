@@ -114,9 +114,13 @@ export function rowToEntity<T extends Entity>(row: unknown[], headers: string[],
     if (col === SYSTEM_COLUMNS.ID) {
       entity.__id = String(cellValue);
     } else if (col === SYSTEM_COLUMNS.CREATED_AT) {
-      entity.__createdAt = cellValue ? String(cellValue) : undefined;
+      entity.__createdAt = cellValue instanceof Date
+        ? (cellValue as Date).toISOString()
+        : cellValue ? String(cellValue) : undefined;
     } else if (col === SYSTEM_COLUMNS.UPDATED_AT) {
-      entity.__updatedAt = cellValue ? String(cellValue) : undefined;
+      entity.__updatedAt = cellValue instanceof Date
+        ? (cellValue as Date).toISOString()
+        : cellValue ? String(cellValue) : undefined;
     } else {
       const fieldDef = fields.find((f) => f.name === col);
       if (fieldDef) {
