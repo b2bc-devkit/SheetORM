@@ -2,3 +2,4 @@ node_modules
 build
 Code.js
 .tmp-localstorage
+.clasp.json
