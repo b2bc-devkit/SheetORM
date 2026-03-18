@@ -1,138 +1,217 @@
-# Google Apps & TypeScript Project Template
+# SheetORM
 
-This repository provides a simple template to start a new
-[Google Apps Script](https://developers.google.com/apps-script) project with TypeScript. Building, linting,
-formatting, and pushing to Google Apps are all built in.
+A TypeScript ORM for Google Sheets running in Google Apps Script (GAS). Inspired by Dari/Brightspot ORM patterns, SheetORM brings a structured, type-safe persistence layer to spreadsheet-based applications.
 
-The project is set up with a TypeScript configuration that transforms your TypeScript files in the `src`
-directory into JavaScript files in the `build` directory. It's not enough to upload those files as-is to
-Google Apps, however, because Apps Script doesn't support installing and running dependencies, and uploaded
-files are run in random order - they aren't linked together at all. To solve this problem, a second build step
-uses Webpack to combine all files and depdendencies into a single minified `Code.js` file, which is the only
-file that is actually pushed to Google Apps.
+## Features
 
-## Getting Started
+- **Type-safe repository pattern** — Generic `SheetRepository<T>` with full CRUD operations
+- **Fluent query builder** — `where()`, `and()`, `or()`, `orderBy()`, `limit()`, `offset()`
+- **Secondary indexes** — Stored in dedicated sheets for fast lookup by indexed fields
+- **Schema migrations** — Tracked in `_meta` sheet with addField / removeField support
+- **In-memory caching** — Configurable TTL cache to reduce sheet reads
+- **Lifecycle hooks** — `beforeSave`, `afterSave`, `beforeDelete`, `afterDelete`
+- **Batch operations** — `beginBatch` / `commitBatch` / `rollbackBatch` for safe bulk writes
+- **Pagination & grouping** — `select()` returns `PaginatedResult<T>`, `groupBy()` returns `GroupResult<T>`
+- **Zero runtime dependencies** — Bundles into a single `Code.js` via Webpack
 
-1. Click ["Use This Template"](https://github.com/iansan5653/gas-ts-template/generate) to start a new
-   repository. Clone your new repo and open a terminal in the local directory. This template includes some
-   configuration for VSCode, but you can use any editor.
-2. Ensure [Node.js](https://nodejs.org/en/) is installed on your system, then install all of the dependencies
-   by running `npm install`. Alternatively, start a Codespace in your new repository and dependencies will be
-   installed automatically.
-3. Start a new Google Apps Script project by going to https://script.google.com/home and clicking **New
-   project**. You can also start a project tied directly to a specific Google Apps file by opening the file
-   and clicking **Tools** -> **Script Editor**.
-4. Click the gear icon in the Google Apps Script editor sidebar. Copy the **Script ID**.
-5. Replace `SCRIPT_ID` in [`.clasp.json`](./.clasp.json) with your project's ID. This ID is _not_ a secret -
-   you can safely commit it to your repository.
-6. Write your TypeScript code in the `src` folder. Note that `index.ts` is the entrypoint for your project.
-   Only what is imported into the `index.ts` file will be compiled into the script.
-7. Optional: lint your code with `npm run lint` and/or auto-format your code with `npm run format`. Typically
-   you will want to install the ESLint and/or Prettier extensions in your preferred code editor.
-8. Deploy your code to Google Apps:
-   - **Manually**:
-     1. Log in to Google Apps Script by running `npm run login`. Make sure to use the same account you used to
-        make the Google Apps Script project. You only need to do this once.
-     2. Compile the TypeScript files into a single JavaScript file and push it to Google Apps by running
-        `npm run deploy`. Run this every time you make changes.
-   - **Automatically**: You can configure GitHub Actions to automatically deploy your code every time you push
-     it (or every time you create a new release). This is advantageous because you can be sure your repository
-     will always have the same code that is deployed to Google Apps. However, Google's Clasp tool is not
-     designed to authenticate in CI environments and so this takes some more complicated setup and isn't
-     included in this template by default. One option for this might be
-     [`ericanastas/deploy-google-app-script-action`](https://github.com/ericanastas/deploy-google-app-script-action).
+## Architecture
+
+```
+src/
+  core/types.ts          — All interfaces, types, constants
+  core/SheetRepository.ts — Generic repository with CRUD, batch, hooks, cache
+  utils/uuid.ts          — UUID v4 generation (GAS / fallback)
+  utils/cache.ts         — MemoryCache (ICacheProvider)
+  utils/serialization.ts — Row ↔ Entity conversion, header management
+  storage/GoogleSheetsAdapter.ts — ISheetAdapter / ISpreadsheetAdapter wrappers
+  query/QueryEngine.ts   — filter, sort, paginate, group pipeline
+  query/QueryBuilder.ts  — Fluent query builder
+  index/IndexStore.ts    — Secondary index management
+  schema/SchemaMigrator.ts — Schema versioning & migrations
+  SheetORM.ts            — Facade: register schemas, get repositories
+  index.ts               — Barrel exports + GAS trigger stubs
+```
+
+## Quick Start
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Build
+
+```bash
+npm run build
+```
+
+This compiles TypeScript (`tsc`) and bundles via Webpack into a single `Code.js` file.
+
+### 3. Deploy to Google Apps Script
+
+```bash
+npm run login   # once per device
+npm run push    # build + push to GAS
+```
+
+### 4. Use in your GAS project
+
+```ts
+import { SheetORM, TableSchema } from './SheetORM';
+
+interface User {
+  __id: string;
+  __createdAt: string;
+  __updatedAt: string;
+  name: string;
+  email: string;
+  age: number;
+}
+
+const userSchema: TableSchema = {
+  tableName: 'Users',
+  fields: {
+    name:  { type: 'string', required: true },
+    email: { type: 'string', required: true, unique: true },
+    age:   { type: 'number', required: false, defaultValue: 0 },
+  },
+  indexes: [
+    { fields: ['email'], unique: true },
+  ],
+};
+
+// Initialize
+const ss = SpreadsheetApp.getActiveSpreadsheet();
+const orm = SheetORM.create(ss);
+orm.register(userSchema);
+
+// CRUD
+const users = orm.getRepository<User>('Users');
+const user = users.save({ name: 'Alice', email: 'alice@example.com', age: 30 } as any);
+
+const found = users.findById(user.__id);
+const adults = users.query()
+  .where('age', '>=', 18)
+  .orderBy('name', 'asc')
+  .limit(10)
+  .execute();
+
+users.delete(user.__id);
+```
+
+## API Overview
+
+### SheetORM (Facade)
+
+| Method | Description |
+|--------|-------------|
+| `SheetORM.create(spreadsheet)` | Create an ORM instance |
+| `register(schema)` | Register a table schema |
+| `getRepository<T>(tableName)` | Get a typed repository |
+| `getMigrator()` | Access the schema migrator |
+| `getIndexStore()` | Access the index store |
+| `clearCache()` | Clear all cached data |
+
+### SheetRepository\<T\>
+
+| Method | Description |
+|--------|-------------|
+| `save(entity)` | Insert or update an entity |
+| `saveAll(entities)` | Bulk insert |
+| `findById(id)` | Find by primary key |
+| `find(filters?, sort?, options?)` | Find with filters and sorting |
+| `findOne(filters)` | Find first matching entity |
+| `delete(id)` | Delete by ID |
+| `deleteAll()` | Remove all rows |
+| `count(filters?)` | Count matching entities |
+| `select(options)` | Paginated query → `PaginatedResult<T>` |
+| `groupBy(field, filters?)` | Group → `GroupResult<T>` |
+| `query()` | Start a fluent `QueryBuilder<T>` |
+| `beginBatch()` / `commitBatch()` / `rollbackBatch()` | Batch operations |
+
+### QueryBuilder\<T\>
+
+```ts
+repo.query()
+  .where('status', '=', 'active')
+  .and('age', '>=', 18)
+  .or('role', '=', 'admin')
+  .orderBy('name', 'asc')
+  .limit(20)
+  .offset(40)
+  .execute();       // Entity[]
+  // .first()       // Entity | null
+  // .count()       // number
+  // .groupBy('field') // GroupResult<T>
+```
+
+### Filter Operators
+
+`=`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `in`
+
+## Testing
+
+```bash
+npm test
+```
+
+Runs 109 unit tests across 9 test suites using Jest + ts-jest with in-memory mock adapters:
+
+- `uuid.test.ts` — UUID generation
+- `cache.test.ts` — MemoryCache TTL behavior
+- `serialization.test.ts` — Row ↔ Entity conversion
+- `query-engine.test.ts` — Filter, sort, paginate, group
+- `query-builder.test.ts` — Fluent builder API
+- `index-store.test.ts` — Secondary index CRUD
+- `schema-migrator.test.ts` — Schema versioning
+- `repository.test.ts` — Full repository CRUD + batch + hooks
+- `sheetorm.test.ts` — Facade integration
+
+## CI
+
+GitHub Actions workflow at `.github/workflows/ci.yml` runs:
+
+1. TypeScript type-check (`tsc --noEmit`)
+2. Unit tests (`npm test`)
+3. Production build (`npm run build`)
+4. Verify `Code.js` output exists
+
+Matrix: Node 18, 20, 22.
 
 ## Available Scripts
 
-You can run the following scripts by opening the project directory in your terminal (as long as you have Node
-& npm installed):
+| Script | Description |
+|--------|-------------|
+| `npm run build` | Clean + compile TypeScript + bundle via Webpack |
+| `npm test` | Run all Jest tests |
+| `npm run lint` | Lint with ESLint |
+| `npm run format` | Format with Prettier |
+| `npm run login` | Authenticate with Google Apps Script (once) |
+| `npm run push` | Build + push to GAS |
+| `npm run deploy` | Build + push + create versioned deployment |
 
-- `npm install` Install all required dependencies.
-- `npm run build` Build your project to ensure it compiles properly.
-- `npm run format` Format your code automatically using Prettier.
-- `npm run lint` Check your code for common errors using ESLint.
-- `npm run login` Login to the Google Apps Script client so you can push/pull. You will need to run this once
-  on each device you use.
-- `npm run pull` Fetch the latest changes from Google Apps Script. You should only need to do this if you
-  change the project settings.
-- **`npm run push` Build your project and push it to Google Apps in one step.** The first time you run this,
-  you will be prompted to log in to your Google account. This command will automatically update any test
-  deployments.
-- `npm run deploy` Build and push your code, then create a new versioned
-  [deployment](https://developers.google.com/apps-script/concepts/deployments).
+## Sheet Layout
 
-You can also run any [Clasp command](https://developers.google.com/apps-script/guides/clasp) with
-`npx clasp <command>`.
+Each registered table occupies one sheet. Row 1 contains headers: `__id`, `__createdAt`, `__updatedAt`, followed by schema-defined fields. Data starts at row 2.
 
-## Automated GitHub Workflow
-
-The template comes with a built-in configuration file for
-[GitHub Workflows](https://help.github.com/en/actions/configuring-and-managing-workflows). The workflow is
-configured to run on every push to the `main` branch as well as on every Pull Request as a Check, and it
-simply checks the code to ensure that it passes linting and is buildable (has no type/syntax errors). This is
-known as _continuous integration_ and provides a form of automated testing to ensure that your project's code
-is always valid.
-
-For larger projects where more than one developer will be collaborating, it is reccomended to protect the
-`main` branch and only allow changes to it through Pull Requests in which all checks pass. You can learn more
-about this from GitHub's
-[help articles](https://help.github.com/en/github/administering-a-repository/about-protected-branches).
-
-If you would like to disable the workflow, simply delete the [`checks.yml`](./.github/workflows/checks.yml)
-file.
+Special sheets:
+- `_meta` — Schema metadata (tableName, schemaJson, version)
+- `_idx_{table}_{field}` — Secondary index sheets (fieldValue → entityId mapping)
 
 ## Development Notes
 
-The following notes have important information for writing code for Google Apps Script using this template.
-Please read through them before you start.
+### Exposing Functions to GAS
 
-### **_Important_**: Exposing Functions to Google Apps Script
-
-In order for your Google Apps to run any of your code, you'll need to expose one or more functions to the
-engine. In the traditional Google Apps Script environment, you'd do this by declaring global functions,
-however in this setup there is no concept of 'global' as all files are modules.
-
-Instead, only functions exported from `index.ts` will be available to Google Apps Script. Any function
-exported from `index.ts` will be accessible by all
-[triggers](https://developers.google.com/apps-script/guides/triggers) and anywhere else Google Apps might need
-to call your function, such as from a [custom menu](https://developers.google.com/apps-script/guides/menus).
-
-Due to [a bug](https://github.com/iansan5653/gas-ts-template/issues/2) in the Webpack plugin, only exports in
-`export {...}` form are supported:
+Only functions exported from `index.ts` via `export { name }` syntax are available in Google Apps Script. Due to a gas-webpack-plugin limitation, `export function` and `export const` forms do not work.
 
 ```ts
+// ✅ Works
+function myFunction() { /* ... */ }
+export { myFunction };
+
 // ❌ Does NOT work
-export function bad1() {
-  /* ... */
-}
-
-export const bad2 = () => {
-  /* ... */
-};
-
-// ✅ Does work:
-export { good1 } from "./good1.ts";
-
-function good2() {
-  /* ... */
-}
-const good3 = () => {
-  /* ... */
-};
-
-export { good2, good3 };
-```
-
-Examples for all the simple triggers are given in [`index.ts`](./src/index.ts).
-
-For cleaner, more usable code, it may be useful to reference functions by their `name` property instead of
-hardcoding the name into code. For example:
-
-```ts
-const createButton = CardService.newTextButton().setText("Create").setOnClickAction(
-  // Here we use `onClickCreateEvent.name` instead of hardcoding `"onClickCreateEvent"`
-  CardService.newAction().setFunctionName(onClickCreateEvent.name),
-);
+export function myFunction() { /* ... */ }
 ```
 
 ### Circular Dependencies
@@ -145,28 +224,6 @@ included in this template):
 1. Install `madge` globally with `npm i --global madge`.
 2. Check for circular dependencies with `madge src/index.ts --circular`.
 
-## Included Files
+## License
 
-- `.github`
-  - `workflows` All GitHub workflows are configured using YAML files in this directory.
-    - `checks.yml` This is where the continuous integration workflow is configured.
-- `src` This is where you'll put all your TypeScript files.
-  - `example.ts` Gives an example of how to export something from a local file.
-  - `index.ts` Provides you with the five basic triggers prebuilt, as well as an example of how to import from
-    a local file.
-- `.clasp.json` Provides the configuration for Clasp, the command-line tool which pushes code to Google Apps
-  Script.
-- `.claspignore` Tells Clasp to ignore every file except for `Code.js`, `appsscript.json`, and
-  `readme_appsscript.md`.
-- `.gitignore` Tells Git to ignore output files and `node_modules`.
-- `.prettierrc` Configures Prettier, the code formatter.
-- `appsscript.json` Controls the project setup and Apps Script environment. You can change the exception
-  logger, but don't change the runtime version.
-- `package.json` Lists the project dependencies and scripts.
-- `readme_appsscript.md` If anyone opens your project in the Apps Script editor, they'll just see a jumbled
-  file. This note helps them realize that the project should be edited outside of that environment.
-- `readme.md` This file.
-- `tsconfig.json` Configures the TypeScript compiler to enable strict mode and compile to CommonJS modules
-  from the `src` folder to the `build` folder.
-- `webpack.config.js` Configures Webpack to take files from the `build` folder and dependencies and merge them
-  all into a single `Code.js` file.
+GPL-2.0 — see [license.md](license.md).

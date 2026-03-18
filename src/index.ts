@@ -1,16 +1,72 @@
-// You can access any of the global GAS objects in this file. You can also
-// import local files or external dependencies:
-export { helloWorld } from "./example";
+// SheetORM — Public API exports
+// All types, classes, and utilities exported for consumers
 
-// Simple Triggers: These five export functions are reserved export function names that are
-// called by Google Apps when the corresponding event occurs. You can safely
-// delete them if you won't be using them, but don't use the same export function names
-// for anything else.
-// See: https://developers.google.com/apps-script/guides/triggers
+// Core types
+export type {
+  Entity,
+  FieldType,
+  FieldDefinition,
+  IndexDefinition,
+  TableSchema,
+  FilterOperator,
+  Filter,
+  SortClause,
+  QueryOptions,
+  PaginatedResult,
+  GroupResult,
+  LifecycleHooks,
+  ISheetAdapter,
+  ISpreadsheetAdapter,
+  ICacheProvider,
+} from './core/types';
 
-// NOTE: only `export {...}` syntax will work. You cannot define and export a trigger in
-// the same line.
+export { SYSTEM_COLUMNS, META_TABLE_NAME, INDEX_PREFIX } from './core/types';
 
+// Main ORM facade
+export { SheetORM } from './SheetORM';
+export type { SheetORMOptions } from './SheetORM';
+
+// Repository
+export { SheetRepository } from './core/SheetRepository';
+
+// Query
+export { QueryBuilder } from './query/QueryBuilder';
+export {
+  filterEntities,
+  sortEntities,
+  paginateEntities,
+  groupEntities,
+  executeQuery,
+} from './query/QueryEngine';
+
+// Index
+export { IndexStore } from './index/IndexStore';
+export type { IndexMeta } from './index/IndexStore';
+
+// Schema
+export { SchemaMigrator } from './schema/SchemaMigrator';
+
+// Storage adapters
+export {
+  GoogleSheetAdapter,
+  GoogleSpreadsheetAdapter,
+} from './storage/GoogleSheetsAdapter';
+
+// Utilities
+export { generateUUID } from './utils/uuid';
+export { MemoryCache } from './utils/cache';
+export {
+  serializeValue,
+  deserializeValue,
+  buildHeaders,
+  entityToRow,
+  rowToEntity,
+} from './utils/serialization';
+
+// Re-export example for GAS triggers (keep backward compat)
+export { helloWorld } from './example';
+
+// GAS Triggers
 function onOpen(
   e:
     | GoogleAppsScript.Events.DocsOnOpen

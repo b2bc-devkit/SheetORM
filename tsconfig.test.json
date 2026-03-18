@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "outDir": "build-test",
+    "lib": ["ESNext"],
+    "types": ["jest", "google-apps-script"],
+    "esModuleInterop": true
+  },
+  "include": ["src", "tests"]
+}

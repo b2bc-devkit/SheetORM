@@ -1,27 +1,30 @@
 {
   "scripts": {
-    "build": "rm -rf build && tsc && webpack",
+    "build": "node -e \"const fs=require('fs');if(fs.existsSync('build'))fs.rmSync('build',{recursive:true})\" && tsc && webpack",
     "push": "npm run build && clasp push -f",
     "deploy": "npm run push && clasp deploy",
-    "lint": "eslint",
+    "lint": "eslint .",
     "format": "prettier . --write",
+    "test": "jest --verbose",
     "login": "clasp login"
   },
   "license": "GPL",
-  "dependencies": {},
   "devDependencies": {
-    "@types/google-apps-script": "^1.0.97",
-    "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "@typescript-eslint/parser": "^6.21.0",
-    "@google/clasp": "^2.5.0",
-    "eslint": "^8.57.1",
-    "eslint-config-prettier": "^10.1.5",
+    "@google/clasp": "^3.3.0",
+    "@types/google-apps-script": "^2.0.8",
+    "@types/jest": "^30.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.1",
+    "@typescript-eslint/parser": "^8.57.1",
+    "eslint": "^10.0.3",
+    "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-googleappsscript": "^1.0.5",
     "gas-webpack-plugin": "^2.6.0",
-    "prettier": "^3.5.3",
-    "typescript": "^5.8.3",
-    "webpack": "^5.99.9",
-    "webpack-cli": "^6.0.1"
+    "jest": "^30.3.0",
+    "prettier": "^3.8.1",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.9.3",
+    "webpack": "^5.105.4",
+    "webpack-cli": "^7.0.2"
   },
   "private": true
 }

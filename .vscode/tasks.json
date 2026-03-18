@@ -1,0 +1,136 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: build",
+      "type": "shell",
+      "command": "npm run build",
+      "detail": "Clean + compile TypeScript + bundle via Webpack.",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "npm: test",
+      "type": "shell",
+      "command": "npm test",
+      "detail": "Run all Jest tests.",
+      "group": "test",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "npm: lint",
+      "type": "shell",
+      "command": "npm run lint",
+      "detail": "Lint TypeScript sources with ESLint.",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "npm: format",
+      "type": "shell",
+      "command": "npm run format",
+      "detail": "Format the workspace with Prettier.",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "npm: login",
+      "type": "shell",
+      "command": "npm run login",
+      "detail": "Authenticate clasp with Google Apps Script.",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "npm: verify",
+      "type": "shell",
+      "command": "echo SheetORM verification complete",
+      "detail": "Run lint, tests, and build in sequence.",
+      "dependsOn": ["npm: lint", "npm: test", "npm: build"],
+      "dependsOrder": "sequence",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "npm: push",
+      "type": "shell",
+      "command": "npx clasp push -f",
+      "detail": "Build and push the bundled script to Google Apps Script.",
+      "dependsOn": ["npm: build"],
+      "dependsOrder": "sequence",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "npm: deploy",
+      "type": "shell",
+      "command": "npx clasp deploy",
+      "detail": "Build, push, and create a versioned GAS deployment.",
+      "dependsOn": ["npm: push"],
+      "dependsOrder": "sequence",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": []
+    }
+  ]
+}
