@@ -1,6 +1,7 @@
 # SheetORM
 
-A TypeScript ORM for Google Sheets running in Google Apps Script (GAS). Inspired by Dari/Brightspot ORM patterns, SheetORM brings a structured, type-safe persistence layer to spreadsheet-based applications.
+A TypeScript ORM for Google Sheets running in Google Apps Script (GAS). Inspired by Dari/Brightspot ORM
+patterns, SheetORM brings a structured, type-safe persistence layer to spreadsheet-based applications.
 
 ## Features
 
@@ -58,7 +59,7 @@ npm run push    # build + push to GAS
 ### 4. Use in your GAS project
 
 ```ts
-import { SheetORM, TableSchema } from './SheetORM';
+import { SheetORM, TableSchema } from "./SheetORM";
 
 interface User {
   __id: string;
@@ -70,15 +71,13 @@ interface User {
 }
 
 const userSchema: TableSchema = {
-  tableName: 'Users',
+  tableName: "Users",
   fields: {
-    name:  { type: 'string', required: true },
-    email: { type: 'string', required: true, unique: true },
-    age:   { type: 'number', required: false, defaultValue: 0 },
+    name: { type: "string", required: true },
+    email: { type: "string", required: true, unique: true },
+    age: { type: "number", required: false, defaultValue: 0 },
   },
-  indexes: [
-    { fields: ['email'], unique: true },
-  ],
+  indexes: [{ fields: ["email"], unique: true }],
 };
 
 // Initialize
@@ -87,15 +86,11 @@ const orm = SheetORM.create(ss);
 orm.register(userSchema);
 
 // CRUD
-const users = orm.getRepository<User>('Users');
-const user = users.save({ name: 'Alice', email: 'alice@example.com', age: 30 } as any);
+const users = orm.getRepository<User>("Users");
+const user = users.save({ name: "Alice", email: "alice@example.com", age: 30 } as any);
 
 const found = users.findById(user.__id);
-const adults = users.query()
-  .where('age', '>=', 18)
-  .orderBy('name', 'asc')
-  .limit(10)
-  .execute();
+const adults = users.query().where("age", ">=", 18).orderBy("name", "asc").limit(10).execute();
 
 users.delete(user.__id);
 ```
@@ -104,46 +99,47 @@ users.delete(user.__id);
 
 ### SheetORM (Facade)
 
-| Method | Description |
-|--------|-------------|
-| `SheetORM.create(spreadsheet)` | Create an ORM instance |
-| `register(schema)` | Register a table schema |
-| `getRepository<T>(tableName)` | Get a typed repository |
-| `getMigrator()` | Access the schema migrator |
-| `getIndexStore()` | Access the index store |
-| `clearCache()` | Clear all cached data |
+| Method                         | Description                |
+| ------------------------------ | -------------------------- |
+| `SheetORM.create(spreadsheet)` | Create an ORM instance     |
+| `register(schema)`             | Register a table schema    |
+| `getRepository<T>(tableName)`  | Get a typed repository     |
+| `getMigrator()`                | Access the schema migrator |
+| `getIndexStore()`              | Access the index store     |
+| `clearCache()`                 | Clear all cached data      |
 
 ### SheetRepository\<T\>
 
-| Method | Description |
-|--------|-------------|
-| `save(entity)` | Insert or update an entity |
-| `saveAll(entities)` | Bulk insert |
-| `findById(id)` | Find by primary key |
-| `find(filters?, sort?, options?)` | Find with filters and sorting |
-| `findOne(filters)` | Find first matching entity |
-| `delete(id)` | Delete by ID |
-| `deleteAll()` | Remove all rows |
-| `count(filters?)` | Count matching entities |
-| `select(options)` | Paginated query → `PaginatedResult<T>` |
-| `groupBy(field, filters?)` | Group → `GroupResult<T>` |
-| `query()` | Start a fluent `QueryBuilder<T>` |
-| `beginBatch()` / `commitBatch()` / `rollbackBatch()` | Batch operations |
+| Method                                               | Description                            |
+| ---------------------------------------------------- | -------------------------------------- |
+| `save(entity)`                                       | Insert or update an entity             |
+| `saveAll(entities)`                                  | Bulk insert                            |
+| `findById(id)`                                       | Find by primary key                    |
+| `find(filters?, sort?, options?)`                    | Find with filters and sorting          |
+| `findOne(filters)`                                   | Find first matching entity             |
+| `delete(id)`                                         | Delete by ID                           |
+| `deleteAll()`                                        | Remove all rows                        |
+| `count(filters?)`                                    | Count matching entities                |
+| `select(options)`                                    | Paginated query → `PaginatedResult<T>` |
+| `groupBy(field, filters?)`                           | Group → `GroupResult<T>`               |
+| `query()`                                            | Start a fluent `QueryBuilder<T>`       |
+| `beginBatch()` / `commitBatch()` / `rollbackBatch()` | Batch operations                       |
 
 ### QueryBuilder\<T\>
 
 ```ts
-repo.query()
-  .where('status', '=', 'active')
-  .and('age', '>=', 18)
-  .or('role', '=', 'admin')
-  .orderBy('name', 'asc')
+repo
+  .query()
+  .where("status", "=", "active")
+  .and("age", ">=", 18)
+  .or("role", "=", "admin")
+  .orderBy("name", "asc")
   .limit(20)
   .offset(40)
-  .execute();       // Entity[]
-  // .first()       // Entity | null
-  // .count()       // number
-  // .groupBy('field') // GroupResult<T>
+  .execute(); // Entity[]
+// .first()       // Entity | null
+// .count()       // number
+// .groupBy('field') // GroupResult<T>
 ```
 
 ### Filter Operators
@@ -168,6 +164,30 @@ Runs 109 unit tests across 9 test suites using Jest + ts-jest with in-memory moc
 - `repository.test.ts` — Full repository CRUD + batch + hooks
 - `sheetorm.test.ts` — Facade integration
 
+### Jest ↔ GAS Runtime Parity (1:1)
+
+Project includes a strict parity mechanism to keep Jest tests and Google Apps Script runtime tests aligned:
+
+- `src/testing/parityCatalog.ts` — canonical list of Jest test cases
+- `src/testing/runtimeParity.ts` — runtime suite for Google Apps Script with matching case IDs
+- `tests/parity-validator.test.ts` — validator that fails when Jest and runtime cases diverge
+
+Run locally:
+
+```bash
+npm test
+```
+
+`parity-validator.test.ts` automatically checks:
+
+1. real `tests/*.test.ts` case titles vs parity catalog,
+2. parity catalog vs runtime parity handlers.
+
+Run in Google Apps Script runtime (real Sheets API):
+
+- `runSheetOrmRuntimeParity()` — executes full runtime parity suite and throws on any failure
+- `validateSheetOrmRuntimeParity()` — validates mapping only (fast drift check)
+
 ## CI
 
 GitHub Actions workflow at `.github/workflows/ci.yml` runs:
@@ -181,21 +201,23 @@ Matrix: Node 18, 20, 22.
 
 ## Available Scripts
 
-| Script | Description |
-|--------|-------------|
-| `npm run build` | Clean + compile TypeScript + bundle via Webpack |
-| `npm test` | Run all Jest tests |
-| `npm run lint` | Lint with ESLint |
-| `npm run format` | Format with Prettier |
-| `npm run login` | Authenticate with Google Apps Script (once) |
-| `npm run push` | Build + push to GAS |
-| `npm run deploy` | Build + push + create versioned deployment |
+| Script           | Description                                     |
+| ---------------- | ----------------------------------------------- |
+| `npm run build`  | Clean + compile TypeScript + bundle via Webpack |
+| `npm test`       | Run all Jest tests                              |
+| `npm run lint`   | Lint with ESLint                                |
+| `npm run format` | Format with Prettier                            |
+| `npm run login`  | Authenticate with Google Apps Script (once)     |
+| `npm run push`   | Build + push to GAS                             |
+| `npm run deploy` | Build + push + create versioned deployment      |
 
 ## Sheet Layout
 
-Each registered table occupies one sheet. Row 1 contains headers: `__id`, `__createdAt`, `__updatedAt`, followed by schema-defined fields. Data starts at row 2.
+Each registered table occupies one sheet. Row 1 contains headers: `__id`, `__createdAt`, `__updatedAt`,
+followed by schema-defined fields. Data starts at row 2.
 
 Special sheets:
+
 - `_meta` — Schema metadata (tableName, schemaJson, version)
 - `_idx_{table}_{field}` — Secondary index sheets (fieldValue → entityId mapping)
 
@@ -203,15 +225,20 @@ Special sheets:
 
 ### Exposing Functions to GAS
 
-Only functions exported from `index.ts` via `export { name }` syntax are available in Google Apps Script. Due to a gas-webpack-plugin limitation, `export function` and `export const` forms do not work.
+Only functions exported from `index.ts` via `export { name }` syntax are available in Google Apps Script. Due
+to a gas-webpack-plugin limitation, `export function` and `export const` forms do not work.
 
 ```ts
 // ✅ Works
-function myFunction() { /* ... */ }
+function myFunction() {
+  /* ... */
+}
 export { myFunction };
 
 // ❌ Does NOT work
-export function myFunction() { /* ... */ }
+export function myFunction() {
+  /* ... */
+}
 ```
 
 ### Circular Dependencies

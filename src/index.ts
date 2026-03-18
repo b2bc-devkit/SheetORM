@@ -18,53 +18,51 @@ export type {
   ISheetAdapter,
   ISpreadsheetAdapter,
   ICacheProvider,
-} from './core/types';
+} from "./core/types";
 
-export { SYSTEM_COLUMNS, META_TABLE_NAME, INDEX_PREFIX } from './core/types';
+export { SYSTEM_COLUMNS, META_TABLE_NAME, INDEX_PREFIX } from "./core/types";
 
 // Main ORM facade
-export { SheetORM } from './SheetORM';
-export type { SheetORMOptions } from './SheetORM';
+export { SheetORM } from "./SheetORM";
+export type { SheetORMOptions } from "./SheetORM";
 
 // Repository
-export { SheetRepository } from './core/SheetRepository';
+export { SheetRepository } from "./core/SheetRepository";
 
 // Query
-export { QueryBuilder } from './query/QueryBuilder';
+export { QueryBuilder } from "./query/QueryBuilder";
 export {
   filterEntities,
   sortEntities,
   paginateEntities,
   groupEntities,
   executeQuery,
-} from './query/QueryEngine';
+} from "./query/QueryEngine";
 
 // Index
-export { IndexStore } from './index/IndexStore';
-export type { IndexMeta } from './index/IndexStore';
+export { IndexStore } from "./index/IndexStore";
+export type { IndexMeta } from "./index/IndexStore";
 
 // Schema
-export { SchemaMigrator } from './schema/SchemaMigrator';
+export { SchemaMigrator } from "./schema/SchemaMigrator";
 
 // Storage adapters
-export {
-  GoogleSheetAdapter,
-  GoogleSpreadsheetAdapter,
-} from './storage/GoogleSheetsAdapter';
+export { GoogleSheetAdapter, GoogleSpreadsheetAdapter } from "./storage/GoogleSheetsAdapter";
 
 // Utilities
-export { generateUUID } from './utils/uuid';
-export { MemoryCache } from './utils/cache';
+export { generateUUID } from "./utils/uuid";
+export { MemoryCache } from "./utils/cache";
 export {
   serializeValue,
   deserializeValue,
   buildHeaders,
   entityToRow,
   rowToEntity,
-} from './utils/serialization';
+} from "./utils/serialization";
+export { runSheetOrmRuntimeParity, validateSheetOrmRuntimeParity } from "./testing/runtimeParity";
 
 // Re-export example for GAS triggers (keep backward compat)
-export { helloWorld } from './example';
+export { helloWorld } from "./example";
 
 // GAS Triggers
 function onOpen(

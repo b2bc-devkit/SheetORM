@@ -9,7 +9,7 @@
     "noFallthroughCasesInSwitch": true,
     "outDir": "build-test",
     "lib": ["ESNext"],
-    "types": ["jest", "google-apps-script"],
+    "types": ["jest", "google-apps-script", "node"],
     "esModuleInterop": true
   },
   "include": ["src", "tests"]
