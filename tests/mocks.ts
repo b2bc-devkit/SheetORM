@@ -1,6 +1,6 @@
 // Mock implementations of ISheetAdapter and ISpreadsheetAdapter for testing
 
-import { ISheetAdapter, ISpreadsheetAdapter } from '../src/core/types';
+import { ISheetAdapter, ISpreadsheetAdapter } from "../src/core/types";
 
 export class MockSheetAdapter implements ISheetAdapter {
   private name: string;
@@ -42,7 +42,9 @@ export class MockSheetAdapter implements ISheetAdapter {
   }
 
   updateRow(rowIndex: number, values: unknown[]): void {
-    if (rowIndex >= 0 && rowIndex < this.data.length) {
+    if (rowIndex === this.data.length) {
+      this.data.push([...values]);
+    } else if (rowIndex >= 0 && rowIndex < this.data.length) {
       this.data[rowIndex] = [...values];
     }
   }
@@ -71,6 +73,10 @@ export class MockSheetAdapter implements ISheetAdapter {
       return [...this.data[rowIndex]];
     }
     return [];
+  }
+
+  replaceAllData(rows: unknown[][]): void {
+    this.data = rows.map((row) => [...row]);
   }
 
   clear(): void {

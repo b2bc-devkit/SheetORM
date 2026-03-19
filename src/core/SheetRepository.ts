@@ -38,6 +38,7 @@ export class SheetRepository<T extends Entity> {
   private defaultableFields: TableSchema["fields"];
   private dataCacheKey: string;
   private fieldMap: Map<string, FieldDefinition>;
+  private idToRowIndex: Map<string, number> | null = null;
   private batchBuffer: Array<{ type: "save" | "delete"; data: unknown }> | null = null;
 
   constructor(
@@ -90,18 +91,44 @@ export class SheetRepository<T extends Entity> {
     const sheet = this.getSheet();
     const now = new Date().toISOString();
 
-    // ── Single data fetch: check existence AND retrieve row in one API call ──
+    // ── Existence check: prefer in-memory index, fall back to single API call ──
     let existingIdx: number | null = null;
-    let existingRowData: unknown[] | null = null;
+    let existingEntity: T | null = null;
 
     if (partial.__id) {
-      const data = sheet.getAllData();
-      const col = this.idColIdx;
-      for (let i = 0; i < data.length; i++) {
-        if (String(data[i][col]) === partial.__id) {
-          existingIdx = i;
-          existingRowData = data[i];
-          break;
+      // Try in-memory lookup (idToRowIndex + entity cache)
+      const cachedIdx = this.idToRowIndex?.get(partial.__id);
+      if (cachedIdx !== undefined && this.cache) {
+        const cached = this.cache.get<T[]>(this.dataCacheKey);
+        if (cached) {
+          existingIdx = cachedIdx;
+          for (let i = 0; i < cached.length; i++) {
+            if (cached[i].__id === partial.__id) {
+              existingEntity = cached[i];
+              break;
+            }
+          }
+        }
+      }
+
+      // Fallback: fetch from sheet and populate idToRowIndex + cache
+      if (existingIdx === null) {
+        const data = sheet.getAllData();
+        const rowIndex = new Map<string, number>();
+        const allEntities: T[] = new Array(data.length);
+        for (let i = 0; i < data.length; i++) {
+          const e = rowToEntity<T>(data[i], this.headers, this.schema.fields, this.fieldMap);
+          allEntities[i] = e;
+          rowIndex.set(e.__id, i);
+          if (e.__id === partial.__id) {
+            existingIdx = i;
+            existingEntity = e;
+          }
+        }
+        this.idToRowIndex = rowIndex;
+        // Also populate cache so subsequent reads skip getAllData
+        if (this.cache && !this.cache.has(this.dataCacheKey)) {
+          this.cache.set(this.dataCacheKey, allEntities);
         }
       }
     }
@@ -152,25 +179,37 @@ export class SheetRepository<T extends Entity> {
       } as T;
 
       const row = entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
-      sheet.appendRow(row);
-      sheet.flush(); // force GAS to commit the write before any subsequent reads
+
+      // Write at computed position — single setValues call, no flush needed
+      let dataIndex: number;
+      if (this.idToRowIndex) {
+        dataIndex = this.idToRowIndex.size;
+      } else {
+        dataIndex = sheet.getRowCount();
+        if (dataIndex === 0) {
+          this.idToRowIndex = new Map();
+          // Bootstrap empty cache so subsequent finds are cache hits
+          if (this.cache && !this.cache.has(this.dataCacheKey)) {
+            this.cache.set(this.dataCacheKey, []);
+          }
+        }
+      }
+      sheet.updateRow(dataIndex, row);
 
       // Add to indexes
       this.addToIndexes(entity);
-    } else {
-      // UPDATE — use existingRowData from the initial fetch (no extra getRow() call)
-      const existingEntity = rowToEntity<T>(
-        existingRowData!,
-        this.headers,
-        this.schema.fields,
-        this.fieldMap,
-      );
 
+      // Update in-memory row index
+      if (this.idToRowIndex) {
+        this.idToRowIndex.set(entity.__id, dataIndex);
+      }
+    } else {
+      // UPDATE — use cached entity or freshly deserialized one
       entity = {
-        ...existingEntity,
+        ...existingEntity!,
         ...entityData,
-        __id: existingEntity.__id,
-        __createdAt: existingEntity.__createdAt,
+        __id: existingEntity!.__id,
+        __createdAt: existingEntity!.__createdAt,
         __updatedAt: now,
       } as T;
 
@@ -181,14 +220,14 @@ export class SheetRepository<T extends Entity> {
       const oldValues: Record<string, unknown> = {};
       const newValues: Record<string, unknown> = {};
       for (const field of this.schema.fields) {
-        oldValues[field.name] = existingEntity[field.name];
+        oldValues[field.name] = existingEntity![field.name];
         newValues[field.name] = entity[field.name];
       }
       this.indexStore.updateForEntity(this.schema.tableName, entity.__id, oldValues, newValues);
     }
 
-    // Invalidate cache
-    this.invalidateDataCache();
+    // Update entity cache in place (avoid full invalidation)
+    this.updateCacheAfterSave(entity, isNew);
 
     // Lifecycle: afterSave
     if (this.hooks.afterSave) {
@@ -251,14 +290,35 @@ export class SheetRepository<T extends Entity> {
     }
 
     const sheet = this.getSheet();
-    const rowIdx = this.rowIndexById(sheet, id);
+
+    // Try in-memory index first, fall back to sheet scan
+    let rowIdx: number | null = null;
+    if (this.idToRowIndex) {
+      const idx = this.idToRowIndex.get(id);
+      if (idx !== undefined) rowIdx = idx;
+    }
+    if (rowIdx === null) {
+      rowIdx = this.rowIndexById(sheet, id);
+    }
     if (rowIdx === null) return false;
 
     // Remove from indexes
     this.indexStore.removeAllForEntity(this.schema.tableName, id);
 
     sheet.deleteRow(rowIdx);
-    this.invalidateDataCache();
+
+    // Update idToRowIndex: remove deleted ID and shift rows above it down
+    if (this.idToRowIndex) {
+      this.idToRowIndex.delete(id);
+      for (const [key, idx] of this.idToRowIndex) {
+        if (idx > rowIdx) {
+          this.idToRowIndex.set(key, idx - 1);
+        }
+      }
+    }
+
+    // Update entity cache in place
+    this.updateCacheAfterDelete(id);
 
     // Lifecycle: afterDelete
     if (this.hooks.afterDelete) {
@@ -270,16 +330,59 @@ export class SheetRepository<T extends Entity> {
 
   /**
    * Delete all entities matching a query.
+   * Uses bulk write (replaceAllData) for 3+ deletions, individual deletes for 1-2.
    */
   deleteAll(options?: QueryOptions): number {
-    const entities = this.find(options);
-    let count = 0;
-    for (const entity of entities) {
-      if (this.delete(entity.__id)) {
-        count++;
+    if (this.batchBuffer) {
+      const entities = this.find(options);
+      for (const entity of entities) {
+        this.batchBuffer.push({ type: "delete", data: entity.__id });
       }
+      return entities.length;
     }
-    return count;
+
+    const all = this.loadAllEntities();
+    const toDelete = options?.where ? filterEntities(all, options.where) : [...all];
+    if (toDelete.length === 0) return 0;
+
+    // For small batches, individual deletes are cheaper than replaceAllData
+    if (toDelete.length <= 2) {
+      let count = 0;
+      for (const entity of toDelete) {
+        if (this.doDelete(entity.__id)) count++;
+      }
+      return count;
+    }
+
+    // Bulk delete: snapshot → filter → write back (2 API calls vs N)
+    const deleteIds = new Set<string>();
+    for (const entity of toDelete) {
+      if (this.hooks.beforeDelete && this.hooks.beforeDelete(entity.__id) === false) continue;
+      deleteIds.add(entity.__id);
+    }
+    if (deleteIds.size === 0) return 0;
+
+    const remaining = all.filter((e) => !deleteIds.has(e.__id));
+    const sheet = this.getSheet();
+    const rows = remaining.map((e) => entityToRow(e, this.schema.fields, this.headers, this.fieldMap));
+    sheet.replaceAllData(rows);
+
+    for (const id of deleteIds) {
+      this.indexStore.removeAllForEntity(this.schema.tableName, id);
+      if (this.hooks.afterDelete) this.hooks.afterDelete(id);
+    }
+
+    if (this.cache) {
+      this.cache.set(this.dataCacheKey, remaining);
+    }
+
+    const rowIndex = new Map<string, number>();
+    for (let i = 0; i < remaining.length; i++) {
+      rowIndex.set(remaining[i].__id, i);
+    }
+    this.idToRowIndex = rowIndex;
+
+    return deleteIds.size;
   }
 
   /**
@@ -396,9 +499,12 @@ export class SheetRepository<T extends Entity> {
     const fields = this.schema.fields;
     const fMap = this.fieldMap;
     const entities: T[] = new Array(len);
+    const rowIndex = new Map<string, number>();
     for (let i = 0; i < len; i++) {
       entities[i] = rowToEntity<T>(data[i], headers, fields, fMap);
+      rowIndex.set(entities[i].__id, i);
     }
+    this.idToRowIndex = rowIndex;
 
     if (this.cache) {
       this.cache.set(this.dataCacheKey, entities);
@@ -415,12 +521,16 @@ export class SheetRepository<T extends Entity> {
     const col = this.idColIdx;
     if (col < 0) return null;
 
+    // Populate idToRowIndex while scanning (we already have all the data)
+    const rowIndex = new Map<string, number>();
+    let result: number | null = null;
     for (let i = 0; i < data.length; i++) {
-      if (String(data[i][col]) === id) {
-        return i;
-      }
+      const rowId = String(data[i][col]);
+      rowIndex.set(rowId, i);
+      if (rowId === id) result = i;
     }
-    return null;
+    this.idToRowIndex = rowIndex;
+    return result;
   }
 
   /**
@@ -436,8 +546,33 @@ export class SheetRepository<T extends Entity> {
     }
   }
 
-  private invalidateDataCache(): void {
+  private updateCacheAfterSave(entity: T, isNew: boolean): void {
     if (!this.cache) return;
-    this.cache.delete(this.dataCacheKey);
+    const cached = this.cache.get<T[]>(this.dataCacheKey);
+    if (!cached) return;
+
+    if (isNew) {
+      cached.push(entity);
+    } else {
+      for (let i = 0; i < cached.length; i++) {
+        if (cached[i].__id === entity.__id) {
+          cached[i] = entity;
+          return;
+        }
+      }
+    }
+  }
+
+  private updateCacheAfterDelete(id: string): void {
+    if (!this.cache) return;
+    const cached = this.cache.get<T[]>(this.dataCacheKey);
+    if (!cached) return;
+
+    for (let i = 0; i < cached.length; i++) {
+      if (cached[i].__id === id) {
+        cached.splice(i, 1);
+        return;
+      }
+    }
   }
 }

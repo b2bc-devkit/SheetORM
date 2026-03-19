@@ -1,6 +1,6 @@
 // SheetORM — Google Sheets adapter implementing ISpreadsheetAdapter / ISheetAdapter
 
-import { ISpreadsheetAdapter, ISheetAdapter } from '../core/types';
+import { ISpreadsheetAdapter, ISheetAdapter } from "../core/types";
 
 /**
  * Adapter wrapping a real Google Apps Script Sheet object.
@@ -83,6 +83,21 @@ export class GoogleSheetAdapter implements ISheetAdapter {
     const lastCol = this.sheet.getLastColumn();
     if (lastCol === 0) return [];
     return this.sheet.getRange(sheetRow, 1, 1, lastCol).getValues()[0];
+  }
+
+  replaceAllData(rows: unknown[][]): void {
+    const lastRow = this.sheet.getLastRow();
+    const lastCol = this.sheet.getLastColumn();
+    const oldDataRows = Math.max(0, lastRow - 1);
+    const numCols = lastCol || (rows.length > 0 ? rows[0].length : 0);
+
+    if (rows.length > 0) {
+      this.sheet.getRange(2, 1, rows.length, numCols).setValues(rows);
+    }
+
+    if (oldDataRows > rows.length && numCols > 0) {
+      this.sheet.getRange(rows.length + 2, 1, oldDataRows - rows.length, numCols).clearContent();
+    }
   }
 
   clear(): void {

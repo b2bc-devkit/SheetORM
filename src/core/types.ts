@@ -97,6 +97,7 @@ export interface ISheetAdapter {
   deleteRow(rowIndex: number): void;
   deleteRows(rowIndexes: number[]): void;
   getRow(rowIndex: number): unknown[];
+  replaceAllData(rows: unknown[][]): void;
   clear(): void;
   flush(): void;
 }
