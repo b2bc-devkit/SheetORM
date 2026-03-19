@@ -53,7 +53,9 @@ export class Registry {
     if (!this.indexStore) {
       const adapter = this.getAdapter();
       if (!this.cache) this.cache = new MemoryCache();
-      this.indexStore = new IndexStore(adapter, this.cache);
+      // IndexStore gets its own cache instance so that invalidateCache() → cache.clear()
+      // does NOT contaminate the entity data cache used by SheetRepository.
+      this.indexStore = new IndexStore(adapter, new MemoryCache());
     }
     return this.indexStore;
   }
@@ -68,9 +70,9 @@ export class Registry {
     sheet.setHeaders(buildHeaders(schema.fields));
 
     for (const idx of schema.indexes) {
-      if (!indexStore.exists(schema.tableName, idx.field)) {
-        indexStore.createIndex(schema.tableName, idx.field, { unique: idx.unique });
-      }
+      // createIndex() already handles the "already exists" case internally,
+      // so we skip the redundant exists() check (saves 1 getSheetByName API call per index).
+      indexStore.createIndex(schema.tableName, idx.field, { unique: idx.unique });
       indexStore.registerIndex(schema.tableName, idx.field, idx.unique ?? false);
     }
   }

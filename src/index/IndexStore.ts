@@ -231,14 +231,11 @@ export class IndexStore {
 
   /**
    * Rebuild an index from scratch using entity data.
+   * Uses replaceAllData for a single bulk write (headers preserved in row 1).
    */
   rebuild(tableName: string, field: string, entities: Array<{ id: string; value: unknown }>): void {
     const sheet = this.getIndexSheet(tableName, field);
     if (!sheet) return;
-
-    // Clear and rebuild
-    sheet.clear();
-    sheet.setHeaders(["value", "entityId"]);
 
     const rows: unknown[][] = [];
     for (const e of entities) {
@@ -247,10 +244,7 @@ export class IndexStore {
       }
     }
 
-    if (rows.length > 0) {
-      sheet.appendRows(rows);
-    }
-
+    sheet.replaceAllData(rows);
     this.invalidateCache(tableName, field);
   }
 
