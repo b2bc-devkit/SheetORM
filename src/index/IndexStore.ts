@@ -132,19 +132,18 @@ export class IndexStore {
 
     const data = sheet.getAllData();
     const searchValue = String(value);
-    const remaining: unknown[][] = [];
-    let changed = false;
+    const rowsToDelete: number[] = [];
 
     for (let i = 0; i < data.length; i++) {
       if (String(data[i][0]) === searchValue && String(data[i][1]) === entityId) {
-        changed = true;
-      } else {
-        remaining.push(data[i]);
+        rowsToDelete.push(i);
       }
     }
 
-    if (changed) {
-      sheet.replaceAllData(remaining);
+    if (rowsToDelete.length > 0) {
+      for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+        sheet.deleteRow(rowsToDelete[i]);
+      }
       this.invalidateCache(tableName, field);
     }
   }
@@ -159,19 +158,18 @@ export class IndexStore {
       if (!sheet) continue;
 
       const data = sheet.getAllData();
-      const remaining: unknown[][] = [];
-      let changed = false;
+      const rowsToDelete: number[] = [];
 
       for (let i = 0; i < data.length; i++) {
         if (String(data[i][1]) === entityId) {
-          changed = true;
-        } else {
-          remaining.push(data[i]);
+          rowsToDelete.push(i);
         }
       }
 
-      if (changed) {
-        sheet.replaceAllData(remaining);
+      if (rowsToDelete.length > 0) {
+        for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+          sheet.deleteRow(rowsToDelete[i]);
+        }
         this.invalidateCache(tableName, meta.field);
       }
     }
@@ -201,30 +199,32 @@ export class IndexStore {
       const oldStr = oldVal !== undefined && oldVal !== null && oldVal !== "" ? String(oldVal) : null;
       const newStr = newVal !== undefined && newVal !== null && newVal !== "" ? String(newVal) : null;
 
-      // Build new rows: filter out old entry in a single pass
-      const rows: unknown[][] = [];
-      for (let i = 0; i < data.length; i++) {
-        if (oldStr !== null && String(data[i][0]) === oldStr && String(data[i][1]) === entityId) {
-          continue; // remove old entry
-        }
-        rows.push(data[i]);
-      }
-
-      // Add new entry with inline uniqueness check
-      if (newStr !== null) {
-        if (meta.unique) {
-          for (let i = 0; i < rows.length; i++) {
-            if (String(rows[i][0]) === newStr && String(rows[i][1]) !== entityId) {
-              throw new Error(
-                `Unique index violation: ${tableName}.${field} already has value "${newStr}" for entity ${String(rows[i][1])}`,
-              );
-            }
+      // Check uniqueness before any writes
+      if (newStr !== null && meta.unique) {
+        for (let i = 0; i < data.length; i++) {
+          if (String(data[i][0]) === newStr && String(data[i][1]) !== entityId) {
+            throw new Error(
+              `Unique index violation: ${tableName}.${field} already has value "${newStr}" for entity ${String(data[i][1])}`,
+            );
           }
         }
-        rows.push([newStr, entityId]);
       }
 
-      sheet.replaceAllData(rows);
+      // Remove old entry (bottom-to-top so row indices stay valid)
+      if (oldStr !== null) {
+        for (let i = data.length - 1; i >= 0; i--) {
+          if (String(data[i][0]) === oldStr && String(data[i][1]) === entityId) {
+            sheet.deleteRow(i);
+            break;
+          }
+        }
+      }
+
+      // Add new entry
+      if (newStr !== null) {
+        sheet.appendRow([newStr, entityId]);
+      }
+
       this.invalidateCache(tableName, field);
     }
   }

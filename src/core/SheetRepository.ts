@@ -116,24 +116,15 @@ export class SheetRepository<T extends Entity> {
         const data = sheet.getAllData();
         const rowIndex = new Map<string, number>();
         const col = this.idColIdx;
-        // Eagerly build full entity cache during this read — free since we have all data
-        const needsCache = this.cache !== null && !this.cache.has(this.dataCacheKey);
-        const allEntities = needsCache ? new Array<T>(data.length) : null;
         for (let i = 0; i < data.length; i++) {
           const rowId = String(data[i][col]);
           rowIndex.set(rowId, i);
           if (rowId === partial.__id) {
             existingIdx = i;
             existingEntity = rowToEntity<T>(data[i], this.headers, this.schema.fields, this.fieldMap);
-            if (allEntities) allEntities[i] = existingEntity;
-          } else if (allEntities) {
-            allEntities[i] = rowToEntity<T>(data[i], this.headers, this.schema.fields, this.fieldMap);
           }
         }
         this.idToRowIndex = rowIndex;
-        if (needsCache && allEntities && data.length > 0) {
-          this.cache!.set(this.dataCacheKey, allEntities);
-        }
       }
     }
 
