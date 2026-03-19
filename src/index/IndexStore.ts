@@ -132,17 +132,19 @@ export class IndexStore {
 
     const data = sheet.getAllData();
     const searchValue = String(value);
-    const rowsToDelete: number[] = [];
+    const remaining: unknown[][] = [];
+    let changed = false;
 
     for (let i = 0; i < data.length; i++) {
-      const row = data[i];
-      if (String(row[0]) === searchValue && String(row[1]) === entityId) {
-        rowsToDelete.push(i);
+      if (String(data[i][0]) === searchValue && String(data[i][1]) === entityId) {
+        changed = true;
+      } else {
+        remaining.push(data[i]);
       }
     }
 
-    if (rowsToDelete.length > 0) {
-      sheet.deleteRows(rowsToDelete);
+    if (changed) {
+      sheet.replaceAllData(remaining);
       this.invalidateCache(tableName, field);
     }
   }
@@ -157,23 +159,26 @@ export class IndexStore {
       if (!sheet) continue;
 
       const data = sheet.getAllData();
-      const rowsToDelete: number[] = [];
+      const remaining: unknown[][] = [];
+      let changed = false;
 
       for (let i = 0; i < data.length; i++) {
         if (String(data[i][1]) === entityId) {
-          rowsToDelete.push(i);
+          changed = true;
+        } else {
+          remaining.push(data[i]);
         }
       }
 
-      if (rowsToDelete.length > 0) {
-        sheet.deleteRows(rowsToDelete);
+      if (changed) {
+        sheet.replaceAllData(remaining);
         this.invalidateCache(tableName, meta.field);
       }
     }
   }
 
   /**
-   * Update index entries for an entity (remove old, add new).
+   * Update index entries for an entity (remove old, add new) in a single round trip.
    */
   updateForEntity(
     tableName: string,
@@ -187,14 +192,40 @@ export class IndexStore {
       const oldVal = oldValues[field];
       const newVal = newValues[field];
 
-      if (oldVal !== newVal) {
-        if (oldVal !== undefined && oldVal !== null && oldVal !== "") {
-          this.remove(tableName, field, oldVal, entityId);
+      if (oldVal === newVal) continue;
+
+      const sheet = this.getIndexSheet(tableName, field);
+      if (!sheet) continue;
+
+      const data = sheet.getAllData();
+      const oldStr = oldVal !== undefined && oldVal !== null && oldVal !== "" ? String(oldVal) : null;
+      const newStr = newVal !== undefined && newVal !== null && newVal !== "" ? String(newVal) : null;
+
+      // Build new rows: filter out old entry in a single pass
+      const rows: unknown[][] = [];
+      for (let i = 0; i < data.length; i++) {
+        if (oldStr !== null && String(data[i][0]) === oldStr && String(data[i][1]) === entityId) {
+          continue; // remove old entry
         }
-        if (newVal !== undefined && newVal !== null && newVal !== "") {
-          this.add(tableName, field, newVal, entityId);
-        }
+        rows.push(data[i]);
       }
+
+      // Add new entry with inline uniqueness check
+      if (newStr !== null) {
+        if (meta.unique) {
+          for (let i = 0; i < rows.length; i++) {
+            if (String(rows[i][0]) === newStr && String(rows[i][1]) !== entityId) {
+              throw new Error(
+                `Unique index violation: ${tableName}.${field} already has value "${newStr}" for entity ${String(rows[i][1])}`,
+              );
+            }
+          }
+        }
+        rows.push([newStr, entityId]);
+      }
+
+      sheet.replaceAllData(rows);
+      this.invalidateCache(tableName, field);
     }
   }
 

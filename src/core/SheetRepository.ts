@@ -111,25 +111,20 @@ export class SheetRepository<T extends Entity> {
         }
       }
 
-      // Fallback: fetch from sheet and populate idToRowIndex + cache
+      // Fallback: fast scan — check only the ID column, deserialize just the target entity
       if (existingIdx === null) {
         const data = sheet.getAllData();
         const rowIndex = new Map<string, number>();
-        const allEntities: T[] = new Array(data.length);
+        const col = this.idColIdx;
         for (let i = 0; i < data.length; i++) {
-          const e = rowToEntity<T>(data[i], this.headers, this.schema.fields, this.fieldMap);
-          allEntities[i] = e;
-          rowIndex.set(e.__id, i);
-          if (e.__id === partial.__id) {
+          const rowId = String(data[i][col]);
+          rowIndex.set(rowId, i);
+          if (rowId === partial.__id) {
             existingIdx = i;
-            existingEntity = e;
+            existingEntity = rowToEntity<T>(data[i], this.headers, this.schema.fields, this.fieldMap);
           }
         }
         this.idToRowIndex = rowIndex;
-        // Also populate cache so subsequent reads skip getAllData
-        if (this.cache && !this.cache.has(this.dataCacheKey)) {
-          this.cache.set(this.dataCacheKey, allEntities);
-        }
       }
     }
 
