@@ -4,25 +4,19 @@
 // This file is NOT compiled into the library — it serves as a reference.
 // In GAS, import from the bundled SheetORM globals directly.
 
-import { Record, QueryBuilder } from "../src/index";
-import type { FieldDefinition, IndexDefinition } from "../src/index";
+import { Record, Query, Indexed, Required } from "../src/index";
 
 // ─── Define models by extending Record ───────────────
 
 class Car extends Record {
-  static tableName = "Cars";
-  static fields: FieldDefinition[] = [
-    { name: "make", type: "string", required: true },
-    { name: "model", type: "string", required: true },
-    { name: "year", type: "number" },
-    { name: "color", type: "string" },
-  ];
-  static indexes: IndexDefinition[] = [{ field: "make" }];
+  @Indexed()
+  make: string;
 
-  declare make: string;
-  declare model: string;
-  declare year: number;
-  declare color: string;
+  @Required()
+  model: string;
+
+  year: number;
+  color: string;
 }
 
 // ─── Usage — everything is fully automatic ───────────
@@ -36,9 +30,13 @@ export function helloWorld() {
   car.color = "blue";
   car.save(); // auto-creates 'Cars' sheet, persists entity
 
+  // Static create + save
+  const car2 = Car.create({ make: "Honda", model: "Civic", year: 2023 });
+  car2.save();
+
   // Fluent set + save
-  const car2 = new Car();
-  car2.set("make", "Honda").set("model", "Civic").set("year", 2023).save();
+  const car3 = new Car();
+  car3.set("make", "BMW").set("model", "X5").set("year", 2024).save();
 
   // Static queries — return typed Car[]
   const toyotas = Car.where("make", "=", "Toyota").execute();
@@ -48,8 +46,8 @@ export function helloWorld() {
   const found = Car.findById(car.__id);
   console.log("Found:", found?.model);
 
-  // QueryBuilder.from() — works with class ref (typed) or string
-  const recent = QueryBuilder.from(Car).where("year", ">=", 2023).orderBy("year", "desc").limit(10).execute();
+  // Query.from() — works with class ref (typed) or string
+  const recent = Query.from(Car).where("year", ">=", 2023).orderBy("year", "desc").limit(10).execute();
   console.log("Recent cars:", recent.length);
 
   // Update
@@ -58,6 +56,7 @@ export function helloWorld() {
 
   // Delete
   car2.delete();
+  car3.delete();
 
   // Count
   console.log("Total cars:", Car.count());

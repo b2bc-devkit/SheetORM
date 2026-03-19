@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "build": "node -e \"const fs=require('fs');if(fs.existsSync('build'))fs.rmSync('build',{recursive:true})\" && tsc && webpack",
+    "build": "node scripts/build.mjs",
     "push": "npm run build && clasp push -f",
     "deploy": "npm run push && clasp deploy",
     "lint": "eslint .",
@@ -10,7 +10,13 @@
   },
   "license": "GPL",
   "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/plugin-transform-class-properties": "^7.28.6",
+    "@babel/plugin-transform-nullish-coalescing-operator": "^7.28.6",
+    "@babel/plugin-transform-numeric-separator": "^7.28.6",
+    "@babel/plugin-transform-optional-chaining": "^7.28.6",
     "@google/clasp": "^3.3.0",
+    "@rollup/plugin-babel": "^6.1.0",
     "@types/google-apps-script": "^2.0.8",
     "@types/jest": "^30.0.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
@@ -18,13 +24,12 @@
     "eslint": "^10.0.3",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-googleappsscript": "^1.0.5",
-    "gas-webpack-plugin": "^2.6.0",
     "jest": "^30.3.0",
     "prettier": "^3.8.1",
+    "terser": "^5.44.1",
     "ts-jest": "^29.4.6",
     "typescript": "^5.9.3",
-    "webpack": "^5.105.4",
-    "webpack-cli": "^7.0.2"
+    "vite": "^7.3.1"
   },
   "private": true
 }

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { PARITY_CASE_IDS, PARITY_SUITES, toParityCaseId } from "../src/testing/parityCatalog";
-import { RUNTIME_PARITY_CASE_IDS, validateSheetOrmRuntimeParity } from "../src/testing/runtimeParity";
+import { RUNTIME_PARITY_CASE_IDS, validateTests } from "../src/testing/runtimeParity";
 
 function extractJestCaseIdsFromFile(filePath: string, fileName: string): string[] {
   const content = fs.readFileSync(filePath, "utf8");
@@ -36,6 +36,6 @@ describe("Jest/runtime parity validator", () => {
   });
 
   it("runtime parity validation function reports no drift", () => {
-    expect(() => validateSheetOrmRuntimeParity()).not.toThrow();
+    expect(() => validateTests()).not.toThrow();
   });
 });

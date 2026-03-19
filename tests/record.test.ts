@@ -1,39 +1,30 @@
 import { MockSpreadsheetAdapter } from "./mocks";
-import { FieldDefinition, IndexDefinition } from "../src/core/types";
 import { Record } from "../src/core/Record";
-import { QueryBuilder } from "../src/query/QueryBuilder";
-import { SheetORM } from "../src/SheetORM";
+import { Indexed, Required, resetDecoratorCaches } from "../src/core/decorators";
+import { Query } from "../src/query/Query";
+import { Registry } from "../src/core/Registry";
 
 // ─── Test Model Definitions ─────────────────────────
 
 class Car extends Record {
-  static tableName = "Cars";
-  static fields: FieldDefinition[] = [
-    { name: "make", type: "string", required: true },
-    { name: "model", type: "string", required: true },
-    { name: "year", type: "number" },
-    { name: "color", type: "string" },
-  ];
-  static indexes: IndexDefinition[] = [{ field: "make" }];
+  @Indexed()
+  make: string;
 
-  declare make: string;
-  declare model: string;
-  declare year: number;
-  declare color: string;
+  @Required()
+  model: string;
+
+  year: number;
+  color: string;
 }
 
 class Product extends Record {
-  static tableName = "Products";
-  static fields: FieldDefinition[] = [
-    { name: "name", type: "string", required: true },
-    { name: "price", type: "number", required: true },
-    { name: "category", type: "string" },
-  ];
-  static indexes: IndexDefinition[] = [{ field: "category" }];
+  name: string;
 
-  declare name: string;
-  declare price: number;
-  declare category: string;
+  @Required()
+  price: number;
+
+  @Indexed()
+  category: string;
 }
 
 // ─── Tests ──────────────────────────────────────────
@@ -43,11 +34,12 @@ describe("Record ActiveRecord API", () => {
 
   beforeEach(() => {
     adapter = new MockSpreadsheetAdapter();
-    SheetORM.initialize({ adapter });
+    Registry.getInstance().configure({ adapter });
   });
 
   afterEach(() => {
-    SheetORM.reset();
+    Registry.reset();
+    resetDecoratorCaches();
   });
 
   describe("save()", () => {
@@ -71,7 +63,6 @@ describe("Record ActiveRecord API", () => {
       car.save();
 
       expect(adapter.getSheetNames()).toContain("Cars");
-      expect(adapter.getSheetNames()).toContain("_meta");
     });
 
     it("updates an existing entity", () => {
@@ -196,9 +187,9 @@ describe("Record ActiveRecord API", () => {
     });
   });
 
-  describe("constructor with data", () => {
-    it("initializes fields from data object", () => {
-      const car = new Car({ make: "Toyota", model: "Corolla", year: 2024 });
+  describe("create() with data", () => {
+    it("creates instance with data via static create()", () => {
+      const car = Car.create({ make: "Toyota", model: "Corolla", year: 2024 });
       expect(car.make).toBe("Toyota");
       expect(car.model).toBe("Corolla");
       expect(car.year).toBe(2024);
@@ -220,15 +211,15 @@ describe("Record ActiveRecord API", () => {
 
     it("returns null for non-existent ID", () => {
       // Ensure table exists
-      new Car({ make: "X", model: "Y" }).save();
+      Car.create({ make: "X", model: "Y" }).save();
       expect(Car.findById("nonexistent")).toBeNull();
     });
   });
 
   describe("static find()", () => {
     it("returns all entities", () => {
-      new Car({ make: "Toyota", model: "Corolla" }).save();
-      new Car({ make: "Honda", model: "Civic" }).save();
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
+      Car.create({ make: "Honda", model: "Civic" }).save();
 
       const all = Car.find();
       expect(all).toHaveLength(2);
@@ -236,8 +227,8 @@ describe("Record ActiveRecord API", () => {
     });
 
     it("returns entities matching query", () => {
-      new Car({ make: "Toyota", model: "Corolla" }).save();
-      new Car({ make: "Honda", model: "Civic" }).save();
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
+      Car.create({ make: "Honda", model: "Civic" }).save();
 
       const toyotas = Car.find({
         where: [{ field: "make", operator: "=", value: "Toyota" }],
@@ -249,8 +240,8 @@ describe("Record ActiveRecord API", () => {
 
   describe("static findOne()", () => {
     it("returns first matching entity", () => {
-      new Car({ make: "Toyota", model: "Corolla" }).save();
-      new Car({ make: "Honda", model: "Civic" }).save();
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
+      Car.create({ make: "Honda", model: "Civic" }).save();
 
       const found = Car.findOne({
         where: [{ field: "make", operator: "=", value: "Honda" }],
@@ -261,7 +252,7 @@ describe("Record ActiveRecord API", () => {
     });
 
     it("returns null when no match", () => {
-      new Car({ make: "Toyota", model: "Corolla" }).save();
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
       const found = Car.findOne({
         where: [{ field: "make", operator: "=", value: "BMW" }],
       });
@@ -270,10 +261,10 @@ describe("Record ActiveRecord API", () => {
   });
 
   describe("static where()", () => {
-    it("returns a QueryBuilder and chains", () => {
-      new Car({ make: "Toyota", model: "Corolla", year: 2020 }).save();
-      new Car({ make: "Toyota", model: "Camry", year: 2024 }).save();
-      new Car({ make: "Honda", model: "Civic", year: 2023 }).save();
+    it("returns a Query and chains", () => {
+      Car.create({ make: "Toyota", model: "Corolla", year: 2020 }).save();
+      Car.create({ make: "Toyota", model: "Camry", year: 2024 }).save();
+      Car.create({ make: "Honda", model: "Civic", year: 2023 }).save();
 
       const result = Car.where("make", "=", "Toyota").orderBy("year", "desc").execute();
 
@@ -284,10 +275,10 @@ describe("Record ActiveRecord API", () => {
   });
 
   describe("static query()", () => {
-    it("returns a QueryBuilder", () => {
-      new Car({ make: "Toyota", model: "Corolla", year: 2020 }).save();
-      new Car({ make: "Honda", model: "Civic", year: 2023 }).save();
-      new Car({ make: "BMW", model: "X5", year: 2024 }).save();
+    it("returns a Query", () => {
+      Car.create({ make: "Toyota", model: "Corolla", year: 2020 }).save();
+      Car.create({ make: "Honda", model: "Civic", year: 2023 }).save();
+      Car.create({ make: "BMW", model: "X5", year: 2024 }).save();
 
       const result = Car.query().where("year", ">=", 2023).orderBy("year", "asc").execute();
 
@@ -299,23 +290,23 @@ describe("Record ActiveRecord API", () => {
 
   describe("static count()", () => {
     it("counts all entities", () => {
-      new Car({ make: "A", model: "B" }).save();
-      new Car({ make: "C", model: "D" }).save();
+      Car.create({ make: "A", model: "B" }).save();
+      Car.create({ make: "C", model: "D" }).save();
       expect(Car.count()).toBe(2);
     });
 
     it("counts with filter", () => {
-      new Car({ make: "Toyota", model: "A" }).save();
-      new Car({ make: "Honda", model: "B" }).save();
+      Car.create({ make: "Toyota", model: "A" }).save();
+      Car.create({ make: "Honda", model: "B" }).save();
       expect(Car.count({ where: [{ field: "make", operator: "=", value: "Toyota" }] })).toBe(1);
     });
   });
 
   describe("static deleteAll()", () => {
     it("deletes matching entities", () => {
-      new Car({ make: "Toyota", model: "A" }).save();
-      new Car({ make: "Honda", model: "B" }).save();
-      new Car({ make: "Toyota", model: "C" }).save();
+      Car.create({ make: "Toyota", model: "A" }).save();
+      Car.create({ make: "Honda", model: "B" }).save();
+      Car.create({ make: "Toyota", model: "C" }).save();
 
       const count = Car.deleteAll({
         where: [{ field: "make", operator: "=", value: "Toyota" }],
@@ -327,9 +318,9 @@ describe("Record ActiveRecord API", () => {
 
   describe("static select()", () => {
     it("returns paginated results", () => {
-      new Car({ make: "A", model: "A" }).save();
-      new Car({ make: "B", model: "B" }).save();
-      new Car({ make: "C", model: "C" }).save();
+      Car.create({ make: "A", model: "A" }).save();
+      Car.create({ make: "B", model: "B" }).save();
+      Car.create({ make: "C", model: "C" }).save();
 
       const page = Car.select(0, 2);
       expect(page.items).toHaveLength(2);
@@ -341,9 +332,9 @@ describe("Record ActiveRecord API", () => {
 
   describe("static groupBy()", () => {
     it("groups entities by field", () => {
-      new Car({ make: "Toyota", model: "Corolla" }).save();
-      new Car({ make: "Toyota", model: "Camry" }).save();
-      new Car({ make: "Honda", model: "Civic" }).save();
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
+      Car.create({ make: "Toyota", model: "Camry" }).save();
+      Car.create({ make: "Honda", model: "Civic" }).save();
 
       const groups = Car.groupBy("make");
       expect(groups).toHaveLength(2);
@@ -355,10 +346,10 @@ describe("Record ActiveRecord API", () => {
 
   describe("multiple Record classes", () => {
     it("creates separate tables for each class", () => {
-      const car = new Car({ make: "Toyota", model: "Corolla" });
+      const car = Car.create({ make: "Toyota", model: "Corolla" });
       car.save();
 
-      const product = new Product({ name: "Widget", price: 9.99, category: "tools" });
+      const product = Product.create({ name: "Widget", price: 9.99, category: "tools" });
       product.save();
 
       expect(adapter.getSheetNames()).toContain("Cars");
@@ -368,12 +359,12 @@ describe("Record ActiveRecord API", () => {
     });
   });
 
-  describe("QueryBuilder.from()", () => {
+  describe("Query.from()", () => {
     it("works with class reference (typed)", () => {
-      new Car({ make: "Toyota", model: "Corolla", year: 2024 }).save();
-      new Car({ make: "Honda", model: "Civic", year: 2023 }).save();
+      Car.create({ make: "Toyota", model: "Corolla", year: 2024 }).save();
+      Car.create({ make: "Honda", model: "Civic", year: 2023 }).save();
 
-      const result = QueryBuilder.from(Car).where("make", "=", "Toyota").execute();
+      const result = Query.from(Car).where("make", "=", "Toyota").execute();
 
       expect(result).toHaveLength(1);
       expect(result[0]).toBeInstanceOf(Car);
@@ -381,27 +372,27 @@ describe("Record ActiveRecord API", () => {
 
     it("works with string name", () => {
       // Car must be registered first (happens on save)
-      new Car({ make: "Toyota", model: "Corolla" }).save();
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
 
-      const result = QueryBuilder.from("Car").where("make", "=", "Toyota").execute();
+      const result = Query.from("Car").where("make", "=", "Toyota").execute();
 
       expect(result).toHaveLength(1);
     });
 
     it("works with table name string", () => {
-      new Car({ make: "Toyota", model: "Corolla" }).save();
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
 
-      const result = QueryBuilder.from("Cars").where("make", "=", "Toyota").execute();
+      const result = Query.from("Cars").where("make", "=", "Toyota").execute();
 
       expect(result).toHaveLength(1);
     });
 
     it("supports full fluent chain", () => {
-      new Car({ make: "Toyota", model: "Corolla", year: 2020 }).save();
-      new Car({ make: "Toyota", model: "Camry", year: 2024 }).save();
-      new Car({ make: "Honda", model: "Civic", year: 2023 }).save();
+      Car.create({ make: "Toyota", model: "Corolla", year: 2020 }).save();
+      Car.create({ make: "Toyota", model: "Camry", year: 2024 }).save();
+      Car.create({ make: "Honda", model: "Civic", year: 2023 }).save();
 
-      const result = QueryBuilder.from(Car)
+      const result = Query.from(Car)
         .where("make", "=", "Toyota")
         .and("year", ">=", 2023)
         .orderBy("year", "desc")
@@ -414,7 +405,7 @@ describe("Record ActiveRecord API", () => {
     });
 
     it("throws for unknown class name", () => {
-      expect(() => QueryBuilder.from("Unknown")).toThrow(/not found/);
+      expect(() => Query.from("Unknown")).toThrow(/not found/);
     });
   });
 
@@ -453,15 +444,12 @@ describe("Record ActiveRecord API", () => {
       expect(Car.count()).toBe(0);
     });
 
-    it("works with QueryBuilder.from() end-to-end", () => {
-      new Product({ name: "Apple", price: 1.5, category: "fruit" }).save();
-      new Product({ name: "Banana", price: 0.8, category: "fruit" }).save();
-      new Product({ name: "Hammer", price: 15.0, category: "tools" }).save();
+    it("works with Query.from() end-to-end", () => {
+      Product.create({ name: "Apple", price: 1.5, category: "fruit" }).save();
+      Product.create({ name: "Banana", price: 0.8, category: "fruit" }).save();
+      Product.create({ name: "Hammer", price: 15.0, category: "tools" }).save();
 
-      const result = QueryBuilder.from(Product)
-        .where("category", "=", "fruit")
-        .orderBy("price", "asc")
-        .execute();
+      const result = Query.from(Product).where("category", "=", "fruit").orderBy("price", "asc").execute();
 
       expect(result).toHaveLength(2);
       expect(result[0].name).toBe("Banana");

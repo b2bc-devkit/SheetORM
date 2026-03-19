@@ -1,105 +1,172 @@
 // SheetORM — QueryEngine: filters, sorts, paginates in-memory entity arrays
-// Inspired by common ORM query builder patterns (fluent API, predicate evaluation)
+// Optimized for GAS V8 runtime performance
 
-import {
-  Entity,
-  Filter,
-  FilterOperator,
-  SortClause,
-  QueryOptions,
-  PaginatedResult,
-  GroupResult,
-} from '../core/types';
+import { Entity, Filter, SortClause, QueryOptions, PaginatedResult, GroupResult } from "../core/types";
 
 /**
- * Apply a single filter predicate to a value.
+ * Resolve a field path to its parts. Single-segment paths (no dots/slashes)
+ * are returned as null to signal the fast-path in getFieldValue.
  */
-function applyOperator(fieldValue: unknown, operator: FilterOperator, filterValue: unknown): boolean {
-  switch (operator) {
-    case '=':
-      return fieldValue === filterValue;
-    case '!=':
-      return fieldValue !== filterValue;
-    case '<':
-      return (fieldValue as number) < (filterValue as number);
-    case '>':
-      return (fieldValue as number) > (filterValue as number);
-    case '<=':
-      return (fieldValue as number) <= (filterValue as number);
-    case '>=':
-      return (fieldValue as number) >= (filterValue as number);
-    case 'contains':
-      return typeof fieldValue === 'string' && typeof filterValue === 'string'
-        ? fieldValue.toLowerCase().includes(filterValue.toLowerCase())
-        : false;
-    case 'startsWith':
-      return typeof fieldValue === 'string' && typeof filterValue === 'string'
-        ? fieldValue.toLowerCase().startsWith(filterValue.toLowerCase())
-        : false;
-    case 'in':
-      return Array.isArray(filterValue) ? filterValue.includes(fieldValue) : false;
-    default:
-      return false;
+function splitFieldPath(field: string): string[] | null {
+  if (field.indexOf(".") === -1 && field.indexOf("/") === -1) return null;
+  return field.replace(/\//g, ".").split(".");
+}
+
+/** Pre-compiled accessor: returns a function that extracts a field from an entity. */
+function compileFieldAccessor(field: string): (entity: Entity) => unknown {
+  const parts = splitFieldPath(field);
+  if (parts === null) {
+    // Simple field — direct property access
+    return (entity: Entity) => entity[field];
   }
+  // Nested field — walk the path
+  return (entity: Entity) => {
+    let current: unknown = entity;
+    for (let i = 0; i < parts.length; i++) {
+      if (current == null) return undefined;
+      current = (current as Record<string, unknown>)[parts[i]];
+    }
+    return current;
+  };
 }
 
 /**
- * Get a nested field value using dot/slash notation (e.g. "address/city").
+ * Compile a single filter into a fast predicate function.
+ * Pre-computes field accessor and converts 'in' arrays to Sets for large lists.
  */
-function getFieldValue(entity: Entity, field: string): unknown {
-  const parts = field.replace(/\//g, '.').split('.');
-  let current: unknown = entity;
-  for (const part of parts) {
-    if (current === null || current === undefined) return undefined;
-    current = (current as Record<string, unknown>)[part];
+function compileFilter(f: Filter): (entity: Entity) => boolean {
+  const accessor = compileFieldAccessor(f.field);
+  const op = f.operator;
+  const fv = f.value;
+
+  switch (op) {
+    case "=":
+      return (e) => accessor(e) === fv;
+    case "!=":
+      return (e) => accessor(e) !== fv;
+    case "<":
+      return (e) => (accessor(e) as number) < (fv as number);
+    case ">":
+      return (e) => (accessor(e) as number) > (fv as number);
+    case "<=":
+      return (e) => (accessor(e) as number) <= (fv as number);
+    case ">=":
+      return (e) => (accessor(e) as number) >= (fv as number);
+    case "contains": {
+      const lower = typeof fv === "string" ? fv.toLowerCase() : "";
+      return (e) => {
+        const v = accessor(e);
+        return typeof v === "string" && v.toLowerCase().includes(lower);
+      };
+    }
+    case "startsWith": {
+      const lower = typeof fv === "string" ? fv.toLowerCase() : "";
+      return (e) => {
+        const v = accessor(e);
+        return typeof v === "string" && v.toLowerCase().startsWith(lower);
+      };
+    }
+    case "in": {
+      if (!Array.isArray(fv)) return () => false;
+      if (fv.length > 8) {
+        const set = new Set(fv);
+        return (e) => set.has(accessor(e));
+      }
+      return (e) => fv.includes(accessor(e));
+    }
+    default:
+      return () => false;
   }
-  return current;
 }
 
 /**
  * Filter an array of entities by an array of Filter conditions (AND logic).
+ * Uses compiled predicates and manual loop for minimal GC pressure.
  */
 export function filterEntities<T extends Entity>(entities: T[], filters: Filter[]): T[] {
   if (!filters || filters.length === 0) return entities;
 
-  return entities.filter((entity) => {
-    return filters.every((f) => {
-      const val = getFieldValue(entity, f.field);
-      return applyOperator(val, f.operator, f.value);
-    });
-  });
+  // Compile all filters once
+  const predicates = new Array<(entity: Entity) => boolean>(filters.length);
+  for (let i = 0; i < filters.length; i++) {
+    predicates[i] = compileFilter(filters[i]);
+  }
+
+  const len = entities.length;
+  const predLen = predicates.length;
+  const result: T[] = [];
+
+  outer: for (let i = 0; i < len; i++) {
+    const entity = entities[i];
+    for (let j = 0; j < predLen; j++) {
+      if (!predicates[j](entity)) continue outer;
+    }
+    result.push(entity);
+  }
+
+  return result;
 }
 
 /**
  * Sort entities by multiple sort clauses.
+ * Pre-extracts sort keys to avoid repeated field navigation during comparisons.
  */
 export function sortEntities<T extends Entity>(entities: T[], sorts: SortClause[]): T[] {
   if (!sorts || sorts.length === 0) return entities;
 
-  return [...entities].sort((a, b) => {
-    for (const sort of sorts) {
-      const aVal = getFieldValue(a, sort.field);
-      const bVal = getFieldValue(b, sort.field);
+  const len = entities.length;
+  const numSorts = sorts.length;
 
-      let cmp = 0;
+  // Pre-compile field accessors
+  const accessors: Array<(entity: Entity) => unknown> = new Array(numSorts);
+  const directions: number[] = new Array(numSorts);
+  for (let s = 0; s < numSorts; s++) {
+    accessors[s] = compileFieldAccessor(sorts[s].field);
+    directions[s] = sorts[s].direction === "desc" ? -1 : 1;
+  }
+
+  // Pre-extract sort keys: keys[sortIndex][entityIndex]
+  const keys: unknown[][] = new Array(numSorts);
+  for (let s = 0; s < numSorts; s++) {
+    const accessor = accessors[s];
+    const col = new Array(len);
+    for (let i = 0; i < len; i++) {
+      col[i] = accessor(entities[i]);
+    }
+    keys[s] = col;
+  }
+
+  // Build index array to sort
+  const indices = new Array<number>(len);
+  for (let i = 0; i < len; i++) indices[i] = i;
+
+  indices.sort((ai, bi) => {
+    for (let s = 0; s < numSorts; s++) {
+      const aVal = keys[s][ai];
+      const bVal = keys[s][bi];
+      let cmp: number;
       if (aVal === bVal) {
         cmp = 0;
-      } else if (aVal === null || aVal === undefined) {
+      } else if (aVal == null) {
         cmp = -1;
-      } else if (bVal === null || bVal === undefined) {
+      } else if (bVal == null) {
         cmp = 1;
-      } else if (typeof aVal === 'number' && typeof bVal === 'number') {
+      } else if (typeof aVal === "number" && typeof bVal === "number") {
         cmp = aVal - bVal;
       } else {
         cmp = String(aVal).localeCompare(String(bVal));
       }
-
-      if (cmp !== 0) {
-        return sort.direction === 'desc' ? -cmp : cmp;
-      }
+      if (cmp !== 0) return cmp * directions[s];
     }
     return 0;
   });
+
+  // Build sorted result array
+  const result = new Array<T>(len);
+  for (let i = 0; i < len; i++) {
+    result[i] = entities[indices[i]];
+  }
+  return result;
 }
 
 /**
@@ -119,12 +186,15 @@ export function paginateEntities<T>(entities: T[], offset: number, limit: number
 
 /**
  * Group entities by a field.
+ * Uses pre-compiled accessor and manual iteration.
  */
 export function groupEntities<T extends Entity>(entities: T[], field: string): GroupResult<T>[] {
+  const accessor = compileFieldAccessor(field);
   const groups = new Map<unknown, T[]>();
 
-  for (const entity of entities) {
-    const key = getFieldValue(entity, field);
+  for (let i = 0, len = entities.length; i < len; i++) {
+    const entity = entities[i];
+    const key = accessor(entity);
     const existing = groups.get(key);
     if (existing) {
       existing.push(entity);

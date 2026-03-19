@@ -1,9 +1,9 @@
-import { Entity, FieldDefinition, Filter, QueryOptions, SortClause, TableSchema } from "../core/types";
-import { SheetRepository } from "../core/SheetRepository";
-import { SheetORM } from "../SheetORM";
+import { Entity, FieldDefinition, Filter, QueryOptions, SortClause } from "../core/types";
+import { Registry } from "../core/Registry";
 import { IndexStore } from "../index/IndexStore";
-import { QueryBuilder } from "../query/QueryBuilder";
+import { Query } from "../query/Query";
 import { Record as BaseRecord } from "../core/Record";
+import { Indexed, Required, resetDecoratorCaches } from "../core/decorators";
 import {
   executeQuery,
   filterEntities,
@@ -11,7 +11,6 @@ import {
   paginateEntities,
   sortEntities,
 } from "../query/QueryEngine";
-import { SchemaMigrator } from "../schema/SchemaMigrator";
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSheetsAdapter";
 import { MemoryCache } from "../utils/cache";
 import {
@@ -35,6 +34,7 @@ type RuntimeSuiteHandlers = Record<string, Record<string, RuntimeCaseHandler>>;
 interface RuntimeCaseResult {
   id: string;
   ok: boolean;
+  durationMs: number;
   error?: string;
 }
 
@@ -59,6 +59,55 @@ class RuntimeParityState {
   nextTableName(baseName: string): string {
     this.sequence += 1;
     return `${baseName}_${this.runId}_${this.sequence}`;
+  }
+
+  clearAllSheets(log?: (msg: string) => void): void {
+    const emit = log ?? (() => {});
+    const spreadsheet = this.getSpreadsheet();
+    const originalSheets = spreadsheet.getSheets();
+    emit(`[SheetORM] Sheets found before cleanup: ${originalSheets.length}`);
+
+    if (originalSheets.length === 0) {
+      const keeper = spreadsheet.insertSheet("Sheet1");
+      keeper.clear();
+      emit('[SheetORM] No sheets existed. Created and prepared keeper: "Sheet1"');
+      return;
+    }
+
+    // Reuse first existing sheet as keeper to avoid temporarily increasing cell count
+    // (insertSheet can fail when spreadsheet is close to 10M-cell limit).
+    const keeper = originalSheets[0];
+    emit(`[SheetORM] Keeper sheet: "${keeper.getName()}"`);
+
+    let remainingToDelete = originalSheets.length - 1;
+    for (let i = 1; i < originalSheets.length; i += 1) {
+      const sheetToDelete = originalSheets[i];
+      emit(
+        `[SheetORM] Deleting sheet: "${sheetToDelete.getName()}" | pozostało do usunięcia: ${remainingToDelete}`,
+      );
+      spreadsheet.deleteSheet(sheetToDelete);
+      remainingToDelete -= 1;
+      emit(`[SheetORM] Usunięto. Pozostało do usunięcia: ${remainingToDelete}`);
+    }
+
+    // Keep one clean, minimal sheet so subsequent test sheets fit under cell limits.
+    keeper.clear();
+
+    const maxRows = keeper.getMaxRows();
+    if (maxRows > 1) {
+      keeper.deleteRows(2, maxRows - 1);
+    }
+
+    const maxColumns = keeper.getMaxColumns();
+    if (maxColumns > 1) {
+      keeper.deleteColumns(2, maxColumns - 1);
+    }
+
+    if (keeper.getName() !== "Sheet1") {
+      keeper.setName("Sheet1");
+    }
+
+    emit('[SheetORM] Cleanup finished. Remaining sheet: "Sheet1"');
   }
 }
 
@@ -115,7 +164,7 @@ interface TestItem extends Entity {
   category: string;
 }
 
-const queryBuilderItems: TestItem[] = [
+const queryItems: TestItem[] = [
   { __id: "1", name: "Apple", price: 1.5, category: "fruit" },
   { __id: "2", name: "Banana", price: 0.8, category: "fruit" },
   { __id: "3", name: "Carrot", price: 1.2, category: "vegetable" },
@@ -123,8 +172,8 @@ const queryBuilderItems: TestItem[] = [
   { __id: "5", name: "Eggplant", price: 3.0, category: "vegetable" },
 ];
 
-function createBuilder(): QueryBuilder<TestItem> {
-  return new QueryBuilder(() => [...queryBuilderItems]);
+function createBuilder(): Query<TestItem> {
+  return new Query(() => [...queryItems]);
 }
 
 interface TestUser extends Entity {
@@ -141,49 +190,6 @@ const queryEngineUsers: TestUser[] = [
   { __id: "4", name: "Maria", age: 22, active: true, city: "Gdańsk" },
   { __id: "5", name: "Zofia", age: 60, active: false, city: "Kraków" },
 ];
-
-interface RepoUser extends Entity {
-  name: string;
-  email: string;
-  age: number;
-  active: boolean;
-}
-
-function createUserSchema(tableName: string): TableSchema {
-  return {
-    tableName,
-    fields: [
-      { name: "name", type: "string", required: true },
-      { name: "email", type: "string", required: true },
-      { name: "age", type: "number" },
-      { name: "active", type: "boolean", defaultValue: true },
-    ],
-    indexes: [{ field: "email", unique: true }],
-  };
-}
-
-function createRepo(ctx: RuntimeCaseContext): SheetRepository<RepoUser> {
-  const adapter = ctx.state.getAdapter();
-  const tableName = ctx.state.nextTableName("Users");
-  const schema = createUserSchema(tableName);
-  const cache = new MemoryCache();
-  const indexStore = new IndexStore(adapter, cache);
-  const migrator = new SchemaMigrator(adapter, indexStore);
-  migrator.initialize(schema);
-  return new SheetRepository<RepoUser>(adapter, schema, indexStore, cache);
-}
-
-function createSheetOrmProductSchema(tableName: string): TableSchema {
-  return {
-    tableName,
-    fields: [
-      { name: "name", type: "string", required: true },
-      { name: "price", type: "number", required: true },
-      { name: "category", type: "string" },
-    ],
-    indexes: [{ field: "category" }],
-  };
-}
 
 const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
   "cache.test.ts": {
@@ -400,7 +406,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       );
     },
   },
-  "query-builder.test.ts": {
+  "query.test.ts": {
     "filters with where()": () => {
       const result = createBuilder().where("category", "=", "fruit").execute();
       assertEqual(result.length, 2, "where should filter by category");
@@ -610,355 +616,6 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result[0].name, "Anna", "combined query should return Anna");
     },
   },
-  "repository.test.ts": {
-    "creates a new entity with auto-generated ID": (ctx) => {
-      const repo = createRepo(ctx);
-      const user = repo.save({ name: "Jan", email: "jan@test.com", age: 30 } as Partial<RepoUser>);
-      assertTrue(Boolean(user.__id), "save should generate id");
-      assertTrue(Boolean(user.__createdAt), "save should set created timestamp");
-      assertEqual(user.name, "Jan", "saved name should match");
-      assertEqual(user.active, true, "default active should be true");
-    },
-    "retrieves by ID": (ctx) => {
-      const repo = createRepo(ctx);
-      const user = repo.save({ name: "Anna", email: "anna@test.com", age: 28 } as Partial<RepoUser>);
-      const found = repo.findById(user.__id);
-      assertTrue(found !== null, "findById should return entity");
-      assertEqual(found?.name, "Anna", "findById should return matching user");
-    },
-    "updates an existing entity": (ctx) => {
-      const repo = createRepo(ctx);
-      const user = repo.save({ name: "Jan", email: "jan@test.com", age: 30 } as Partial<RepoUser>);
-      const updated = repo.save({
-        __id: user.__id,
-        name: "Jan Updated",
-        email: "jan@test.com",
-        age: 31,
-      } as Partial<RepoUser> & { __id: string });
-      assertEqual(updated.__id, user.__id, "update should preserve entity id");
-      assertEqual(updated.name, "Jan Updated", "update should modify name");
-      assertEqual(updated.age, 31, "update should modify age");
-      assertEqual(updated.__createdAt, user.__createdAt, "update should preserve createdAt");
-    },
-    "throws on missing required field": (ctx) => {
-      const repo = createRepo(ctx);
-      assertThrows(
-        () => repo.save({ name: "Jan" } as Partial<RepoUser>),
-        /Required field "email"/,
-        "save should fail when required field is missing",
-      );
-    },
-    "finds all entities": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "A", email: "a@test.com", age: 20 } as Partial<RepoUser>);
-      repo.save({ name: "B", email: "b@test.com", age: 30 } as Partial<RepoUser>);
-      repo.save({ name: "C", email: "c@test.com", age: 40 } as Partial<RepoUser>);
-      assertEqual(repo.find().length, 3, "find without options should return all entities");
-    },
-    "find with filter": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "Young", email: "y@test.com", age: 20 } as Partial<RepoUser>);
-      repo.save({ name: "Old", email: "o@test.com", age: 50 } as Partial<RepoUser>);
-      const result = repo.find({ where: [{ field: "age", operator: ">", value: 30 }] });
-      assertEqual(result.length, 1, "find with filter should return one entity");
-      assertEqual(result[0].name, "Old", "matching entity should be Old");
-    },
-    "findOne returns first match": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "A", email: "a@test.com", age: 20 } as Partial<RepoUser>);
-      repo.save({ name: "B", email: "b@test.com", age: 30 } as Partial<RepoUser>);
-      const one = repo.findOne({ where: [{ field: "name", operator: "=", value: "B" }] });
-      assertTrue(one !== null, "findOne should return entity when match exists");
-      assertEqual(one?.name, "B", "findOne should return the matching entity");
-    },
-    "findOne returns null when no match": (ctx) => {
-      const repo = createRepo(ctx);
-      const one = repo.findOne({ where: [{ field: "name", operator: "=", value: "Nobody" }] });
-      assertEqual(one, null, "findOne should return null when no entities match");
-    },
-    "deletes by ID": (ctx) => {
-      const repo = createRepo(ctx);
-      const user = repo.save({ name: "Del", email: "del@test.com", age: 30 } as Partial<RepoUser>);
-      const result = repo.delete(user.__id);
-      assertEqual(result, true, "delete should return true for existing id");
-      assertEqual(repo.findById(user.__id), null, "deleted entity should not be found");
-    },
-    "returns false for non-existent ID": (ctx) => {
-      const repo = createRepo(ctx);
-      assertEqual(repo.delete("non-existent"), false, "delete should return false for missing id");
-    },
-    "deleteAll removes matching entities": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "A", email: "a@test.com", age: 20 } as Partial<RepoUser>);
-      repo.save({ name: "B", email: "b@test.com", age: 50 } as Partial<RepoUser>);
-      repo.save({ name: "C", email: "c@test.com", age: 60 } as Partial<RepoUser>);
-      const count = repo.deleteAll({ where: [{ field: "age", operator: ">", value: 30 }] });
-      assertEqual(count, 2, "deleteAll should remove two matching entities");
-      assertEqual(repo.count(), 1, "one entity should remain after deleteAll");
-    },
-    "counts all entities": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "A", email: "a@test.com", age: 20 } as Partial<RepoUser>);
-      repo.save({ name: "B", email: "b@test.com", age: 30 } as Partial<RepoUser>);
-      assertEqual(repo.count(), 2, "count without filters should return all entities");
-    },
-    "counts with filter": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "A", email: "a@test.com", age: 20 } as Partial<RepoUser>);
-      repo.save({ name: "B", email: "b@test.com", age: 30 } as Partial<RepoUser>);
-      assertEqual(
-        repo.count({ where: [{ field: "age", operator: ">", value: 25 }] }),
-        1,
-        "count with filter should return matching count",
-      );
-    },
-    "select returns paginated result": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "A", email: "a@test.com", age: 20 } as Partial<RepoUser>);
-      repo.save({ name: "B", email: "b@test.com", age: 30 } as Partial<RepoUser>);
-      repo.save({ name: "C", email: "c@test.com", age: 40 } as Partial<RepoUser>);
-      const page = repo.select(0, 2);
-      assertEqual(page.items.length, 2, "select should return two entities for limit=2");
-      assertEqual(page.total, 3, "select total should be 3");
-      assertEqual(page.hasNext, true, "select should indicate next page");
-    },
-    "returns a QueryBuilder that works": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "A", email: "a@test.com", age: 20 } as Partial<RepoUser>);
-      repo.save({ name: "B", email: "b@test.com", age: 30 } as Partial<RepoUser>);
-      repo.save({ name: "C", email: "c@test.com", age: 40 } as Partial<RepoUser>);
-      const result = repo.query().where("age", ">=", 30).orderBy("age", "desc").execute();
-      assertEqual(result.length, 2, "query builder should return two entities");
-      assertEqual(result[0].name, "C", "first query result should be C");
-      assertEqual(result[1].name, "B", "second query result should be B");
-    },
-    "groups entities by field": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "A", email: "a@test.com", age: 20, active: true } as Partial<RepoUser>);
-      repo.save({ name: "B", email: "b@test.com", age: 30, active: false } as Partial<RepoUser>);
-      repo.save({ name: "C", email: "c@test.com", age: 40, active: true } as Partial<RepoUser>);
-      const groups = repo.groupBy("active");
-      assertEqual(groups.length, 2, "groupBy should return two groups");
-    },
-    "calls beforeSave and afterSave": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const tableName = ctx.state.nextTableName("Users");
-      const schema = createUserSchema(tableName);
-      const cache = new MemoryCache();
-      const indexStore = new IndexStore(adapter, cache);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      migrator.initialize(schema);
-      const beforeCalls: boolean[] = [];
-      const afterCalls: boolean[] = [];
-      const repo = new SheetRepository<RepoUser>(adapter, schema, indexStore, cache, {
-        beforeSave: (_entity, isNew) => {
-          beforeCalls.push(isNew);
-        },
-        afterSave: (_entity, isNew) => {
-          afterCalls.push(isNew);
-        },
-      });
-      repo.save({ name: "Hook", email: "hook@test.com", age: 25 } as Partial<RepoUser>);
-      assertDeepEqual(beforeCalls, [true], "beforeSave should be called with isNew=true");
-      assertDeepEqual(afterCalls, [true], "afterSave should be called with isNew=true");
-    },
-    "calls onValidate and rejects on errors": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const tableName = ctx.state.nextTableName("Users");
-      const schema = createUserSchema(tableName);
-      const cache = new MemoryCache();
-      const indexStore = new IndexStore(adapter, cache);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      migrator.initialize(schema);
-      const repo = new SheetRepository<RepoUser>(adapter, schema, indexStore, cache, {
-        onValidate: (entity) => {
-          if (entity.age !== undefined && Number(entity.age) < 18) return ["Must be 18+"];
-          return undefined;
-        },
-      });
-      assertThrows(
-        () => repo.save({ name: "Kid", email: "kid@test.com", age: 10 } as Partial<RepoUser>),
-        /Must be 18/,
-        "onValidate errors should reject save",
-      );
-    },
-    "calls beforeDelete and can cancel": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const tableName = ctx.state.nextTableName("Users");
-      const schema = createUserSchema(tableName);
-      const cache = new MemoryCache();
-      const indexStore = new IndexStore(adapter, cache);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      migrator.initialize(schema);
-      const repo = new SheetRepository<RepoUser>(adapter, schema, indexStore, cache, {
-        beforeDelete: () => false,
-      });
-      const user = repo.save({ name: "Protected", email: "p@test.com", age: 30 } as Partial<RepoUser>);
-      assertEqual(repo.delete(user.__id), false, "beforeDelete=false should cancel delete");
-      assertTrue(repo.findById(user.__id) !== null, "entity should still exist when delete canceled");
-    },
-    "buffers and commits": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.beginBatch();
-      repo.save({ name: "Batch1", email: "b1@test.com", age: 20 } as Partial<RepoUser>);
-      repo.save({ name: "Batch2", email: "b2@test.com", age: 30 } as Partial<RepoUser>);
-      assertEqual(repo.isBatchActive(), true, "batch should be active before commit");
-      repo.commitBatch();
-      assertEqual(repo.isBatchActive(), false, "batch should be inactive after commit");
-      assertEqual(repo.count(), 2, "commit should persist buffered saves");
-    },
-    "rollback discards buffered operations": (ctx) => {
-      const repo = createRepo(ctx);
-      repo.save({ name: "Existing", email: "e@test.com", age: 20 } as Partial<RepoUser>);
-      repo.beginBatch();
-      repo.save({ name: "Discarded", email: "d@test.com", age: 30 } as Partial<RepoUser>);
-      repo.rollbackBatch();
-      assertEqual(repo.count(), 1, "rollback should discard buffered operations");
-    },
-  },
-  "schema-migrator.test.ts": {
-    "initializes meta sheet and data sheet": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      migrator.initialize(createUserSchema(tableName));
-      const names = adapter.getSheetNames();
-      assertTrue(names.includes("_meta"), "_meta sheet should exist");
-      assertTrue(names.includes(tableName), "data sheet should exist");
-    },
-    "sets headers on data sheet": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      migrator.initialize(createUserSchema(tableName));
-      const sheet = adapter.getSheetByName(tableName);
-      assertTrue(sheet !== null, "data sheet should exist");
-      assertDeepEqual(
-        sheet?.getHeaders(),
-        ["__id", "__createdAt", "__updatedAt", "name", "email", "age", "active"],
-        "data sheet headers should match schema + system columns",
-      );
-    },
-    "creates indexes during initialization": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      migrator.initialize(createUserSchema(tableName));
-      assertEqual(
-        indexStore.exists(tableName, "email"),
-        true,
-        "email index should be created during initialize",
-      );
-    },
-    "stores schema in _meta sheet": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      migrator.initialize(createUserSchema(tableName));
-      const schema = migrator.getSchema(tableName);
-      assertTrue(schema !== null, "schema should be stored in _meta");
-      assertEqual(schema?.tableName, tableName, "stored schema should have matching tableName");
-      assertEqual(schema?.fields.length, 4, "stored schema should have expected field count");
-    },
-    "tableExists returns correct value": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      assertEqual(migrator.tableExists(tableName), false, "tableExists should be false before initialize");
-      migrator.initialize(createUserSchema(tableName));
-      assertEqual(migrator.tableExists(tableName), true, "tableExists should be true after initialize");
-    },
-    "addField adds a column to the schema": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      migrator.initialize(createUserSchema(tableName));
-      migrator.addField(tableName, { name: "phone", type: "string" });
-      const schema = migrator.getSchema(tableName);
-      assertEqual(schema?.fields.length, 5, "addField should increase field count");
-      assertTrue(
-        Boolean(schema?.fields.find((f) => f.name === "phone")),
-        "new field should be present in schema",
-      );
-    },
-    "addField is idempotent for existing fields": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      migrator.initialize(createUserSchema(tableName));
-      migrator.addField(tableName, { name: "email", type: "string" });
-      const schema = migrator.getSchema(tableName);
-      const emailCount = schema?.fields.filter((f) => f.name === "email").length ?? 0;
-      assertEqual(emailCount, 1, "existing field should not be duplicated");
-    },
-    "addField throws for unknown table": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      assertThrows(
-        () => migrator.addField(ctx.state.nextTableName("NonExistent"), { name: "x", type: "string" }),
-        /not found/,
-        "addField should fail for unknown table",
-      );
-    },
-    "removeField removes a field from schema": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      migrator.initialize(createUserSchema(tableName));
-      migrator.removeField(tableName, "age");
-      const schema = migrator.getSchema(tableName);
-      assertTrue(
-        !(schema?.fields.map((f) => f.name).includes("age") ?? false),
-        "age should be removed from schema",
-      );
-    },
-    "sync initializes if table does not exist": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      migrator.sync(createUserSchema(tableName));
-      assertEqual(migrator.tableExists(tableName), true, "sync should initialize missing table");
-    },
-    "sync adds missing fields to existing table": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      const schema = createUserSchema(tableName);
-      migrator.initialize(schema);
-      const updatedSchema: TableSchema = {
-        ...schema,
-        fields: [...schema.fields, { name: "phone", type: "string" }],
-      };
-      migrator.sync(updatedSchema);
-      const synced = migrator.getSchema(tableName);
-      assertTrue(Boolean(synced?.fields.find((f) => f.name === "phone")), "sync should add missing field");
-    },
-    "sync adds missing indexes": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter);
-      const migrator = new SchemaMigrator(adapter, indexStore);
-      const tableName = ctx.state.nextTableName("Users");
-      const schema = createUserSchema(tableName);
-      migrator.initialize(schema);
-      const updatedSchema: TableSchema = {
-        ...schema,
-        indexes: [...schema.indexes, { field: "name" }],
-      };
-      migrator.sync(updatedSchema);
-      assertEqual(indexStore.exists(tableName, "name"), true, "sync should create missing index");
-    },
-  },
   "serialization.test.ts": {
     "serializes string": () => {
       const fd: FieldDefinition = { name: "x", type: "string" };
@@ -1091,95 +748,6 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(restored.__createdAt, undefined, "missing __createdAt should restore as undefined");
     },
   },
-  "sheetorm.test.ts": {
-    "registers a schema and creates sheets": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const orm = new SheetORM({ adapter, cache: new MemoryCache() });
-      const tableName = ctx.state.nextTableName("Products");
-      const schema = createSheetOrmProductSchema(tableName);
-      orm.register(schema);
-      const names = adapter.getSheetNames();
-      assertTrue(names.includes(tableName), "register should create data sheet");
-      assertTrue(names.includes("_meta"), "register should ensure _meta exists");
-    },
-    "getRepository returns a working repo": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const orm = new SheetORM({ adapter, cache: new MemoryCache() });
-      const tableName = ctx.state.nextTableName("Products");
-      orm.register(createSheetOrmProductSchema(tableName));
-      const repo = orm.getRepository<Entity>(tableName);
-      const saved = repo.save({ name: "Widget", price: 9.99, category: "tools" } as Partial<Entity>);
-      assertTrue(Boolean(saved.__id), "saved product should have id");
-      const found = repo.findById(saved.__id);
-      assertTrue(found !== null, "saved product should be found by id");
-      assertEqual(found?.name, "Widget", "found product should match saved data");
-    },
-    "getRepository caches instances": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const orm = new SheetORM({ adapter, cache: new MemoryCache() });
-      const tableName = ctx.state.nextTableName("Products");
-      orm.register(createSheetOrmProductSchema(tableName));
-      const repo1 = orm.getRepository<Entity>(tableName);
-      const repo2 = orm.getRepository<Entity>(tableName);
-      assertTrue(repo1 === repo2, "getRepository should return cached instance for same table");
-    },
-    "throws when getting repo for unregistered table": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const orm = new SheetORM({ adapter, cache: new MemoryCache() });
-      assertThrows(
-        () => orm.getRepository(ctx.state.nextTableName("Unknown")),
-        /not registered/,
-        "getRepository should throw for unregistered table",
-      );
-    },
-    "static create() works": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const instance = SheetORM.create({ adapter });
-      assertTrue(instance instanceof SheetORM, "SheetORM.create should return instance");
-    },
-    "clearCache() clears the cache": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const orm = new SheetORM({ adapter, cache: new MemoryCache() });
-      const tableName = ctx.state.nextTableName("Products");
-      orm.register(createSheetOrmProductSchema(tableName));
-      const repo = orm.getRepository<Entity>(tableName);
-      repo.save({ name: "A", price: 1, category: "x" } as Partial<Entity>);
-      orm.clearCache();
-      assertTrue(true, "clearCache should complete without throwing");
-    },
-    "getMigrator() returns the migrator": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const orm = new SheetORM({ adapter, cache: new MemoryCache() });
-      assertTrue(Boolean(orm.getMigrator()), "getMigrator should return migrator instance");
-    },
-    "getIndexStore() returns the index store": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const orm = new SheetORM({ adapter, cache: new MemoryCache() });
-      assertTrue(Boolean(orm.getIndexStore()), "getIndexStore should return index store instance");
-    },
-    "full workflow: register → save → query → delete": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const orm = new SheetORM({ adapter, cache: new MemoryCache() });
-      const tableName = ctx.state.nextTableName("Products");
-      orm.register(createSheetOrmProductSchema(tableName));
-      const repo = orm.getRepository<Entity>(tableName);
-
-      repo.save({ name: "Apple", price: 1.5, category: "fruit" } as Partial<Entity>);
-      repo.save({ name: "Banana", price: 0.8, category: "fruit" } as Partial<Entity>);
-      repo.save({ name: "Hammer", price: 15.0, category: "tools" } as Partial<Entity>);
-
-      const fruits = repo.query().where("category", "=", "fruit").orderBy("price", "asc").execute();
-      assertEqual(fruits.length, 2, "query should return two fruits");
-      assertEqual(fruits[0].name, "Banana", "fruits should be sorted by price asc");
-
-      repo.delete(fruits[0].__id);
-      assertEqual(repo.count(), 2, "delete should reduce count to 2");
-
-      const page = repo.select(0, 1);
-      assertEqual(page.items.length, 1, "pagination should return one item with limit=1");
-      assertEqual(page.total, 2, "pagination total should match remaining entities");
-    },
-  },
   "uuid.test.ts": {
     "returns a string of UUID v4 format": () => {
       const uuid = generateUUID();
@@ -1196,35 +764,37 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
   "record.test.ts": (() => {
     // Build Record subclasses inside a factory to avoid top-level side-effects
     function createRecordClasses(adapter: GoogleSpreadsheetAdapter, suffix: string) {
-      SheetORM.reset();
-      SheetORM.initialize({ adapter });
+      Registry.reset();
+      resetDecoratorCaches();
+      Registry.getInstance().configure({ adapter });
 
       class Car extends BaseRecord {
-        static tableName = `Cars_${suffix}`;
-        static fields: FieldDefinition[] = [
-          { name: "make", type: "string", required: true },
-          { name: "model", type: "string", required: true },
-          { name: "year", type: "number" },
-          { name: "color", type: "string" },
-        ];
-        static indexes = [{ field: "make" }];
-        declare make: string;
-        declare model: string;
-        declare year: number;
-        declare color: string;
+        static override get tableName() {
+          return `Cars_${suffix}`;
+        }
+
+        @Indexed()
+        make: string;
+
+        @Required()
+        model: string;
+
+        year: number;
+        color: string;
       }
 
       class Product extends BaseRecord {
-        static tableName = `Products_${suffix}`;
-        static fields: FieldDefinition[] = [
-          { name: "name", type: "string", required: true },
-          { name: "price", type: "number", required: true },
-          { name: "category", type: "string" },
-        ];
-        static indexes = [{ field: "category" }];
-        declare name: string;
-        declare price: number;
-        declare category: string;
+        static override get tableName() {
+          return `Products_${suffix}`;
+        }
+
+        name: string;
+
+        @Required()
+        price: number;
+
+        @Indexed()
+        category: string;
       }
 
       return { Car, Product };
@@ -1351,11 +921,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         assertEqual(json.year, 2024, "toJSON year should match");
         assertTrue(Boolean(json.__id), "toJSON should include __id");
       },
-      "initializes fields from data object": (ctx: RuntimeCaseContext) => {
+      "creates instance with data via static create()": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
-        const car = new Car({ make: "BMW", model: "X5", year: 2023 });
-        assertEqual(car.make, "BMW", "constructor should set make");
-        assertEqual(car.model, "X5", "constructor should set model");
+        const car = Car.create({ make: "BMW", model: "X5", year: 2023 });
+        assertEqual(car.make, "BMW", "create should set make");
+        assertEqual(car.model, "X5", "create should set model");
       },
       "finds a saved entity by ID": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
@@ -1427,7 +997,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         const found = Car.findOne({ where: [{ field: "make", operator: "=", value: "BMW" }] });
         assertTrue(found === null, "findOne should return null when no match");
       },
-      "returns a QueryBuilder and chains": (ctx: RuntimeCaseContext) => {
+      "returns a Query and chains": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
         const c1 = new Car();
         c1.make = "Toyota";
@@ -1443,7 +1013,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         assertEqual(results.length, 2, "where query should return 2 results");
         assertEqual(results[0].year, 2024, "first result should be 2024");
       },
-      "returns a QueryBuilder": (ctx: RuntimeCaseContext) => {
+      "returns a Query": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
         const c = new Car();
         c.make = "Toyota";
@@ -1539,8 +1109,8 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         c.make = "Toyota";
         c.model = "Corolla";
         c.save();
-        const results = QueryBuilder.from(Car).execute();
-        assertEqual(results.length, 1, "QueryBuilder.from(class) should work");
+        const results = Query.from(Car).execute();
+        assertEqual(results.length, 1, "Query.from(class) should work");
       },
       "works with string name": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
@@ -1548,8 +1118,8 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         c.make = "Toyota";
         c.model = "Corolla";
         c.save();
-        const results = QueryBuilder.from("Car").execute();
-        assertEqual(results.length, 1, "QueryBuilder.from(string) should work");
+        const results = Query.from("Car").execute();
+        assertEqual(results.length, 1, "Query.from(string) should work");
       },
       "works with table name string": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
@@ -1557,8 +1127,8 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         c.make = "Toyota";
         c.model = "Corolla";
         c.save();
-        const results = QueryBuilder.from(Car.tableName).execute();
-        assertEqual(results.length, 1, "QueryBuilder.from(tableName) should work");
+        const results = Query.from(Car.tableName).execute();
+        assertEqual(results.length, 1, "Query.from(tableName) should work");
       },
       "supports full fluent chain": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
@@ -1577,7 +1147,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         c3.model = "Civic";
         c3.year = 2022;
         c3.save();
-        const results = QueryBuilder.from(Car)
+        const results = Query.from(Car)
           .where("make", "=", "Toyota")
           .orderBy("year", "desc")
           .limit(1)
@@ -1588,9 +1158,9 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       "throws for unknown class name": (ctx: RuntimeCaseContext) => {
         setup(ctx);
         assertThrows(
-          () => QueryBuilder.from("UnknownClassName"),
+          () => Query.from("UnknownClassName"),
           /unknown|not found|not registered/i,
-          "QueryBuilder.from with unknown name should throw",
+          "Query.from with unknown name should throw",
         );
       },
       "create → query → update → delete cycle": (ctx: RuntimeCaseContext) => {
@@ -1612,7 +1182,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         const deleted = Car.findById(car.__id);
         assertTrue(deleted === null, "deleted car should not be found");
       },
-      "works with QueryBuilder.from() end-to-end": (ctx: RuntimeCaseContext) => {
+      "works with Query.from() end-to-end": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
         const c1 = new Car();
         c1.make = "Toyota";
@@ -1624,8 +1194,8 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         c2.model = "Civic";
         c2.year = 2023;
         c2.save();
-        const results = QueryBuilder.from(Car).where("make", "=", "Toyota").execute();
-        assertEqual(results.length, 1, "QueryBuilder.from e2e should return 1");
+        const results = Query.from(Car).where("make", "=", "Toyota").execute();
+        assertEqual(results.length, 1, "Query.from e2e should return 1");
         assertEqual(results[0].make, "Toyota", "result should be Toyota");
       },
     } as Record<string, RuntimeCaseHandler>;
@@ -1652,7 +1222,7 @@ export const RUNTIME_PARITY_CASE_IDS: string[] = Object.entries(runtimeSuiteHand
   .flatMap(([file, testMap]) => Object.keys(testMap).map((testName) => toParityCaseId(file, testName)))
   .sort();
 
-export function validateSheetOrmRuntimeParity(): void {
+export function validateTests(): void {
   const expected = new Set(PARITY_CASE_IDS);
   const actual = new Set(RUNTIME_PARITY_CASE_IDS);
 
@@ -1671,9 +1241,10 @@ export function validateSheetOrmRuntimeParity(): void {
   }
 }
 
-export function runSheetOrmRuntimeParity(): string {
-  validateSheetOrmRuntimeParity();
+export function runTests(): string {
+  validateTests();
 
+  const runStartedAt = Date.now();
   const state = new RuntimeParityState();
   const results: RuntimeCaseResult[] = [];
   const total = PARITY_CASE_IDS.length;
@@ -1685,6 +1256,8 @@ export function runSheetOrmRuntimeParity(): string {
   };
 
   log(`[SheetORM] Starting parity suite — ${total} test cases`);
+  log("[SheetORM] Clearing all existing sheets from active spreadsheet before test run");
+  state.clearAllSheets(log);
 
   for (const suite of PARITY_SUITES) {
     log(`[Suite] ${suite.file} (${suite.tests.length} tests)`);
@@ -1692,15 +1265,18 @@ export function runSheetOrmRuntimeParity(): string {
     for (const testName of suite.tests) {
       const id = toParityCaseId(suite.file, testName);
       const num = results.length + 1;
+      const startedAt = Date.now();
       try {
         const handler = getRuntimeCaseHandler(id);
         handler({ state });
-        results.push({ id, ok: true });
-        log(`  PASS [${num}/${total}] ${testName}`);
+        const durationMs = Date.now() - startedAt;
+        results.push({ id, ok: true, durationMs });
+        log(`  PASS [${num}/${total}] ${testName} (${durationMs} ms)`);
       } catch (error) {
+        const durationMs = Date.now() - startedAt;
         const errMsg = error instanceof Error ? error.message : String(error);
-        results.push({ id, ok: false, error: errMsg });
-        log(`  FAIL [${num}/${total}] ${testName}`);
+        results.push({ id, ok: false, durationMs, error: errMsg });
+        log(`  FAIL [${num}/${total}] ${testName} (${durationMs} ms)`);
         log(`       ${errMsg}`);
       }
     }
@@ -1708,8 +1284,24 @@ export function runSheetOrmRuntimeParity(): string {
 
   const failures = results.filter((result) => !result.ok);
   const passed = results.length - failures.length;
+  const totalDurationMs = Date.now() - runStartedAt;
+  const sumCaseDurationMs = results.reduce((sum, result) => sum + result.durationMs, 0);
+  const avgDurationMs = results.length > 0 ? sumCaseDurationMs / results.length : 0;
+
+  const fastest = results.reduce<RuntimeCaseResult | null>((best, current) => {
+    if (!best) return current;
+    return current.durationMs < best.durationMs ? current : best;
+  }, null);
+
+  const slowest = results.reduce<RuntimeCaseResult | null>((worst, current) => {
+    if (!worst) return current;
+    return current.durationMs > worst.durationMs ? current : worst;
+  }, null);
 
   log(`[SheetORM] Done — ${passed}/${total} passed, ${failures.length} failed`);
+  log(
+    `[SheetORM] Timing summary — total: ${totalDurationMs} ms, avg/test: ${avgDurationMs.toFixed(2)} ms, fastest: ${fastest?.id ?? "n/a"} (${fastest?.durationMs ?? 0} ms), slowest: ${slowest?.id ?? "n/a"} (${slowest?.durationMs ?? 0} ms)`,
+  );
 
   if (failures.length > 0) {
     const summary = failures
@@ -1727,6 +1319,22 @@ export function runSheetOrmRuntimeParity(): string {
     total: results.length,
     passed,
     failed: 0,
+    timing: {
+      totalDurationMs,
+      averagePerTestMs: Number(avgDurationMs.toFixed(2)),
+      fastest: fastest
+        ? {
+            id: fastest.id,
+            durationMs: fastest.durationMs,
+          }
+        : null,
+      slowest: slowest
+        ? {
+            id: slowest.id,
+            durationMs: slowest.durationMs,
+          }
+        : null,
+    },
     spreadsheetUrl,
   };
 

@@ -1,24 +1,16 @@
 // SheetORM — Global Registry: singleton managing adapter, repositories, and class map
 
-import {
-  Entity,
-  FieldDefinition,
-  ICacheProvider,
-  IndexDefinition,
-  ISpreadsheetAdapter,
-  TableSchema,
-} from "./types";
+import { Entity, ICacheProvider, ISpreadsheetAdapter, TableSchema } from "./types";
 import { SheetRepository } from "./SheetRepository";
 import { IndexStore } from "../index/IndexStore";
-import { SchemaMigrator } from "../schema/SchemaMigrator";
 import { MemoryCache } from "../utils/cache";
+import { buildHeaders } from "../utils/serialization";
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSheetsAdapter";
+import { getFields, getIndexes } from "./decorators";
 
 export interface RecordStatic {
-  new (data?: { [key: string]: unknown }): Entity;
+  new (): Entity;
   tableName: string;
-  fields: FieldDefinition[];
-  indexes: IndexDefinition[];
   name: string;
 }
 
@@ -28,7 +20,6 @@ export class Registry {
   private adapter: ISpreadsheetAdapter | null = null;
   private cache: ICacheProvider | null = null;
   private indexStore: IndexStore | null = null;
-  private migrator: SchemaMigrator | null = null;
   private repos = new Map<string, SheetRepository<Entity>>();
   private classesByTable = new Map<string, RecordStatic>();
   private classesByName = new Map<string, RecordStatic>();
@@ -48,7 +39,6 @@ export class Registry {
     this.adapter = options.adapter ?? null;
     this.cache = options.cache ?? null;
     this.indexStore = null;
-    this.migrator = null;
     this.repos.clear();
   }
 
@@ -59,23 +49,33 @@ export class Registry {
     return this.adapter;
   }
 
-  private ensureInfrastructure(): {
-    indexStore: IndexStore;
-    migrator: SchemaMigrator;
-  } {
-    if (!this.indexStore || !this.migrator) {
+  private ensureIndexStore(): IndexStore {
+    if (!this.indexStore) {
       const adapter = this.getAdapter();
       if (!this.cache) this.cache = new MemoryCache();
       this.indexStore = new IndexStore(adapter, this.cache);
-      this.migrator = new SchemaMigrator(adapter, this.indexStore);
     }
-    return { indexStore: this.indexStore, migrator: this.migrator };
+    return this.indexStore;
+  }
+
+  private ensureTable(schema: TableSchema, indexStore: IndexStore): void {
+    const adapter = this.getAdapter();
+
+    let sheet = adapter.getSheetByName(schema.tableName);
+    if (!sheet) {
+      sheet = adapter.createSheet(schema.tableName);
+    }
+    sheet.setHeaders(buildHeaders(schema.fields));
+
+    for (const idx of schema.indexes) {
+      if (!indexStore.exists(schema.tableName, idx.field)) {
+        indexStore.createIndex(schema.tableName, idx.field, { unique: idx.unique });
+      }
+      indexStore.registerIndex(schema.tableName, idx.field, idx.unique ?? false);
+    }
   }
 
   registerClass(ctor: RecordStatic): void {
-    if (!ctor.tableName) {
-      throw new Error(`Record subclass "${ctor.name}" must define static tableName`);
-    }
     if (!this.classesByTable.has(ctor.tableName)) {
       this.classesByTable.set(ctor.tableName, ctor);
     }
@@ -93,15 +93,15 @@ export class Registry {
 
     this.registerClass(ctor);
 
-    const { migrator, indexStore } = this.ensureInfrastructure();
+    const indexStore = this.ensureIndexStore();
 
     const schema: TableSchema = {
       tableName,
-      fields: ctor.fields ?? [],
-      indexes: ctor.indexes ?? [],
+      fields: getFields(ctor),
+      indexes: getIndexes(ctor),
     };
 
-    migrator.sync(schema);
+    this.ensureTable(schema, indexStore);
 
     const repo = new SheetRepository<T>(this.getAdapter(), schema, indexStore, this.cache!);
 
@@ -113,12 +113,8 @@ export class Registry {
     return this.classesByName.get(name) ?? this.classesByTable.get(name);
   }
 
-  getMigrator(): SchemaMigrator {
-    return this.ensureInfrastructure().migrator;
-  }
-
   getIndexStore(): IndexStore {
-    return this.ensureInfrastructure().indexStore;
+    return this.ensureIndexStore();
   }
 
   clearCache(): void {

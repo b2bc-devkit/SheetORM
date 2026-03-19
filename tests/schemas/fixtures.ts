@@ -1,6 +1,6 @@
 // SheetORM — Test fixtures: sample schemas and data for testing
 
-import { TableSchema, Entity } from '../src/core/types';
+import { TableSchema, Entity } from '../../src/core/types';
 
 // ─── User Schema ─────────────────────────────────────
 

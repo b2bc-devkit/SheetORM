@@ -26,19 +26,16 @@ export { SYSTEM_COLUMNS, META_TABLE_NAME, INDEX_PREFIX } from "./core/types";
 export { Record } from "./core/Record";
 export type { RecordConstructor } from "./core/Record";
 
+// Decorators
+export { Indexed, Field, Required, getFields, getIndexes, resetDecoratorCaches } from "./core/decorators";
+
 // Global registry
 export { Registry } from "./core/Registry";
 export type { RecordStatic } from "./core/Registry";
 
-// Main ORM facade
-export { SheetORM } from "./SheetORM";
-export type { SheetORMOptions } from "./SheetORM";
-
-// Repository (advanced / legacy)
-export { SheetRepository } from "./core/SheetRepository";
 
 // Query
-export { QueryBuilder } from "./query/QueryBuilder";
+export { Query } from "./query/Query";
 export {
   filterEntities,
   sortEntities,
@@ -50,9 +47,6 @@ export {
 // Index
 export { IndexStore } from "./index/IndexStore";
 export type { IndexMeta } from "./index/IndexStore";
-
-// Schema
-export { SchemaMigrator } from "./schema/SchemaMigrator";
 
 // Storage adapters
 export { GoogleSheetAdapter, GoogleSpreadsheetAdapter } from "./storage/GoogleSheetsAdapter";
@@ -67,33 +61,4 @@ export {
   entityToRow,
   rowToEntity,
 } from "./utils/serialization";
-export { runSheetOrmRuntimeParity, validateSheetOrmRuntimeParity } from "./testing/runtimeParity";
-
-// GAS Triggers
-function onOpen(
-  e:
-    | GoogleAppsScript.Events.DocsOnOpen
-    | GoogleAppsScript.Events.SlidesOnOpen
-    | GoogleAppsScript.Events.SheetsOnOpen
-    | GoogleAppsScript.Events.FormsOnOpen,
-): void {
-  console.log(e);
-}
-
-function onEdit(e: GoogleAppsScript.Events.SheetsOnEdit): void {
-  console.log(e);
-}
-
-function onInstall(e: GoogleAppsScript.Events.AddonOnInstall): void {
-  console.log(e);
-}
-
-function doGet(e: GoogleAppsScript.Events.DoGet): void {
-  console.log(e);
-}
-
-function doPost(e: GoogleAppsScript.Events.DoPost): void {
-  console.log(e);
-}
-
-export { onOpen, onEdit, onInstall, doGet, doPost };
+export { runTests, validateTests } from "./testing/runtimeParity";

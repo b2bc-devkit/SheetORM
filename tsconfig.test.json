@@ -4,13 +4,15 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "strict": true,
+    "strictPropertyInitialization": false,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "outDir": "build-test",
     "lib": ["ESNext"],
     "types": ["jest", "google-apps-script", "node"],
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "experimentalDecorators": true
   },
   "include": ["src", "tests"]
 }

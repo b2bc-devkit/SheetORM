@@ -12,11 +12,11 @@ export interface Entity {
 
 // ─── Field & Schema ──────────────────────────────────
 
-export type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'json' | 'reference';
+export type FieldType = "string" | "number" | "boolean" | "date" | "json" | "reference";
 
 export interface FieldDefinition {
   name: string;
-  type: FieldType;
+  type?: FieldType;
   required?: boolean;
   defaultValue?: unknown;
   referenceTable?: string;
@@ -25,7 +25,7 @@ export interface FieldDefinition {
 export interface IndexDefinition {
   field: string;
   unique?: boolean;
-  type?: 'string' | 'number' | 'date';
+  type?: "string" | "number" | "date";
 }
 
 export interface TableSchema {
@@ -36,7 +36,7 @@ export interface TableSchema {
 
 // ─── Filter & Query ──────────────────────────────────
 
-export type FilterOperator = '=' | '!=' | '<' | '>' | '<=' | '>=' | 'contains' | 'startsWith' | 'in';
+export type FilterOperator = "=" | "!=" | "<" | ">" | "<=" | ">=" | "contains" | "startsWith" | "in";
 
 export interface Filter {
   field: string;
@@ -46,7 +46,7 @@ export interface Filter {
 
 export interface SortClause {
   field: string;
-  direction: 'asc' | 'desc';
+  direction: "asc" | "desc";
 }
 
 export interface QueryOptions {
@@ -121,10 +121,10 @@ export interface ICacheProvider {
 // ─── System column names ─────────────────────────────
 
 export const SYSTEM_COLUMNS = {
-  ID: '__id',
-  CREATED_AT: '__createdAt',
-  UPDATED_AT: '__updatedAt',
+  ID: "__id",
+  CREATED_AT: "__createdAt",
+  UPDATED_AT: "__updatedAt",
 } as const;
 
-export const META_TABLE_NAME = '_meta';
-export const INDEX_PREFIX = '_idx_';
+export const META_TABLE_NAME = "_meta";
+export const INDEX_PREFIX = "_idx_";

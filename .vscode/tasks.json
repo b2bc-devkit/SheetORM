@@ -5,7 +5,7 @@
       "label": "npm: build",
       "type": "shell",
       "command": "npm run build",
-      "detail": "Clean + compile TypeScript + bundle via Webpack.",
+      "detail": "Clean + compile TypeScript + bundle via Vite.",
       "group": {
         "kind": "build",
         "isDefault": true

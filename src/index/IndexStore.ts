@@ -84,11 +84,11 @@ export class IndexStore {
     if (!sheet) return [];
 
     const data = sheet.getAllData();
-    const ids: string[] = [];
     const searchValue = String(value);
-    for (const row of data) {
-      if (String(row[0]) === searchValue) {
-        ids.push(String(row[1]));
+    const ids: string[] = [];
+    for (let i = 0; i < data.length; i++) {
+      if (String(data[i][0]) === searchValue) {
+        ids.push(String(data[i][1]));
       }
     }
 
@@ -135,7 +135,8 @@ export class IndexStore {
     const rowsToDelete: number[] = [];
 
     for (let i = 0; i < data.length; i++) {
-      if (String(data[i][0]) === searchValue && String(data[i][1]) === entityId) {
+      const row = data[i];
+      if (String(row[0]) === searchValue && String(row[1]) === entityId) {
         rowsToDelete.push(i);
       }
     }
@@ -150,7 +151,7 @@ export class IndexStore {
    * Remove all index entries for an entity.
    */
   removeAllForEntity(tableName: string, entityId: string): void {
-    for (const [, meta] of this.indexRegistry) {
+    for (const meta of this.indexRegistry.values()) {
       if (meta.tableName !== tableName) continue;
       const sheet = this.getIndexSheet(tableName, meta.field);
       if (!sheet) continue;
@@ -180,7 +181,7 @@ export class IndexStore {
     oldValues: Record<string, unknown>,
     newValues: Record<string, unknown>,
   ): void {
-    for (const [, meta] of this.indexRegistry) {
+    for (const meta of this.indexRegistry.values()) {
       if (meta.tableName !== tableName) continue;
       const field = meta.field;
       const oldVal = oldValues[field];
