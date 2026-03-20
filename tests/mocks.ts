@@ -41,6 +41,17 @@ export class MockSheetAdapter implements ISheetAdapter {
     }
   }
 
+  writeRowsAt(startRowIndex: number, rows: unknown[][]): void {
+    for (let i = 0; i < rows.length; i++) {
+      const idx = startRowIndex + i;
+      if (idx >= this.data.length) {
+        this.data.push([...rows[i]]);
+      } else {
+        this.data[idx] = [...rows[i]];
+      }
+    }
+  }
+
   updateRow(rowIndex: number, values: unknown[]): void {
     if (rowIndex === this.data.length) {
       this.data.push([...values]);

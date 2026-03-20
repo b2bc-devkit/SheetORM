@@ -114,8 +114,15 @@ export class IndexStore {
       }
     }
 
-    sheet.appendRow([field, valueStr, entityId]);
-    this.clearCache();
+    const newRow: unknown[] = [field, valueStr, entityId];
+    if (this.cache) {
+      const data = this.getCombinedData(indexTableName);
+      sheet.writeRowsAt(data.length, [newRow]);
+      data.push(newRow);
+      this.searchIndexCache.delete(`${this.registryKey(indexTableName, field)}`);
+    } else {
+      sheet.appendRow(newRow);
+    }
   }
 
   /**
@@ -158,8 +165,14 @@ export class IndexStore {
     }
 
     if (rows.length > 0) {
-      sheet.appendRows(rows);
-      this.clearCache();
+      if (this.cache) {
+        const data = this.getCombinedData(indexTableName);
+        sheet.writeRowsAt(data.length, rows);
+        for (const row of rows) data.push(row);
+        this.searchIndexCache.clear();
+      } else {
+        sheet.appendRows(rows);
+      }
     }
   }
 
@@ -182,8 +195,10 @@ export class IndexStore {
     if (rowsToDelete.length > 0) {
       for (let i = rowsToDelete.length - 1; i >= 0; i--) {
         sheet.deleteRow(rowsToDelete[i]);
+        data.splice(rowsToDelete[i], 1);
       }
-      this.clearCache();
+      if (!this.cache) this.clearCache();
+      else this.searchIndexCache.clear();
     }
   }
 
@@ -204,7 +219,12 @@ export class IndexStore {
     if (remaining.length === data.length) return;
 
     sheet.replaceAllData(remaining);
-    this.clearCache();
+    if (this.cache) {
+      this.cache.set(`cidx:${indexTableName}`, remaining);
+      this.searchIndexCache.clear();
+    } else {
+      this.clearCache();
+    }
   }
 
   /**
@@ -271,19 +291,33 @@ export class IndexStore {
       }
     }
 
-    // Delete from bottom to top
+    // Delete from bottom to top, keeping cache in sync
     for (let i = rowsToDelete.length - 1; i >= 0; i--) {
       sheet.deleteRow(rowsToDelete[i]);
+      data.splice(rowsToDelete[i], 1);
     }
 
-    // Add new entries
+    // Collect and write new entries in one batch
+    const newRows: unknown[][] = [];
     for (const { field, newStr } of changes) {
       if (newStr !== null) {
-        sheet.appendRow([field, newStr, entityId]);
+        newRows.push([field, newStr, entityId]);
       }
     }
-
-    this.clearCache();
+    if (newRows.length > 0) {
+      if (this.cache) {
+        sheet.writeRowsAt(data.length, newRows);
+        for (const row of newRows) data.push(row);
+        this.searchIndexCache.clear();
+      } else {
+        for (const row of newRows) sheet.appendRow(row as unknown[]);
+        this.clearCache();
+      }
+    } else if (!this.cache) {
+      this.clearCache();
+    } else {
+      this.searchIndexCache.clear();
+    }
   }
 
   /**

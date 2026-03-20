@@ -68,7 +68,10 @@ function gasPlugin() {
       for (const chunk of Object.values(bundle)) {
         if (chunk.type === "chunk" && exportNames.length > 0) {
           const stubs = exportNames.map((name) => `function ${name}() {}`).join("\n");
-          chunk.code = stubs + "\n" + chunk.code;
+          // Wrap the entire Rollup output in an outer IIFE so that Rollup-generated
+          // module helpers (__defNormalProp, __publicField, etc.) are kept out of the
+          // GAS global scope — otherwise GAS shows them in the script editor Run menu.
+          chunk.code = stubs + "\n!function(){\n" + chunk.code + "\n}();";
         }
       }
     },

@@ -53,6 +53,14 @@ export class GoogleSheetAdapter implements ISheetAdapter {
     this.sheet.getRange(startRow, 1, rows.length, numCols).setValues(rows);
   }
 
+  writeRowsAt(startRowIndex: number, rows: unknown[][]): void {
+    if (rows.length === 0) return;
+    // startRowIndex is 0-based data index; sheet row = startRowIndex + 2 (row 1 = header)
+    const sheetRow = startRowIndex + 2;
+    const numCols = rows[0].length;
+    this.sheet.getRange(sheetRow, 1, rows.length, numCols).setValues(rows);
+  }
+
   updateRow(rowIndex: number, values: unknown[]): void {
     // rowIndex is 0-based data index → sheet row = rowIndex + 2 (row 1 = header)
     const sheetRow = rowIndex + 2;
