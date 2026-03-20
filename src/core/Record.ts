@@ -182,6 +182,15 @@ export class Record implements Entity {
       items: toInstances(this, g.items),
     }));
   }
+
+  static saveAll<T extends Record>(
+    this: RecordConstructor<T>,
+    items: Array<{ [key: string]: unknown }>,
+  ): T[] {
+    const repo = Registry.getInstance().ensureRepository(asCtor(this));
+    const entities = repo.saveAll(items as Array<Partial<Entity>>);
+    return toInstances(this, entities);
+  }
 }
 
 // ─── Wire up Query.from() resolver ──────────

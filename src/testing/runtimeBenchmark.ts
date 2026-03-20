@@ -12,7 +12,7 @@ import { Query } from "../query/Query";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const RECORD_COUNT = 100;
+const RECORD_COUNT = 1000;
 const SEARCH_ITERS = 100;
 
 // ─── GAS logger helper ───────────────────────────────────────────────────────
@@ -140,12 +140,11 @@ function runBenchmarkFor<T extends BaseRecord>(
 
   const saved: T[] = [];
 
-  step(`save() × ${RECORD_COUNT}`, () => {
-    for (let i = 0; i < RECORD_COUNT; i++) {
-      const inst = Ctor.create(makeData(i)) as T;
-      inst.save();
-      saved.push(inst);
-    }
+  step(`saveAll() × ${RECORD_COUNT}`, () => {
+    const allData = Array.from({ length: RECORD_COUNT }, (_, i) => makeData(i));
+    // saveAll() batches all index writes into a single setValues() call
+    const allSaved = Ctor.saveAll(allData) as T[];
+    for (const s of allSaved) saved.push(s);
     gasAssertEq(saved.length, RECORD_COUNT, "saved.length");
     log(`[SheetORM]   Created ${saved.length} records in ${tableName}`);
   });
@@ -393,10 +392,10 @@ export function runBenchmark(): string {
   log(`[SheetORM]   → scan all ${approxWorkers} entities → 2-field sort → limit 10`);
 
   log(`[SheetORM] ────────────────────────────────────────────────────`);
-  const searchRatio = indexedSearchMs > 0 ? (fullScanMs / indexedSearchMs).toFixed(2) : "n/a";
+  const searchRatio = indexedSearchMs > 0 ? `${(fullScanMs / indexedSearchMs).toFixed(2)}x` : `>${fullScanMs}x`;
   const searchFaster = indexedSearchMs < fullScanMs ? "indexed" : "full-scan";
   log(`[SheetORM] @Indexed search: ${indexedSearchMs} ms  vs  Full-scan: ${fullScanMs} ms`);
-  log(`[SheetORM] Ratio: ${searchRatio}x  (${searchFaster} is faster over ${SEARCH_ITERS} iterations)`);
+  log(`[SheetORM] Ratio: ${searchRatio}  (${searchFaster} is faster over ${SEARCH_ITERS} iterations)`);
   log(`[SheetORM] Note: @Indexed "search" uses n-gram posting index to pre-filter`);
   log(`[SheetORM]       candidates before sort. With 20% selectivity ("toy"~Toyota)`);
   log(`[SheetORM]       the sort operates on ~${Math.round(approxCars / 5)} items instead of ${approxCars}.`);
