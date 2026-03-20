@@ -13,6 +13,7 @@ import { Query } from "../query/Query";
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const RECORD_COUNT = 100;
+const SEARCH_ITERS = 100;
 
 // ─── GAS logger helper ───────────────────────────────────────────────────────
 
@@ -330,6 +331,79 @@ export function runBenchmark(): string {
 
   const workersResult = runBenchmarkFor(WorkerClass, workerData, log);
 
+  // ── Search benchmark: @Indexed "search" vs full-scan "contains" ──────────
+  // Re-uses data from the tables above (already in GAS Sheets).
+  // Warm-up call populates entity cache + n-gram search index in memory;
+  // subsequent SEARCH_ITERS iterations run purely in-memory.
+
+  log(`[SheetORM] ════════════════════════════════════════════════════`);
+  log(`[SheetORM] SEARCH BENCHMARK`);
+  log(`[SheetORM] @Indexed "search" (n-gram, pre-filters candidates) vs`);
+  log(`[SheetORM] Full-scan "contains" (scans all entities per query)`);
+  log(`[SheetORM] Iterations: ${SEARCH_ITERS} (all in-memory after warm-up)`);
+  log(`[SheetORM] ════════════════════════════════════════════════════`);
+
+  // ── Step 1: @Indexed "search" on Cars ────────────────────────────────────
+  Registry.reset();
+  Registry.getInstance().configure({ adapter });
+  // Warm-up: loads entity sheet (1 API call) + index sheet (1 API call),
+  // then caches both for all subsequent iterations.
+  CarClass.find({ where: [{ field: "make", operator: "search", value: "toy" }], limit: 1 });
+  const approxCars = CarClass.count();
+
+  const searchT0 = Date.now();
+  for (let _i = 0; _i < SEARCH_ITERS; _i++) {
+    CarClass.find({
+      where: [{ field: "make", operator: "search", value: "toy" }],
+      orderBy: [
+        { field: "year", direction: "asc" },
+        { field: "model", direction: "desc" },
+      ],
+      limit: 10,
+    });
+  }
+  const indexedSearchMs = Date.now() - searchT0;
+
+  log(`[SheetORM] ─── @Indexed "search" on Cars (${approxCars} records) ───`);
+  log(`[SheetORM]   find(make search "toy") × ${SEARCH_ITERS}: ${indexedSearchMs} ms`);
+  log(`[SheetORM]   → n-gram pre-filter → ~${Math.round(approxCars / 5)} candidates → 2-field sort → limit 10`);
+
+  // ── Step 2: Full-scan "contains" on Workers ───────────────────────────────
+  Registry.reset();
+  Registry.getInstance().configure({ adapter });
+  // Warm-up: loads entity sheet (1 API call), no index sheet.
+  WorkerClass.find({ where: [{ field: "department", operator: "contains", value: "Eng" }], limit: 1 });
+  const approxWorkers = WorkerClass.count();
+
+  const fullScanT0 = Date.now();
+  for (let _i = 0; _i < SEARCH_ITERS; _i++) {
+    WorkerClass.find({
+      where: [{ field: "department", operator: "contains", value: "Eng" }],
+      orderBy: [
+        { field: "salary", direction: "asc" },
+        { field: "name", direction: "desc" },
+      ],
+      limit: 10,
+    });
+  }
+  const fullScanMs = Date.now() - fullScanT0;
+
+  log(`[SheetORM] ─── Full-scan "contains" on Workers (${approxWorkers} records) ───`);
+  log(`[SheetORM]   find(department contains "Eng") × ${SEARCH_ITERS}: ${fullScanMs} ms`);
+  log(`[SheetORM]   → scan all ${approxWorkers} entities → 2-field sort → limit 10`);
+
+  log(`[SheetORM] ────────────────────────────────────────────────────`);
+  const searchRatio = indexedSearchMs > 0 ? (fullScanMs / indexedSearchMs).toFixed(2) : "n/a";
+  const searchFaster = indexedSearchMs < fullScanMs ? "indexed" : "full-scan";
+  log(`[SheetORM] @Indexed search: ${indexedSearchMs} ms  vs  Full-scan: ${fullScanMs} ms`);
+  log(`[SheetORM] Ratio: ${searchRatio}x  (${searchFaster} is faster over ${SEARCH_ITERS} iterations)`);
+  log(`[SheetORM] Note: @Indexed "search" uses n-gram posting index to pre-filter`);
+  log(`[SheetORM]       candidates before sort. With 20% selectivity ("toy"~Toyota)`);
+  log(`[SheetORM]       the sort operates on ~${Math.round(approxCars / 5)} items instead of ${approxCars}.`);
+  log(`[SheetORM]       In GAS, the index is also smaller to read on cold start`);
+  log(`[SheetORM]       (3 columns vs all entity columns), saving API read time.`);
+  log(`[SheetORM] ════════════════════════════════════════════════════`);
+
   // ── Summary ───────────────────────────────────────────────────────────────
   const diff = workersResult.durationMs - carsResult.durationMs;
   const fasterSuite = diff > 0 ? carsResult.tableName : workersResult.tableName;
@@ -381,6 +455,13 @@ export function runBenchmark(): string {
       indexSheetCreated: workersResult.indexSheetCreated,
       passed: workersResult.passed,
       failed: workersResult.failed,
+    },
+    search: {
+      iterations: SEARCH_ITERS,
+      indexedSearchMs,
+      fullScanMs,
+      ratio: indexedSearchMs > 0 ? +(fullScanMs / indexedSearchMs).toFixed(2) : null,
+      faster: searchFaster,
     },
     summary: {
       fasterSuite,

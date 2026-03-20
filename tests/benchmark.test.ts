@@ -313,3 +313,139 @@ describe("Benchmark: tbl_Workers (1,000 records, no @Indexed)", () => {
     log(`  ✓ Index sheet "${Worker.indexTableName}" is absent (as expected)`);
   });
 });
+
+// ─── Search benchmark: @Indexed n-gram search vs full-scan contains ──────────
+// Demonstrates that @Indexed enables the n-gram search path, which:
+//   • Pre-filters entity candidates to only those matching the search term
+//     (reduces the sort/pagination workload when selectivity is high)
+//   • In real GAS: the n-gram index is built once and cached in memory;
+//     subsequent searches within the same execution re-use the cache with 0 API calls
+//   • The benefit grows with dataset size — sorting N/k candidates vs N entities
+//     is k× faster (e.g. 20% selectivity → 5× fewer elements to sort)
+
+describe("Benchmark: @Indexed search vs full-scan (n-gram narrowing)", () => {
+  const SEARCH_ITERS = 200;
+  const SEARCH_RECORDS = RECORD_COUNT;
+  let indexedSearchMs = 0;
+
+  beforeAll(() => {
+    log(`\n${"═".repeat(60)}`);
+    log(`Benchmark: @Indexed search vs full-scan (${SEARCH_RECORDS} records, ${SEARCH_ITERS} iterations)`);
+    log(`${"═".repeat(60)}`);
+  });
+
+  afterEach(() => {
+    Registry.reset();
+    resetDecoratorCaches();
+  });
+
+  it(`@Indexed "search" operator on Cars: n-gram pre-filters candidates`, () => {
+    const adapter = new MockSpreadsheetAdapter();
+    Registry.getInstance().configure({ adapter });
+
+    for (let i = 0; i < SEARCH_RECORDS; i++) {
+      Car.create({
+        make: ["Toyota", "Honda", "BMW", "Ford", "VW"][i % 5],
+        model: `Model-${i}`,
+        year: 2015 + (i % 10),
+        color: ["red", "blue", "white", "black", "silver"][i % 5],
+      }).save();
+    }
+
+    // Verify index sheet was created (prerequisite for the benchmark)
+    expect(adapter.getSheetNames()).toContain(Car.indexTableName);
+
+    // Warm up: populate entity cache + build n-gram search index
+    Car.find({ where: [{ field: "make", operator: "search", value: "toy" }] });
+
+    // Benchmark: SEARCH_ITERS × (n-gram lookup → narrow → multi-key sort → limit)
+    const t0 = Date.now();
+    for (let i = 0; i < SEARCH_ITERS; i++) {
+      Car.find({
+        where: [{ field: "make", operator: "search", value: "toy" }],
+        orderBy: [
+          { field: "year", direction: "asc" },
+          { field: "model", direction: "desc" },
+        ],
+        limit: 10,
+      });
+    }
+    indexedSearchMs = Date.now() - t0;
+
+    const expectedCandidates = Math.round(SEARCH_RECORDS / 5); // "Toyota" ≈ 20%
+    log(`  @Indexed search "toy" × ${SEARCH_ITERS}: ${indexedSearchMs} ms`);
+    log(`  → n-gram narrows ${SEARCH_RECORDS} records → ~${expectedCandidates} candidates, then 2-field sort + limit 10`);
+
+    // Correctness check: all returned records must have make containing "toy"
+    const results = Car.find({
+      where: [{ field: "make", operator: "search", value: "toy" }],
+      limit: 5,
+    });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every((c) => (c as { make: string }).make.toLowerCase().includes("toy"))).toBe(true);
+    log(`  ✓ All ${results.length} returned records correctly match "toy" in make`);
+  });
+
+  it(`Full-scan "contains" operator on Workers: scans all ${SEARCH_RECORDS} entities`, () => {
+    const adapter = new MockSpreadsheetAdapter();
+    Registry.getInstance().configure({ adapter });
+
+    for (let i = 0; i < SEARCH_RECORDS; i++) {
+      Worker.create({
+        name: `Worker-${i}`,
+        department: ["Engineering", "Marketing", "HR", "Finance", "Sales"][i % 5],
+        salary: 3000 + (i % 10) * 500,
+        active: i % 3 !== 0,
+      }).save();
+    }
+
+    // No index sheet for Workers
+    expect(adapter.getSheetNames()).not.toContain(Worker.indexTableName);
+
+    // Warm up entity cache
+    Worker.find({ where: [{ field: "department", operator: "contains", value: "Eng" }] });
+
+    // Benchmark: SEARCH_ITERS × (scan all entities → filter → multi-key sort → limit)
+    const t1 = Date.now();
+    for (let i = 0; i < SEARCH_ITERS; i++) {
+      Worker.find({
+        where: [{ field: "department", operator: "contains", value: "Eng" }],
+        orderBy: [
+          { field: "salary", direction: "asc" },
+          { field: "name", direction: "desc" },
+        ],
+        limit: 10,
+      });
+    }
+    const fullScanMs = Date.now() - t1;
+
+    log(`  Full-scan contains "Eng" × ${SEARCH_ITERS}: ${fullScanMs} ms`);
+    log(`  → scans all ${SEARCH_RECORDS} entities with string.includes(), then 2-field sort + limit 10`);
+
+    // Correctness check
+    const results = Worker.find({
+      where: [{ field: "department", operator: "contains", value: "Eng" }],
+      limit: 5,
+    });
+    expect(results.length).toBeGreaterThan(0);
+    log(`  ✓ Full-scan returned ${results.length} matching records`);
+
+    // Summary
+    log(`\n${"─".repeat(60)}`);
+    log(`  SEARCH BENCHMARK SUMMARY`);
+    log(`${"─".repeat(60)}`);
+    log(`  @Indexed "search" (Cars)   : ${indexedSearchMs} ms (n-gram → ~${Math.round(SEARCH_RECORDS / 5)} candidates → sort)`);
+    log(`  Full-scan "contains" (Workers): ${fullScanMs} ms (scan ${SEARCH_RECORDS} → filter → sort)`);
+    if (indexedSearchMs > 0) {
+      const ratio = (fullScanMs / indexedSearchMs).toFixed(2);
+      log(`  Ratio: ${ratio}x  (indexed / full-scan over ${SEARCH_ITERS} iterations)`);
+    }
+    log(`  Note: @Indexed "search" uses the n-gram posting index to pre-filter candidates.`);
+    log(`        Sort+pagination then runs on the narrowed set (${Math.round(SEARCH_RECORDS / 5)} vs ${SEARCH_RECORDS} entities).`);
+    log(`        In real GAS the n-gram index is cached after the first query in each`);
+    log(`        execution — subsequent searches cost 0 additional API calls.`);
+    log(`        The advantage is most dramatic when selectivity is high (few matches)`);
+    log(`        or when the result requires sorting a large intermediate set.`);
+    log(`${"─".repeat(60)}`);
+  });
+});
