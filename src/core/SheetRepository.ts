@@ -235,10 +235,26 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Save multiple entities in batch.
+   * Save multiple entities in batch, flushing all index writes in a single
+   * sheet call at the end instead of one per entity.
    */
   saveAll(entities: Array<Partial<T>>): T[] {
-    return entities.map((e) => this.save(e));
+    if (entities.length === 0) return [];
+    if (this.schema.indexTableName) {
+      this.indexStore.beginIndexBatch();
+    }
+    try {
+      const results = entities.map((e) => this.save(e));
+      if (this.schema.indexTableName) {
+        this.indexStore.flushIndexBatch();
+      }
+      return results;
+    } catch (err) {
+      if (this.schema.indexTableName) {
+        this.indexStore.cancelIndexBatch();
+      }
+      throw err;
+    }
   }
 
   /**

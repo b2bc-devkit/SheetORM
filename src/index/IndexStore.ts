@@ -30,6 +30,7 @@ export class IndexStore {
   private cache: ICacheProvider | null;
   private indexRegistry: Map<string, IndexMeta> = new Map();
   private searchIndexCache: Map<string, SearchIndex> = new Map();
+  private indexBatch: Map<string, unknown[][]> | null = null;
   private static readonly NGRAM_SIZE = 3;
 
   constructor(adapter: ISpreadsheetAdapter, cache?: ICacheProvider) {
@@ -63,6 +64,46 @@ export class IndexStore {
       field,
       unique,
     });
+  }
+
+  // ─── Batch index write buffering ────────────────────────────────────────────
+
+  /**
+   * Begin buffering all addAllFieldsToCombined calls. While active, no index
+   * writes hit the sheet — entries accumulate in memory instead.
+   * Call flushIndexBatch() to write everything in a single setValues call per index table.
+   */
+  beginIndexBatch(): void {
+    this.indexBatch = new Map();
+  }
+
+  /**
+   * Write all buffered index entries (one writeRowsAt per index table) and clear the buffer.
+   */
+  flushIndexBatch(): void {
+    if (!this.indexBatch) return;
+    const batch = this.indexBatch;
+    this.indexBatch = null;
+    for (const [indexTableName, rows] of batch) {
+      if (rows.length === 0) continue;
+      const sheet = this.adapter.getSheetByName(indexTableName);
+      if (!sheet) continue;
+      if (this.cache) {
+        const data = this.getCombinedData(indexTableName);
+        sheet.writeRowsAt(data.length, rows);
+        for (const row of rows) data.push(row);
+        this.searchIndexCache.delete(indexTableName);
+      } else {
+        sheet.appendRows(rows);
+      }
+    }
+  }
+
+  /**
+   * Discard buffered entries without writing (used in error paths).
+   */
+  cancelIndexBatch(): void {
+    this.indexBatch = null;
   }
 
   // ─── Combined (per-class) index sheet methods ───────────────────────────────
@@ -165,6 +206,17 @@ export class IndexStore {
     }
 
     if (rows.length > 0) {
+      if (this.indexBatch !== null) {
+        // Batch mode: accumulate rows, no sheet write yet
+        let pending = this.indexBatch.get(indexTableName);
+        if (!pending) {
+          pending = [];
+          this.indexBatch.set(indexTableName, pending);
+        }
+        for (const row of rows) pending.push(row);
+        return;
+      }
+
       if (this.cache) {
         const data = this.getCombinedData(indexTableName);
         sheet.writeRowsAt(data.length, rows);
