@@ -406,10 +406,10 @@ export class SheetRepository<T extends Entity> {
     const rows = remaining.map((e) => entityToRow(e, this.schema.fields, this.headers, this.fieldMap));
     sheet.replaceAllData(rows);
 
+    if (this.schema.indexTableName) {
+      this.indexStore.removeMultipleFromCombined(this.schema.indexTableName, [...deleteIds]);
+    }
     for (const id of deleteIds) {
-      if (this.schema.indexTableName) {
-        this.indexStore.removeAllFromCombined(this.schema.indexTableName, id);
-      }
       if (this.hooks.afterDelete) this.hooks.afterDelete(id);
     }
 
@@ -580,11 +580,15 @@ export class SheetRepository<T extends Entity> {
   private addToIndexes(entity: T): void {
     if (this.schema.indexTableName) {
       const indexedFields = this.indexStore.getIndexedFields(this.schema.indexTableName);
+      const entries: Array<{ field: string; value: unknown }> = [];
       for (const meta of indexedFields) {
         const value = entity[meta.field];
         if (value !== undefined && value !== null && value !== "") {
-          this.indexStore.addToCombined(this.schema.indexTableName, meta.field, value, entity.__id);
+          entries.push({ field: meta.field, value });
         }
+      }
+      if (entries.length > 0) {
+        this.indexStore.addAllFieldsToCombined(this.schema.indexTableName, entries, entity.__id);
       }
     }
   }

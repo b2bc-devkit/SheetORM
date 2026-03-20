@@ -119,13 +119,58 @@ export class IndexStore {
   }
 
   /**
+   * Add entries for multiple fields of a single entity in one batch appendRows() call.
+   * Reduces N separate appendRow() API calls to a single setValues() call.
+   */
+  addAllFieldsToCombined(
+    indexTableName: string,
+    entries: Array<{ field: string; value: unknown }>,
+    entityId: string,
+  ): void {
+    const sheet = this.adapter.getSheetByName(indexTableName);
+    if (!sheet) return;
+
+    const rows: unknown[][] = [];
+    let data: unknown[][] | null = null;
+
+    for (const { field, value } of entries) {
+      const valueStr = String(value);
+      const meta = this.indexRegistry.get(this.registryKey(indexTableName, field));
+
+      if (meta?.unique) {
+        if (!data) data = this.getCombinedData(indexTableName);
+        let alreadyIndexed = false;
+        for (let i = 0; i < data.length; i++) {
+          if (String(data[i][0]) === field && String(data[i][1]) === valueStr) {
+            if (String(data[i][2]) !== entityId) {
+              throw new Error(
+                `Unique index violation: ${indexTableName}.${field} already has value "${valueStr}" for entity ${String(data[i][2])}`,
+              );
+            }
+            alreadyIndexed = true;
+            break;
+          }
+        }
+        if (alreadyIndexed) continue;
+      }
+
+      rows.push([field, valueStr, entityId]);
+    }
+
+    if (rows.length > 0) {
+      sheet.appendRows(rows);
+      this.clearCache();
+    }
+  }
+
+  /**
    * Remove all combined index entries for an entity.
    */
   removeAllFromCombined(indexTableName: string, entityId: string): void {
     const sheet = this.adapter.getSheetByName(indexTableName);
     if (!sheet) return;
 
-    const data = sheet.getAllData();
+    const data = this.getCombinedData(indexTableName);
     const rowsToDelete: number[] = [];
 
     for (let i = 0; i < data.length; i++) {
@@ -140,6 +185,26 @@ export class IndexStore {
       }
       this.clearCache();
     }
+  }
+
+  /**
+   * Remove combined index entries for multiple entities in one bulk operation.
+   * Reads data once, filters out all matching rows, writes back with replaceAllData().
+   * Use this instead of N separate removeAllFromCombined() calls.
+   */
+  removeMultipleFromCombined(indexTableName: string, entityIds: string[]): void {
+    if (entityIds.length === 0) return;
+    const sheet = this.adapter.getSheetByName(indexTableName);
+    if (!sheet) return;
+
+    const idSet = new Set(entityIds);
+    const data = this.getCombinedData(indexTableName);
+    const remaining = data.filter((row) => !idSet.has(String(row[2])));
+
+    if (remaining.length === data.length) return;
+
+    sheet.replaceAllData(remaining);
+    this.clearCache();
   }
 
   /**
