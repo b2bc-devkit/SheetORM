@@ -4,5 +4,6 @@
     "target": "ESNext",
     "lib": ["ESNext"],
     "outDir": "build"
-  }
+  },
+  "exclude": ["tests"]
 }

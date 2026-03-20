@@ -17,10 +17,20 @@ export interface IndexMeta {
   unique: boolean;
 }
 
+/** In-memory n-gram search index for a single field inside a combined index sheet. */
+interface SearchIndex {
+  entries: Array<{ value: string; entityId: string }>;
+  normalized: string[];
+  tokenIndex: Map<string, number[]>;
+  ngramIndex: Map<string, number[]>;
+}
+
 export class IndexStore {
   private adapter: ISpreadsheetAdapter;
   private cache: ICacheProvider | null;
   private indexRegistry: Map<string, IndexMeta> = new Map();
+  private searchIndexCache: Map<string, SearchIndex> = new Map();
+  private static readonly NGRAM_SIZE = 3;
 
   constructor(adapter: ISpreadsheetAdapter, cache?: ICacheProvider) {
     this.adapter = adapter;
@@ -90,7 +100,7 @@ export class IndexStore {
     const valueStr = String(value);
 
     if (meta?.unique) {
-      const data = sheet.getAllData();
+      const data = this.getCombinedData(indexTableName);
       for (let i = 0; i < data.length; i++) {
         if (String(data[i][0]) === field && String(data[i][1]) === valueStr) {
           if (String(data[i][2]) !== entityId) {
@@ -134,6 +144,7 @@ export class IndexStore {
 
   /**
    * Update combined index entries for an entity (remove old values, add new).
+   * Reads the sheet ONCE, collects all changes, then applies deletions + appends.
    */
   updateInCombined(
     indexTableName: string,
@@ -146,20 +157,27 @@ export class IndexStore {
 
     const indexedFields = this.getIndexedFields(indexTableName);
 
+    type Change = { field: string; oldStr: string | null; newStr: string | null; unique: boolean };
+    const changes: Change[] = [];
+
     for (const meta of indexedFields) {
       const field = meta.field;
       const oldVal = oldValues[field];
       const newVal = newValues[field];
-
       if (oldVal === newVal) continue;
-
       const oldStr = oldVal !== undefined && oldVal !== null && oldVal !== "" ? String(oldVal) : null;
       const newStr = newVal !== undefined && newVal !== null && newVal !== "" ? String(newVal) : null;
+      changes.push({ field, oldStr, newStr, unique: meta.unique });
+    }
 
-      const data = sheet.getAllData();
+    if (changes.length === 0) return;
 
-      // Uniqueness check before any writes
-      if (newStr !== null && meta.unique) {
+    // Read sheet data ONCE (may hit getCombinedData cache)
+    const data = this.getCombinedData(indexTableName);
+
+    // Uniqueness checks — all on the same snapshot, before any writes
+    for (const { field, newStr, unique } of changes) {
+      if (newStr !== null && unique) {
         for (let i = 0; i < data.length; i++) {
           if (
             String(data[i][0]) === field &&
@@ -172,35 +190,43 @@ export class IndexStore {
           }
         }
       }
+    }
 
-      // Remove old entry
-      if (oldStr !== null) {
-        for (let i = data.length - 1; i >= 0; i--) {
-          if (String(data[i][0]) === field && String(data[i][1]) === oldStr && String(data[i][2]) === entityId) {
-            sheet.deleteRow(i);
-            break;
-          }
-        }
+    // Collect all rows to delete in one pass
+    const fieldOldMap = new Map<string, string>();
+    for (const { field, oldStr } of changes) {
+      if (oldStr !== null) fieldOldMap.set(field, oldStr);
+    }
+    const rowsToDelete: number[] = [];
+    for (let i = 0; i < data.length; i++) {
+      const fc = String(data[i][0]);
+      const oldStr = fieldOldMap.get(fc);
+      if (oldStr !== undefined && String(data[i][1]) === oldStr && String(data[i][2]) === entityId) {
+        rowsToDelete.push(i);
       }
+    }
 
-      // Add new entry
+    // Delete from bottom to top
+    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+      sheet.deleteRow(rowsToDelete[i]);
+    }
+
+    // Add new entries
+    for (const { field, newStr } of changes) {
       if (newStr !== null) {
         sheet.appendRow([field, newStr, entityId]);
       }
-
-      this.clearCache();
     }
+
+    this.clearCache();
   }
 
   /**
    * Look up entity IDs in the combined index by field/value pair.
    */
   lookupCombined(indexTableName: string, field: string, value: unknown): string[] {
-    const sheet = this.adapter.getSheetByName(indexTableName);
-    if (!sheet) return [];
-
+    const data = this.getCombinedData(indexTableName);
     const valueStr = String(value);
-    const data = sheet.getAllData();
     const ids: string[] = [];
     for (let i = 0; i < data.length; i++) {
       if (String(data[i][0]) === field && String(data[i][1]) === valueStr) {
@@ -223,7 +249,231 @@ export class IndexStore {
     this.clearCache();
   }
 
+  // ─── N-gram search (Solr-like approach) ──────────────────────────────────
+
+  /**
+   * Normalize a string for search indexing / querying:
+   * lowercase, trim, collapse whitespace, normalize separators.
+   */
+  static normalizeForSearch(s: string): string {
+    if (!s) return "";
+    let t = s.toLowerCase().trim();
+    // Normalize dashes, em-dashes, underscores → space
+    t = t.replace(/[\u2010-\u2015\-\u2013\u2014_]/g, " ");
+    // Remove commas
+    t = t.replace(/,/g, " ");
+    // Collapse whitespace
+    t = t.replace(/\s+/g, " ").trim();
+    return t;
+  }
+
+  /**
+   * Tokenize a normalized string into search tokens (split on spaces).
+   */
+  static tokenize(normalized: string): string[] {
+    if (!normalized) return [];
+    return normalized.split(" ").filter((t) => t.length > 0);
+  }
+
+  /**
+   * Generate character-level n-grams of length `n` from a string.
+   * Whitespace is stripped before generating n-grams.
+   */
+  static ngrams(s: string, n: number): Set<string> {
+    const out = new Set<string>();
+    if (!s) return out;
+    const t = s.replace(/\s+/g, "");
+    if (t.length < n) return out;
+    for (let i = 0; i <= t.length - n; i++) {
+      out.add(t.substring(i, i + n));
+    }
+    return out;
+  }
+
+  /**
+   * Build an in-memory search index for a given field in a combined index sheet.
+   * Stores token postings and trigram postings for fast Solr-like lookup.
+   */
+  private buildSearchIndex(indexTableName: string, field: string): SearchIndex {
+    const data = this.getCombinedData(indexTableName);
+    const entries: Array<{ value: string; entityId: string }> = [];
+    const normalized: string[] = [];
+    const tokenIndex = new Map<string, number[]>();
+    const ngramIndex = new Map<string, number[]>();
+
+    {
+      for (let i = 0; i < data.length; i++) {
+        if (String(data[i][0]) !== field) continue;
+        const value = String(data[i][1]);
+        const entityId = String(data[i][2]);
+        const idx = entries.length;
+        entries.push({ value, entityId });
+
+        const norm = IndexStore.normalizeForSearch(value);
+        normalized.push(norm);
+
+        // Token → postings
+        const tokens = IndexStore.tokenize(norm);
+        for (const tk of tokens) {
+          let postings = tokenIndex.get(tk);
+          if (!postings) {
+            postings = [];
+            tokenIndex.set(tk, postings);
+          }
+          postings.push(idx);
+        }
+
+        // Trigrams from tokens + compacted form → postings
+        const ngs = new Set<string>();
+        for (const tk of tokens) {
+          for (const ng of IndexStore.ngrams(tk, IndexStore.NGRAM_SIZE)) ngs.add(ng);
+        }
+        for (const ng of IndexStore.ngrams(norm.replace(/ /g, ""), IndexStore.NGRAM_SIZE)) ngs.add(ng);
+        for (const ng of ngs) {
+          let postings = ngramIndex.get(ng);
+          if (!postings) {
+            postings = [];
+            ngramIndex.set(ng, postings);
+          }
+          postings.push(idx);
+        }
+      }
+    }
+
+    return { entries, normalized, tokenIndex, ngramIndex };
+  }
+
+  /**
+   * For a token not present in the token index, approximate its postings
+   * by intersecting the posting lists of its trigrams.
+   */
+  private static postingsForTokenViaNgrams(token: string, ngramIndex: Map<string, number[]>): number[] {
+    const ngs = IndexStore.ngrams(token, IndexStore.NGRAM_SIZE);
+    if (ngs.size === 0) return [];
+
+    const lists: number[][] = [];
+    for (const ng of ngs) {
+      const p = ngramIndex.get(ng);
+      if (!p) return []; // missing trigram → token cannot be present
+      lists.push(p);
+    }
+    lists.sort((a, b) => a.length - b.length);
+    return IndexStore.intersectPostingLists(lists);
+  }
+
+  /**
+   * Intersect multiple sorted posting lists.
+   */
+  private static intersectPostingLists(lists: number[][]): number[] {
+    if (lists.length === 0) return [];
+    let result = lists[0];
+    for (let i = 1; i < lists.length; i++) {
+      result = IndexStore.intersectTwo(result, lists[i]);
+      if (result.length === 0) break;
+    }
+    return result;
+  }
+
+  /**
+   * Intersect two sorted posting lists using two-pointer technique.
+   */
+  private static intersectTwo(a: number[], b: number[]): number[] {
+    const out: number[] = [];
+    let i = 0;
+    let j = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) {
+        out.push(a[i]);
+        i++;
+        j++;
+      } else if (a[i] < b[j]) {
+        i++;
+      } else {
+        j++;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Search for entity IDs in a combined index by field using n-gram text search.
+   *
+   * Algorithm (Solr-like, ported from TyreSizeCatalog):
+   * 1. Normalize + tokenize query
+   * 2. For each token: exact match in tokenIndex, or fallback to trigram intersection
+   * 3. Intersect postings across all query tokens
+   * 4. Verify candidates with substring match on normalized value
+   */
+  searchCombined(indexTableName: string, field: string, query: string, limit?: number): string[] {
+    if (!query) return [];
+
+    const cacheKey = `${indexTableName}::${field}`;
+    let idx = this.searchIndexCache.get(cacheKey);
+    if (!idx) {
+      idx = this.buildSearchIndex(indexTableName, field);
+      this.searchIndexCache.set(cacheKey, idx);
+    }
+
+    if (idx.entries.length === 0) return [];
+
+    const pat = IndexStore.normalizeForSearch(query);
+    if (!pat) return [];
+
+    const qTokens = IndexStore.tokenize(pat);
+    let candidates: number[];
+
+    if (qTokens.length === 0) {
+      candidates = Array.from({ length: idx.entries.length }, (_, i) => i);
+    } else {
+      const postings: number[][] = [];
+      for (const t of qTokens) {
+        const p = idx.tokenIndex.get(t);
+        if (p) {
+          postings.push(p);
+        } else {
+          const p2 = IndexStore.postingsForTokenViaNgrams(t, idx.ngramIndex);
+          if (p2.length === 0) return [];
+          postings.push(p2);
+        }
+      }
+      postings.sort((a, b) => a.length - b.length);
+      candidates = IndexStore.intersectPostingLists(postings);
+      if (candidates.length === 0) return [];
+    }
+
+    // Verify candidates with substring match on normalized text
+    const maxResults = limit ?? candidates.length;
+    const out: string[] = [];
+    for (const pos of candidates) {
+      if (idx.normalized[pos].includes(pat)) {
+        out.push(idx.entries[pos].entityId);
+        if (out.length >= maxResults) break;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Return cached raw rows for a combined index sheet (avoids redundant getAllData calls
+   * across multiple lookupCombined / searchCombined / updateInCombined invocations).
+   * Cache is invalidated by clearCache() after any write.
+   */
+  private getCombinedData(indexTableName: string): unknown[][] {
+    if (this.cache) {
+      const cacheKey = `cidx:${indexTableName}`;
+      const cached = this.cache.get<unknown[][]>(cacheKey);
+      if (cached !== null) return cached;
+      const sheet = this.adapter.getSheetByName(indexTableName);
+      const data = sheet ? sheet.getAllData() : [];
+      this.cache.set(cacheKey, data);
+      return data;
+    }
+    const sheet = this.adapter.getSheetByName(indexTableName);
+    return sheet ? sheet.getAllData() : [];
+  }
+
   private clearCache(): void {
+    this.searchIndexCache.clear();
     if (!this.cache) return;
     this.cache.clear();
   }

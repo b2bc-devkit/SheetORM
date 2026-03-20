@@ -407,6 +407,143 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         "indexed field names should match",
       );
     },
+    // ─── N-gram search (Solr-like) ─────────────────
+    "searchCombined (n-gram) > finds exact token match": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      indexStore.addToCombined(indexTable, "model", "Mercedes-Benz C200", "car-002");
+      const ids = indexStore.searchCombined(indexTable, "model", "BMW");
+      assertDeepEqual(ids, ["car-001"], "exact token 'BMW' should match car-001");
+    },
+    "searchCombined (n-gram) > finds partial match via trigrams": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      const ids = indexStore.searchCombined(indexTable, "model", "320");
+      assertDeepEqual(ids, ["car-001"], "partial '320' should match via trigrams");
+    },
+    "searchCombined (n-gram) > is case insensitive": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      const ids = indexStore.searchCombined(indexTable, "model", "bmw");
+      assertDeepEqual(ids, ["car-001"], "case-insensitive search should work");
+    },
+    "searchCombined (n-gram) > handles multi-token query (intersection)": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      indexStore.addToCombined(indexTable, "model", "BMW X5", "car-002");
+      const ids = indexStore.searchCombined(indexTable, "model", "BMW 320");
+      assertDeepEqual(ids, ["car-001"], "multi-token intersection should return only car-001");
+    },
+    "searchCombined (n-gram) > returns empty for no match": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      const ids = indexStore.searchCombined(indexTable, "model", "Volvo");
+      assertDeepEqual(ids, [], "unmatched query should return empty array");
+    },
+    "searchCombined (n-gram) > respects limit parameter": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      indexStore.addToCombined(indexTable, "model", "BMW X5", "car-002");
+      const ids = indexStore.searchCombined(indexTable, "model", "BMW", 1);
+      assertEqual(ids.length, 1, "limit should restrict number of results");
+    },
+    "searchCombined (n-gram) > finds match through normalized separators": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "Mercedes-Benz C200", "car-001");
+      const ids = indexStore.searchCombined(indexTable, "model", "Mercedes Benz");
+      assertDeepEqual(ids, ["car-001"], "dash-normalized query should match");
+    },
+    "searchCombined (n-gram) > invalidates search index cache on data change": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      assertDeepEqual(indexStore.searchCombined(indexTable, "model", "Volvo"), [], "no Volvo yet");
+      indexStore.addToCombined(indexTable, "model", "Volvo S60", "car-002");
+      const ids = indexStore.searchCombined(indexTable, "model", "Volvo");
+      assertDeepEqual(ids, ["car-002"], "search should pick up newly added entry");
+    },
+    "searchCombined (n-gram) > returns empty for empty query": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      assertDeepEqual(indexStore.searchCombined(indexTable, "model", ""), [], "empty query should return []");
+    },
+    "searchCombined (n-gram) > finds substring within a token via trigrams": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "Toyota Corolla", "car-001");
+      const ids = indexStore.searchCombined(indexTable, "model", "Corol");
+      assertDeepEqual(ids, ["car-001"], "substring 'Corol' should match via trigrams");
+    },
+    "normalizeForSearch > lowercases and trims": () => {
+      assertEqual(IndexStore.normalizeForSearch("  BMW 320i  "), "bmw 320i", "should lowercase and trim");
+    },
+    "normalizeForSearch > normalizes dashes to spaces": () => {
+      assertEqual(
+        IndexStore.normalizeForSearch("Mercedes-Benz"),
+        "mercedes benz",
+        "dash should become space",
+      );
+    },
+    "normalizeForSearch > collapses whitespace": () => {
+      assertEqual(IndexStore.normalizeForSearch("a   b   c"), "a b c", "multiple spaces should collapse");
+    },
+    "normalizeForSearch > returns empty for null-ish input": () => {
+      assertEqual(IndexStore.normalizeForSearch(""), "", "empty string should return empty");
+    },
+    "ngrams > generates trigrams": () => {
+      const ngs = IndexStore.ngrams("abcde", 3);
+      assertTrue(ngs.size === 3, "should have 3 trigrams");
+      assertTrue(ngs.has("abc"), "should contain abc");
+      assertTrue(ngs.has("bcd"), "should contain bcd");
+      assertTrue(ngs.has("cde"), "should contain cde");
+    },
+    "ngrams > returns empty for short input": () => {
+      const ngs = IndexStore.ngrams("ab", 3);
+      assertEqual(ngs.size, 0, "input shorter than n should produce empty set");
+    },
+    "ngrams > strips whitespace before generating": () => {
+      const ngs = IndexStore.ngrams("a b c d e", 3);
+      assertTrue(ngs.size === 3, "whitespace should be stripped first");
+      assertTrue(ngs.has("abc"), "should contain abc after stripping spaces");
+    },
   },
   "query.test.ts": {
     "filters with where()": () => {
@@ -520,6 +657,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const filters: Filter[] = [{ field: "city", operator: "in", value: ["Gdańsk", "Kraków"] }];
       const result = filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 3, "in operator should match users in both cities");
+    },
+    "filters with search operator (substring match)": () => {
+      const filters: Filter[] = [{ field: "name", operator: "search", value: "an" }];
+      const result = filterEntities(queryEngineUsers, filters);
+      assertEqual(result.length, 2, "search operator should match Anna and Jan");
     },
     "applies multiple filters as AND": () => {
       const filters: Filter[] = [

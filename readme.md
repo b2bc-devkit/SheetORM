@@ -15,6 +15,8 @@ extend `Record`, and everything just works.
 - **`Query.from()`** — Start queries from a class reference or string name
 - **Secondary indexes** — Stored in a single combined index sheet (`idx_{ClassName}s`) for fast lookup by
   indexed fields
+- **N-gram text search** — Solr-like trigram search on `@Indexed` fields via `IndexStore.searchCombined()`;
+  also available as the `search` filter operator in queries
 - **In-memory caching** — Configurable TTL cache to reduce sheet reads
 - **Lifecycle hooks** — `beforeSave`, `afterSave`, `beforeDelete`, `afterDelete`
 - **Batch operations** — `beginBatch` / `commitBatch` / `rollbackBatch` for safe bulk writes
@@ -321,7 +323,20 @@ Query.from("Car").where("make", "=", "Toyota").first();
 
 ### Filter operators
 
-`=`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `in`
+`=`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `in`, `search`
+
+The `search` operator uses an in-memory **trigram (n-gram) index** built from the combined index sheet
+(`idx_{ClassName}s`). When the target field is `@Indexed`, the query is optimised: candidates are narrowed via
+the n-gram index first, then verified with a substring match. For non-indexed fields `search` falls back to a
+simple case-insensitive `contains`.
+
+```ts
+// Fast n-gram search on @Indexed field — uses idx_Cars
+const hits = Car.where("model", "search", "320i").execute();
+
+// Programmatic access via IndexStore
+const ids = indexStore.searchCombined("idx_Cars", "model", "320i");
+```
 
 ### Field types
 
@@ -396,18 +411,29 @@ npm test
 
 Run in Google Apps Script (real Sheets API):
 
-- `runSheetOrmRuntimeParity()` — executes full runtime parity suite against the active spreadsheet
-- `validateSheetOrmRuntimeParity()` — validates mapping only (fast drift check)
+- `runTests()` — executes full runtime parity suite against the active spreadsheet
+- `validateTests()` — validates mapping only (fast drift check)
 
 ### GAS Runtime Benchmark
 
 A runtime benchmark mirrors `tests/benchmark.test.ts` and runs against the real Sheets API:
 
-- `src/testing/runtimeBenchmark.ts` — benchmark runner for Cars + Workers (1 000 records each)
+- `src/testing/runtimeBenchmark.ts` — benchmark runner for Cars + Workers (100 records each)
 
 Run in Google Apps Script (real Sheets API):
 
-- `runSheetOrmBenchmark()` — executes full Cars + Workers benchmark and logs a timing summary
+- `runBenchmark()` — executes full Cars + Workers benchmark and logs a timing summary
+
+## Exposed GAS Functions
+
+Only three top-level functions are surfaced as GAS globals (visible in the Apps Script editor Run menu and
+callable as triggers). Everything else is an internal implementation detail bundled into `Code.js`.
+
+| Function        | Signature                | Purpose                                                                                                                                                                                                           | When to use                                                                                                                |
+| --------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `runTests`      | `runTests(): string`     | Executes the full runtime parity suite (all ~146 test cases) against the active Google Spreadsheet. Returns a JSON summary and logs per-test PASS/FAIL to `Logger`. Cleans up all temporary sheets after the run. | After deploying a new version of SheetORM to GAS to verify the real Sheets API behaves identically to the Jest mock suite. |
+| `validateTests` | `validateTests(): void`  | Checks that every Jest test case has a matching GAS handler (and vice versa). Throws immediately if the two catalogs have drifted — no Sheets API calls made.                                                     | Quick sanity check during development; runs in milliseconds without touching any spreadsheet.                              |
+| `runBenchmark`  | `runBenchmark(): string` | Runs a write/read/query/delete cycle for Cars (with `@Indexed`) and Workers (without `@Indexed`) using 100 records each. Logs per-operation timings and a comparison summary to `Logger`. Returns a JSON report.  | Measuring real-world Sheets API performance and understanding the latency trade-off of `@Indexed` versus plain tables.     |
 
 ## CI
 

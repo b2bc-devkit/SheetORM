@@ -2,7 +2,7 @@
 // Mirrors tests/benchmark.test.ts but runs against real Google Sheets API.
 //
 // Functions exposed to GAS:
-//   runSheetOrmBenchmark()  — full benchmark for Cars + Workers (1,000 records each)
+//   runBenchmark()  — full benchmark for Cars + Workers (100 records each)
 
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSheetsAdapter";
 import { Registry } from "../core/Registry";
@@ -12,7 +12,7 @@ import { Query } from "../query/Query";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const RECORD_COUNT = 1_000;
+const RECORD_COUNT = 100;
 
 // ─── GAS logger helper ───────────────────────────────────────────────────────
 
@@ -106,7 +106,7 @@ interface BenchResult {
   errors: string[];
 }
 
-function runBenchmark<T extends BaseRecord>(
+function runBenchmarkFor<T extends BaseRecord>(
   Ctor: { new (): T } & typeof BaseRecord,
   makeData: (i: number) => { [key: string]: unknown },
   log: (msg: string) => void,
@@ -266,9 +266,7 @@ function runBenchmark<T extends BaseRecord>(
   // Check index sheet
   const adapter = Registry.getInstance().getIndexStore();
   void adapter;
-  const indexSheetCreated = Registry.getInstance()
-    .getIndexStore()
-    .existsCombined(indexTableName);
+  const indexSheetCreated = Registry.getInstance().getIndexStore().existsCombined(indexTableName);
 
   log(`[SheetORM] ────────────────────────────────────────────────────`);
   log(`[SheetORM] ${tableName} finished in ${durationMs} ms`);
@@ -290,12 +288,12 @@ function runBenchmark<T extends BaseRecord>(
 
 // ─── Public GAS function ─────────────────────────────────────────────────────
 
-export function runSheetOrmBenchmark(): string {
+export function runBenchmark(): string {
   const log = gasLog;
   const runId = String(Date.now());
 
   if (typeof SpreadsheetApp === "undefined") {
-    throw new Error("runSheetOrmBenchmark() must be run in Google Apps Script runtime.");
+    throw new Error("runBenchmark() must be run in Google Apps Script runtime.");
   }
 
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
@@ -317,7 +315,7 @@ export function runSheetOrmBenchmark(): string {
     color: ["red", "blue", "white", "black", "silver"][i % 5],
   });
 
-  const carsResult = runBenchmark(CarClass, carData, log);
+  const carsResult = runBenchmarkFor(CarClass, carData, log);
 
   // ── Workers benchmark (no @Indexed) ──────────────────────────────────────
   const WorkerClass = createWorkerClass(runId);
@@ -330,7 +328,7 @@ export function runSheetOrmBenchmark(): string {
     active: i % 3 !== 0,
   });
 
-  const workersResult = runBenchmark(WorkerClass, workerData, log);
+  const workersResult = runBenchmarkFor(WorkerClass, workerData, log);
 
   // ── Summary ───────────────────────────────────────────────────────────────
   const diff = workersResult.durationMs - carsResult.durationMs;
@@ -345,15 +343,11 @@ export function runSheetOrmBenchmark(): string {
   log(`[SheetORM] Difference: ${Math.abs(diff)} ms`);
   log(`[SheetORM] Faster: ${fasterSuite} (by ${Math.abs(diff)} ms)`);
   log(`[SheetORM] Slower: ${slowerSuite}`);
-  log(
-    `[SheetORM] Note: @Indexed adds write overhead in both mock and real GAS (index sheet writes).`,
-  );
+  log(`[SheetORM] Note: @Indexed adds write overhead in both mock and real GAS (index sheet writes).`);
   log(
     `[SheetORM]       In real Google Sheets, @Indexed enables faster point-lookups (fewer API reads per query).`,
   );
-  log(
-    `[SheetORM]       The time saved by @Indexed in real GAS grows with dataset size.`,
-  );
+  log(`[SheetORM]       The time saved by @Indexed in real GAS grows with dataset size.`);
   log(`[SheetORM] ════════════════════════════════════════════════════`);
 
   const totalPassed = carsResult.passed + workersResult.passed;

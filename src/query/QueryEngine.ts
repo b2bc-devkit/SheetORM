@@ -74,6 +74,13 @@ function compileFilter(f: Filter): (entity: Entity) => boolean {
       }
       return (e) => fv.includes(accessor(e));
     }
+    case "search": {
+      const lower = typeof fv === "string" ? fv.toLowerCase() : "";
+      return (e) => {
+        const v = accessor(e);
+        return typeof v === "string" && v.toLowerCase().includes(lower);
+      };
+    }
     default:
       return () => false;
   }

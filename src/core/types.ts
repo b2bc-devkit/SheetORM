@@ -37,7 +37,17 @@ export interface TableSchema {
 
 // ─── Filter & Query ──────────────────────────────────
 
-export type FilterOperator = "=" | "!=" | "<" | ">" | "<=" | ">=" | "contains" | "startsWith" | "in";
+export type FilterOperator =
+  | "="
+  | "!="
+  | "<"
+  | ">"
+  | "<="
+  | ">="
+  | "contains"
+  | "startsWith"
+  | "in"
+  | "search";
 
 export interface Filter {
   field: string;

@@ -251,10 +251,50 @@ export class SheetRepository<T extends Entity> {
 
   /**
    * Find entities matching query options.
+   * When a `search` operator targets an @Indexed field and a combined index
+   * sheet exists, the n-gram search index is used to narrow candidates before
+   * the full filter pipeline runs (Solr-like optimisation).
    */
   find(options?: QueryOptions): T[] {
     const all = this.loadAllEntities();
     if (!options) return all;
+
+    if (options.where && this.schema.indexTableName) {
+      const searchFilters: { field: string; value: string }[] = [];
+      const otherFilters: typeof options.where = [];
+
+      for (const f of options.where) {
+        if (f.operator === "search" && this.isIndexedField(f.field)) {
+          searchFilters.push({ field: f.field, value: String(f.value) });
+        } else {
+          otherFilters.push(f);
+        }
+      }
+
+      if (searchFilters.length > 0) {
+        let candidateIds: Set<string> | null = null;
+        for (const sf of searchFilters) {
+          const ids = this.indexStore.searchCombined(this.schema.indexTableName, sf.field, sf.value);
+          const idSet = new Set(ids);
+          if (candidateIds === null) {
+            candidateIds = idSet;
+          } else {
+            for (const id of candidateIds) {
+              if (!idSet.has(id)) candidateIds.delete(id);
+            }
+          }
+        }
+
+        if (!candidateIds || candidateIds.size === 0) return [];
+
+        const narrowed = all.filter((e) => candidateIds!.has(e.__id));
+        return executeQuery(narrowed, {
+          ...options,
+          where: otherFilters.length > 0 ? otherFilters : undefined,
+        });
+      }
+    }
+
     return executeQuery(all, options);
   }
 
@@ -577,5 +617,11 @@ export class SheetRepository<T extends Entity> {
         return;
       }
     }
+  }
+
+  private isIndexedField(fieldName: string): boolean {
+    if (!this.schema.indexTableName) return false;
+    const indexed = this.indexStore.getIndexedFields(this.schema.indexTableName);
+    return indexed.some((m) => m.field === fieldName);
   }
 }

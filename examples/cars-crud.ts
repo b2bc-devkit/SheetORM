@@ -4,7 +4,9 @@
 // This file is NOT compiled into the library — it serves as a reference.
 // In GAS, import from the bundled SheetORM globals directly.
 
-import { Record, Query, Indexed, Required } from "../src/index";
+import { Record } from "../src/core/Record";
+import { Indexed, Required } from "../src/core/decorators";
+import { Query } from "../src/query/Query";
 
 // ─── Define models by extending Record ───────────────
 

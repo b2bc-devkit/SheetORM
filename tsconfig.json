@@ -13,6 +13,6 @@
     "types": ["google-apps-script"],
     "experimentalDecorators": true
   },
-  "include": ["src", "examples"],
+  "include": ["src", "examples", "tests"],
   "files": ["src/index.ts"]
 }
