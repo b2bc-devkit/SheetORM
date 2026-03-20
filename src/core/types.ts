@@ -30,6 +30,7 @@ export interface IndexDefinition {
 
 export interface TableSchema {
   tableName: string;
+  indexTableName?: string;
   fields: FieldDefinition[];
   indexes: IndexDefinition[];
 }

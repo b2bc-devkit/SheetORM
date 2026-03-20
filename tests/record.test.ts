@@ -62,7 +62,7 @@ describe("Record ActiveRecord API", () => {
       car.model = "Civic";
       car.save();
 
-      expect(adapter.getSheetNames()).toContain("Cars");
+      expect(adapter.getSheetNames()).toContain("tbl_Cars");
     });
 
     it("updates an existing entity", () => {
@@ -107,7 +107,7 @@ describe("Record ActiveRecord API", () => {
       loaded!.save();
 
       // Verify raw sheet data — should update in place, not create a new row
-      const sheet = adapter._getSheet("Cars")!;
+      const sheet = adapter._getSheet("tbl_Cars")!;
       const rawData = sheet._getRawData();
       const headers = sheet.getHeaders();
       const colorIdx = headers.indexOf("color");
@@ -352,8 +352,8 @@ describe("Record ActiveRecord API", () => {
       const product = Product.create({ name: "Widget", price: 9.99, category: "tools" });
       product.save();
 
-      expect(adapter.getSheetNames()).toContain("Cars");
-      expect(adapter.getSheetNames()).toContain("Products");
+      expect(adapter.getSheetNames()).toContain("tbl_Cars");
+      expect(adapter.getSheetNames()).toContain("tbl_Products");
       expect(Car.count()).toBe(1);
       expect(Product.count()).toBe(1);
     });
@@ -382,7 +382,7 @@ describe("Record ActiveRecord API", () => {
     it("works with table name string", () => {
       Car.create({ make: "Toyota", model: "Corolla" }).save();
 
-      const result = Query.from("Cars").where("make", "=", "Toyota").execute();
+      const result = Query.from("tbl_Cars").where("make", "=", "Toyota").execute();
 
       expect(result).toHaveLength(1);
     });

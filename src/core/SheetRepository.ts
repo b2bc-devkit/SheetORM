@@ -218,7 +218,11 @@ export class SheetRepository<T extends Entity> {
         oldValues[field.name] = existingEntity![field.name];
         newValues[field.name] = entity[field.name];
       }
-      this.indexStore.updateForEntity(this.schema.tableName, entity.__id, oldValues, newValues);
+      if (this.schema.indexTableName) {
+        this.indexStore.updateInCombined(this.schema.indexTableName, entity.__id, oldValues, newValues);
+      } else {
+        this.indexStore.updateForEntity(this.schema.tableName, entity.__id, oldValues, newValues);
+      }
     }
 
     // Update entity cache in place (avoid full invalidation)
@@ -298,7 +302,11 @@ export class SheetRepository<T extends Entity> {
     if (rowIdx === null) return false;
 
     // Remove from indexes
-    this.indexStore.removeAllForEntity(this.schema.tableName, id);
+    if (this.schema.indexTableName) {
+      this.indexStore.removeAllFromCombined(this.schema.indexTableName, id);
+    } else {
+      this.indexStore.removeAllForEntity(this.schema.tableName, id);
+    }
 
     sheet.deleteRow(rowIdx);
 
@@ -363,7 +371,11 @@ export class SheetRepository<T extends Entity> {
     sheet.replaceAllData(rows);
 
     for (const id of deleteIds) {
-      this.indexStore.removeAllForEntity(this.schema.tableName, id);
+      if (this.schema.indexTableName) {
+        this.indexStore.removeAllFromCombined(this.schema.indexTableName, id);
+      } else {
+        this.indexStore.removeAllForEntity(this.schema.tableName, id);
+      }
       if (this.hooks.afterDelete) this.hooks.afterDelete(id);
     }
 
@@ -532,11 +544,21 @@ export class SheetRepository<T extends Entity> {
    * Add a new entity to all relevant indexes.
    */
   private addToIndexes(entity: T): void {
-    const indexedFields = this.indexStore.getIndexedFields(this.schema.tableName);
-    for (const meta of indexedFields) {
-      const value = entity[meta.field];
-      if (value !== undefined && value !== null && value !== "") {
-        this.indexStore.add(this.schema.tableName, meta.field, value, entity.__id);
+    if (this.schema.indexTableName) {
+      const indexedFields = this.indexStore.getIndexedFields(this.schema.indexTableName);
+      for (const meta of indexedFields) {
+        const value = entity[meta.field];
+        if (value !== undefined && value !== null && value !== "") {
+          this.indexStore.addToCombined(this.schema.indexTableName, meta.field, value, entity.__id);
+        }
+      }
+    } else {
+      const indexedFields = this.indexStore.getIndexedFields(this.schema.tableName);
+      for (const meta of indexedFields) {
+        const value = entity[meta.field];
+        if (value !== undefined && value !== null && value !== "") {
+          this.indexStore.add(this.schema.tableName, meta.field, value, entity.__id);
+        }
       }
     }
   }

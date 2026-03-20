@@ -62,3 +62,4 @@ export {
   rowToEntity,
 } from "./utils/serialization";
 export { runTests, validateTests } from "./testing/runtimeParity";
+export { runSheetOrmBenchmark } from "./testing/runtimeBenchmark";

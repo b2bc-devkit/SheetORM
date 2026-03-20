@@ -11,6 +11,7 @@ import { getFields } from "./decorators";
 export interface RecordConstructor<T extends Record = Record> {
   new (): T;
   tableName: string;
+  indexTableName: string;
 }
 
 type QueryableRecordClass =
@@ -42,7 +43,11 @@ export class Record implements Entity {
   [key: string]: unknown;
 
   static get tableName(): string {
-    return this.name + "s";
+    return "tbl_" + this.name + "s";
+  }
+
+  static get indexTableName(): string {
+    return "idx_" + this.name + "s";
   }
 
   // ─── Static Factory ──────────────────────────────

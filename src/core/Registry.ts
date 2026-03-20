@@ -11,6 +11,7 @@ import { getFields, getIndexes } from "./decorators";
 export interface RecordStatic {
   new (): Entity;
   tableName: string;
+  indexTableName: string;
   name: string;
 }
 
@@ -69,11 +70,22 @@ export class Registry {
     }
     sheet.setHeaders(buildHeaders(schema.fields));
 
-    for (const idx of schema.indexes) {
-      // createIndex() already handles the "already exists" case internally,
-      // so we skip the redundant exists() check (saves 1 getSheetByName API call per index).
-      indexStore.createIndex(schema.tableName, idx.field, { unique: idx.unique });
-      indexStore.registerIndex(schema.tableName, idx.field, idx.unique ?? false);
+    if (schema.indexes.length === 0) return;
+
+    if (schema.indexTableName) {
+      // Combined index sheet: one sheet (idx_ClassName) holds all indexed fields
+      indexStore.createCombinedIndex(schema.indexTableName);
+      for (const idx of schema.indexes) {
+        indexStore.registerIndex(schema.indexTableName, idx.field, idx.unique ?? false);
+      }
+    } else {
+      // Legacy per-field index sheets (direct TableSchema usage without a Record class)
+      for (const idx of schema.indexes) {
+        // createIndex() already handles the "already exists" case internally,
+        // so we skip the redundant exists() check (saves 1 getSheetByName API call per index).
+        indexStore.createIndex(schema.tableName, idx.field, { unique: idx.unique });
+        indexStore.registerIndex(schema.tableName, idx.field, idx.unique ?? false);
+      }
     }
   }
 
@@ -99,6 +111,7 @@ export class Registry {
 
     const schema: TableSchema = {
       tableName,
+      indexTableName: ctor.indexTableName,
       fields: getFields(ctor),
       indexes: getIndexes(ctor),
     };

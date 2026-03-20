@@ -9,9 +9,10 @@ extend `Record`, and everything just works.
 - **ActiveRecord pattern** — Extend `Record`, define fields, and call `save()` / `find()` / `delete()`
   directly on instances and classes
 - **Zero configuration** — Tables, schemas, indexes, and repositories are auto-created on first use
+- **Predictable naming** — Sheet names follow `tbl_{ClassName}s` (e.g. `tbl_Cars`); combined index sheets follow `idx_{ClassName}s` (e.g. `idx_Cars`)
 - **Fluent query builder** — `where()`, `and()`, `or()`, `orderBy()`, `limit()`, `offset()`
 - **`Query.from()`** — Start queries from a class reference or string name
-- **Secondary indexes** — Stored in dedicated sheets for fast lookup by indexed fields
+- **Secondary indexes** — Stored in a single combined index sheet (`idx_{ClassName}s`) for fast lookup by indexed fields
 - **In-memory caching** — Configurable TTL cache to reduce sheet reads
 - **Lifecycle hooks** — `beforeSave`, `afterSave`, `beforeDelete`, `afterDelete`
 - **Batch operations** — `beginBatch` / `commitBatch` / `rollbackBatch` for safe bulk writes
@@ -55,18 +56,23 @@ class Car extends Record {
 }
 ```
 
-- No `tableName` needed in the common case — the sheet name defaults to the class name (`Car` → `Cars`)
+- No `tableName` needed in the common case — the sheet name defaults to `tbl_` + class name + `s` (`Car` → `tbl_Cars`)
+- When any field is decorated with `@Indexed()`, a combined index sheet is automatically created with the name `idx_` + class name + `s` (`Car` → `idx_Cars`). Classes without `@Indexed` fields do **not** get an index sheet.
 - `@Indexed()` — marks a field as a secondary index (also implies `@Field`)
 - `@Required()` — marks a field as required using concise decorator syntax
 - `@Field(...)` — adds extra field options like `type`, `defaultValue`, or `referenceTable`
 - Plain properties (`year`, `color`) — auto-discovered as schema fields with type inferred at runtime
 
-If you want a custom sheet name, override the static getter:
+If you want a custom sheet name, override the static getters:
 
 ```ts
 class ArchivedCar extends Record {
   static override get tableName() {
     return "ArchivedCars";
+  }
+
+  static override get indexTableName() {
+    return "idx_ArchivedCars";
   }
 }
 ```
@@ -195,18 +201,20 @@ See [`examples/cars-crud.ts`](examples/cars-crud.ts) for a complete runnable exa
 
 ```
 src/
-  core/Record.ts          — ActiveRecord base class (primary API)
+  core/Record.ts          — ActiveRecord base class (primary API); tableName = tbl_{Name}s, indexTableName = idx_{Name}s
   core/Registry.ts        — Global singleton: adapter, repos, class map
   core/SheetRepository.ts — Generic repository: CRUD, batch, hooks, cache
   core/types.ts           — All interfaces, types, constants
   query/Query.ts          — Fluent query API + Query.from()
   query/QueryEngine.ts    — filter, sort, paginate, group pipeline
-  index/IndexStore.ts     — Secondary index management
+  index/IndexStore.ts     — Secondary index management (per-field and combined sheet)
   storage/GoogleSheetsAdapter.ts — ISheetAdapter / ISpreadsheetAdapter wrappers
   utils/uuid.ts           — UUID v4 generation (GAS / fallback)
   utils/cache.ts          — MemoryCache (ICacheProvider)
   utils/serialization.ts  — Row ↔ Entity conversion
-  testing/                — Runtime parity test suite
+  testing/parityCatalog.ts  — Canonical Jest ↔ runtime test case list
+  testing/runtimeParity.ts  — GAS runtime parity suite
+  testing/runtimeBenchmark.ts — GAS runtime benchmark (Cars + Workers, 1 000 records)
   index.ts                — Barrel exports + GAS trigger stubs
 examples/
   cars-crud.ts            — Full ActiveRecord example
@@ -219,12 +227,13 @@ examples/
 Extend `Record` to define a model. Declare fields as plain class properties — they are auto-discovered. Use
 decorators and an optional static property to customize behavior:
 
-| Decorator / property     | Description                                                   |
-| ------------------------ | ------------------------------------------------------------- |
-| `@Required()`            | Shorthand for marking a field as required                     |
-| `@Field(options?)`       | Explicit field with options (required, type, defaultValue)    |
-| `@Indexed(options?)`     | Secondary index (implies `@Field`)                            |
-| `static get tableName()` | Sheet name override (optional — defaults to class name + "s") |
+| Decorator / property       | Description                                                             |
+| -------------------------- | ----------------------------------------------------------------------- |
+| `@Required()`              | Shorthand for marking a field as required                               |
+| `@Field(options?)`         | Explicit field with options (required, type, defaultValue)              |
+| `@Indexed(options?)`       | Secondary index (implies `@Field`); auto-creates `idx_{ClassName}s`     |
+| `static get tableName()`   | Sheet name (defaults to `tbl_{ClassName}s` — e.g. `tbl_Cars` for `Car`) |
+| `static get indexTableName()` | Combined index sheet name (defaults to `idx_{ClassName}s` — e.g. `idx_Cars`) |
 
 #### `@Required()`
 
@@ -319,18 +328,52 @@ Query.from("Car").where("make", "=", "Toyota").first();
 npm test
 ```
 
-Runs **104 unit tests** across 8 test suites using Jest + ts-jest with in-memory mock adapters:
+Runs **108 unit and benchmark tests** across 9 test suites using Jest + ts-jest with in-memory mock adapters:
 
-| Suite                      | Tests | Description                                 |
-| -------------------------- | ----- | ------------------------------------------- |
-| `record.test.ts`           | 34    | ActiveRecord API (save, find, query, Query) |
-| `query-engine.test.ts`     | 21    | Filter, sort, paginate, group               |
-| `serialization.test.ts`    | 14    | Row ↔ Entity conversion                     |
-| `query.test.ts`            | 11    | Fluent query API                            |
-| `index-store.test.ts`      | 11    | Secondary index CRUD                        |
-| `cache.test.ts`            | 8     | MemoryCache TTL behavior                    |
-| `uuid.test.ts`             | 2     | UUID generation                             |
-| `parity-validator.test.ts` | 3     | Jest ↔ GAS runtime parity check             |
+| Suite                      | Tests | Description                                       |
+| -------------------------- | ----- | ------------------------------------------------- |
+| `record.test.ts`           | 34    | ActiveRecord API (save, find, query, Query)       |
+| `query-engine.test.ts`     | 21    | Filter, sort, paginate, group                     |
+| `serialization.test.ts`    | 14    | Row ↔ Entity conversion                           |
+| `query.test.ts`            | 11    | Fluent query API                                  |
+| `index-store.test.ts`      | 11    | Secondary index CRUD                              |
+| `cache.test.ts`            | 8     | MemoryCache TTL behavior                          |
+| `uuid.test.ts`             | 2     | UUID generation                                   |
+| `parity-validator.test.ts` | 3     | Jest ↔ GAS runtime parity check                   |
+| `benchmark.test.ts`        | 4     | 1 000-record perf benchmark: Cars vs Workers      |
+
+### Benchmark Tests (`benchmark.test.ts`)
+
+Two benchmark suites exercise the complete Record API against **1 000 records**:
+
+| Suite          | Class    | Table         | Index sheet | Notes                                        |
+| -------------- | -------- | ------------- | ----------- | -------------------------------------------- |
+| Cars benchmark | `Car`    | `tbl_Cars`    | `idx_Cars`  | All fields decorated with `@Indexed`         |
+| Workers benchmark | `Worker` | `tbl_Workers` | _not created_ | No `@Indexed` fields                       |
+
+Both suites emit progress logs to stdout, covering every Record API operation:
+`save()`, `count()`, `findById()`, `find()`, `findOne()`, `where()`, `query()`,
+`select()`, `groupBy()`, `update via save()`, `set()/get()`, `delete()`, `deleteAll()`,
+`Query.from()`, `toJSON()`.
+
+A timing comparison is printed at the end:
+
+```
+════════════════════════════════════════
+BENCHMARK SUMMARY
+════════════════════════════════════════
+tbl_Cars  (with @Indexed):   311 ms
+tbl_Workers (no @Indexed):   28 ms
+Difference:                  283 ms
+Faster suite: tbl_Workers (by 283 ms)
+Note: in mock environment @Indexed adds write overhead (index sheet writes).
+      In real Google Sheets, @Indexed enables faster lookups (fewer API reads).
+════════════════════════════════════════
+```
+
+> **Note**: In the in-memory mock environment `@Indexed` adds write overhead (each indexed field
+> value is written to the `idx_Cars` sheet). In real Google Sheets, `@Indexed` trades additional
+> write cost for faster read lookups — beneficial when reading large datasets frequently.
 
 ### Jest ↔ GAS Runtime Parity (1:1)
 
@@ -351,6 +394,16 @@ Run in Google Apps Script (real Sheets API):
 
 - `runSheetOrmRuntimeParity()` — executes full runtime parity suite against the active spreadsheet
 - `validateSheetOrmRuntimeParity()` — validates mapping only (fast drift check)
+
+### GAS Runtime Benchmark
+
+A runtime benchmark mirrors `tests/benchmark.test.ts` and runs against the real Sheets API:
+
+- `src/testing/runtimeBenchmark.ts` — benchmark runner for Cars + Workers (1 000 records each)
+
+Run in Google Apps Script (real Sheets API):
+
+- `runSheetOrmBenchmark()` — executes full Cars + Workers benchmark and logs a timing summary
 
 ## CI
 
@@ -382,7 +435,13 @@ followed by schema-defined fields. Data starts at row 2.
 
 Special sheets:
 
-- `_idx_{table}_{field}` — Secondary index sheets (fieldValue → entityId mapping)
+- `tbl_{ClassName}s` — Data sheet (e.g. `tbl_Cars` for class `Car`)
+- `idx_{ClassName}s` — Combined secondary index sheet (e.g. `idx_Cars`). Created automatically when
+  the class has at least one `@Indexed` field. Columns: `[field, value, entityId]` — each row maps
+  one indexed field value to its owning record. Classes with no `@Indexed` fields do **not** get an
+  index sheet.
+- `_idx_{tableName}_{field}` — Per-field index sheets used when `TableSchema` is provided directly
+  (legacy / low-level API, bypassing the `Record` base class)
 
 ## Development Notes
 
