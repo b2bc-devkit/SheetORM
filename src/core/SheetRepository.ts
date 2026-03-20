@@ -40,6 +40,7 @@ export class SheetRepository<T extends Entity> {
   private fieldMap: Map<string, FieldDefinition>;
   private idToRowIndex: Map<string, number> | null = null;
   private batchBuffer: Array<{ type: "save" | "delete"; data: unknown }> | null = null;
+  private entityBatch: Array<{ entity: T; row: unknown[]; dataIndex: number }> | null = null;
 
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -189,12 +190,17 @@ export class SheetRepository<T extends Entity> {
           }
         }
       }
-      sheet.updateRow(dataIndex, row);
+      // In entity batch mode: buffer the row; otherwise write immediately
+      if (this.entityBatch !== null) {
+        this.entityBatch.push({ entity, row, dataIndex });
+      } else {
+        sheet.updateRow(dataIndex, row);
+      }
 
       // Add to indexes
       this.addToIndexes(entity);
 
-      // Update in-memory row index
+      // Update in-memory row index (always, even in batch — so next entity gets correct dataIndex)
       if (this.idToRowIndex) {
         this.idToRowIndex.set(entity.__id, dataIndex);
       }
@@ -240,16 +246,20 @@ export class SheetRepository<T extends Entity> {
    */
   saveAll(entities: Array<Partial<T>>): T[] {
     if (entities.length === 0) return [];
+    const sheet = this.getSheet();
+    this.entityBatch = [];
     if (this.schema.indexTableName) {
       this.indexStore.beginIndexBatch();
     }
     try {
-      const results = entities.map((e) => this.save(e));
+      const results = entities.map((e) => this.doSave(e));
+      this.flushEntityBatch(sheet);
       if (this.schema.indexTableName) {
         this.indexStore.flushIndexBatch();
       }
       return results;
     } catch (err) {
+      this.entityBatch = null;
       if (this.schema.indexTableName) {
         this.indexStore.cancelIndexBatch();
       }
@@ -607,6 +617,19 @@ export class SheetRepository<T extends Entity> {
         this.indexStore.addAllFieldsToCombined(this.schema.indexTableName, entries, entity.__id);
       }
     }
+  }
+
+  private flushEntityBatch(sheet: ISheetAdapter): void {
+    if (!this.entityBatch || this.entityBatch.length === 0) {
+      this.entityBatch = null;
+      return;
+    }
+    const batch = this.entityBatch;
+    this.entityBatch = null;
+    // Rows are in insertion order; write them all at once
+    const startIdx = batch[0].dataIndex;
+    const rows = batch.map((item) => item.row);
+    sheet.writeRowsAt(startIdx, rows);
   }
 
   private updateCacheAfterSave(entity: T, isNew: boolean): void {
