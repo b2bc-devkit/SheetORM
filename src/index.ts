@@ -20,7 +20,7 @@ export type {
   ICacheProvider,
 } from "./core/types";
 
-export { SYSTEM_COLUMNS, META_TABLE_NAME, INDEX_PREFIX } from "./core/types";
+export { SYSTEM_COLUMNS, META_TABLE_NAME } from "./core/types";
 
 // ActiveRecord base class (primary API)
 export { Record } from "./core/Record";
@@ -62,3 +62,4 @@ export {
   rowToEntity,
 } from "./utils/serialization";
 export { runTests, validateTests } from "./testing/runtimeParity";
+export { runSheetOrmBenchmark } from "./testing/runtimeBenchmark";

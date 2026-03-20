@@ -47,6 +47,7 @@ interface IndexDefinition {
 ```typescript
 interface TableSchema {
   tableName: string;
+  indexTableName?: string;
   fields: FieldDefinition[];
   indexes: IndexDefinition[];
 }
@@ -189,26 +190,31 @@ interface QueryBuilder<T extends Entity> {
 
 ```typescript
 interface IndexStore {
-  /** Utwórz indeks dla pola tabeli */
-  createIndex(tableName: string, field: string, options?: { unique?: boolean }): void;
+  /** Utwórz pojedynczy (combined) arkusz indeksu dla klasy */
+  createCombinedIndex(indexTableName: string): void;
 
-  /** Usuń indeks */
-  dropIndex(tableName: string, field: string): void;
+  /** Usuń combined arkusz indeksu */
+  dropCombinedIndex(indexTableName: string): void;
 
-  /** Wyszukaj ID-ki po wartości indeksu */
-  lookup(tableName: string, field: string, value: unknown): string[];
+  /** Sprawdź czy combined indeks istnieje */
+  existsCombined(indexTableName: string): boolean;
 
-  /** Dodaj wpis do indeksu */
-  add(tableName: string, field: string, value: unknown, entityId: string): void;
+  /** Dodaj wpis [field, value, entityId] */
+  addToCombined(indexTableName: string, field: string, value: unknown, entityId: string): void;
 
-  /** Usuń wpis z indeksu */
-  remove(tableName: string, field: string, value: unknown, entityId: string): void;
+  /** Usuń wszystkie wpisy encji z combined indeksu */
+  removeAllFromCombined(indexTableName: string, entityId: string): void;
 
-  /** Przebuduj indeks z istniejących danych */
-  rebuild(tableName: string, field: string): void;
+  /** Zaktualizuj wpisy encji (oldValues -> newValues) */
+  updateInCombined(
+    indexTableName: string,
+    entityId: string,
+    oldValues: Record<string, unknown>,
+    newValues: Record<string, unknown>,
+  ): void;
 
-  /** Sprawdź czy indeks istnieje */
-  exists(tableName: string, field: string): boolean;
+  /** Wyszukaj ID-ki po parze field/value */
+  lookupCombined(indexTableName: string, field: string, value: unknown): string[];
 }
 ```
 
@@ -410,10 +416,10 @@ batch.commit();
 |------|-------------|-------------|------|-------|-----|--------|
 | uuid-1 | 2024-01-01T... | 2024-01-02T... | Jan | jan@x.com | 30 | true |
 
-### Arkusz indeksu (np. `_idx_Users_email`)
-| value | entityId |
-|-------|----------|
-| jan@x.com | uuid-1 |
+### Arkusz indeksu (np. `idx_Cars`)
+| field | value | entityId |
+|-------|-------|----------|
+| email | jan@x.com | uuid-1 |
 
 ### Arkusz metadanych (`_meta`)
 | tableName | schemaJson | version |

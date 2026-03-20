@@ -30,6 +30,7 @@ export interface IndexDefinition {
 
 export interface TableSchema {
   tableName: string;
+  indexTableName?: string;
   fields: FieldDefinition[];
   indexes: IndexDefinition[];
 }
@@ -128,4 +129,3 @@ export const SYSTEM_COLUMNS = {
 } as const;
 
 export const META_TABLE_NAME = "_meta";
-export const INDEX_PREFIX = "_idx_";

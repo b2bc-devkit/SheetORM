@@ -245,23 +245,23 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
   },
   "index-store.test.ts": {
-    "creates an index sheet": (ctx) => {
+    "creates a combined index sheet": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.createIndex(table, "email", { unique: true });
-      assertTrue(adapter.getSheetNames().includes(`_idx_${table}_email`), "index sheet should be created");
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      assertTrue(adapter.getSheetNames().includes(indexTable), "combined index sheet should be created");
     },
     "adds and looks up entries": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.createIndex(table, "email");
-      indexStore.registerIndex(table, "email", false);
-      indexStore.add(table, "email", "jan@example.com", "user-001");
-      indexStore.add(table, "email", "anna@example.com", "user-002");
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", false);
+      indexStore.addToCombined(indexTable, "email", "jan@example.com", "user-001");
+      indexStore.addToCombined(indexTable, "email", "anna@example.com", "user-002");
       assertDeepEqual(
-        indexStore.lookup(table, "email", "jan@example.com"),
+        indexStore.lookupCombined(indexTable, "email", "jan@example.com"),
         ["user-001"],
         "lookup should return matching entity id",
       );
@@ -269,12 +269,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "enforces unique index": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.createIndex(table, "email", { unique: true });
-      indexStore.registerIndex(table, "email", true);
-      indexStore.add(table, "email", "jan@example.com", "user-001");
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", true);
+      indexStore.addToCombined(indexTable, "email", "jan@example.com", "user-001");
       assertThrows(
-        () => indexStore.add(table, "email", "jan@example.com", "user-002"),
+        () => indexStore.addToCombined(indexTable, "email", "jan@example.com", "user-002"),
         /Unique index violation/,
         "unique index should reject duplicated values for different entities",
       );
@@ -282,27 +282,27 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "allows same entity to re-index with same value (unique)": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.createIndex(table, "email", { unique: true });
-      indexStore.registerIndex(table, "email", true);
-      indexStore.add(table, "email", "jan@example.com", "user-001");
-      indexStore.add(table, "email", "jan@example.com", "user-001");
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", true);
+      indexStore.addToCombined(indexTable, "email", "jan@example.com", "user-001");
+      indexStore.addToCombined(indexTable, "email", "jan@example.com", "user-001");
       assertDeepEqual(
-        indexStore.lookup(table, "email", "jan@example.com"),
+        indexStore.lookupCombined(indexTable, "email", "jan@example.com"),
         ["user-001"],
         "same entity/value reindex should stay valid",
       );
     },
-    "removes entries": (ctx) => {
+    "removes entries when value is cleared in update": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.createIndex(table, "email");
-      indexStore.registerIndex(table, "email", false);
-      indexStore.add(table, "email", "jan@example.com", "user-001");
-      indexStore.remove(table, "email", "jan@example.com", "user-001");
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", false);
+      indexStore.addToCombined(indexTable, "email", "jan@example.com", "user-001");
+      indexStore.updateInCombined(indexTable, "user-001", { email: "jan@example.com" }, { email: "" });
       assertDeepEqual(
-        indexStore.lookup(table, "email", "jan@example.com"),
+        indexStore.lookupCombined(indexTable, "email", "jan@example.com"),
         [],
         "removed index entry should not be found",
       );
@@ -310,21 +310,20 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "removes all entries for an entity": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.createIndex(table, "email");
-      indexStore.createIndex(table, "name");
-      indexStore.registerIndex(table, "email", false);
-      indexStore.registerIndex(table, "name", false);
-      indexStore.add(table, "email", "jan@example.com", "user-001");
-      indexStore.add(table, "name", "Jan", "user-001");
-      indexStore.removeAllForEntity(table, "user-001");
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", false);
+      indexStore.registerIndex(indexTable, "name", false);
+      indexStore.addToCombined(indexTable, "email", "jan@example.com", "user-001");
+      indexStore.addToCombined(indexTable, "name", "Jan", "user-001");
+      indexStore.removeAllFromCombined(indexTable, "user-001");
       assertDeepEqual(
-        indexStore.lookup(table, "email", "jan@example.com"),
+        indexStore.lookupCombined(indexTable, "email", "jan@example.com"),
         [],
         "email index entries should be removed for entity",
       );
       assertDeepEqual(
-        indexStore.lookup(table, "name", "Jan"),
+        indexStore.lookupCombined(indexTable, "name", "Jan"),
         [],
         "name index entries should be removed for entity",
       );
@@ -332,72 +331,75 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "updates entries when value changes": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.createIndex(table, "email");
-      indexStore.registerIndex(table, "email", false);
-      indexStore.add(table, "email", "old@example.com", "user-001");
-      indexStore.updateForEntity(
-        table,
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", false);
+      indexStore.addToCombined(indexTable, "email", "old@example.com", "user-001");
+      indexStore.updateInCombined(
+        indexTable,
         "user-001",
         { email: "old@example.com" },
         { email: "new@example.com" },
       );
       assertDeepEqual(
-        indexStore.lookup(table, "email", "old@example.com"),
+        indexStore.lookupCombined(indexTable, "email", "old@example.com"),
         [],
         "old value should be removed from index",
       );
       assertDeepEqual(
-        indexStore.lookup(table, "email", "new@example.com"),
+        indexStore.lookupCombined(indexTable, "email", "new@example.com"),
         ["user-001"],
         "new value should be indexed",
       );
     },
-    "rebuilds index from entity data": (ctx) => {
+    "supports independent lookups per indexed field": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.createIndex(table, "name");
-      indexStore.registerIndex(table, "name", false);
-      indexStore.add(table, "name", "stale-data", "user-xxx");
-      indexStore.rebuild(table, "name", [
-        { id: "user-001", value: "Jan" },
-        { id: "user-002", value: "Anna" },
-      ]);
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "name", false);
+      indexStore.registerIndex(indexTable, "city", false);
+      indexStore.addToCombined(indexTable, "name", "Jan", "user-001");
+      indexStore.addToCombined(indexTable, "city", "Warszawa", "user-001");
       assertDeepEqual(
-        indexStore.lookup(table, "name", "stale-data"),
+        indexStore.lookupCombined(indexTable, "name", "Jan"),
+        ["user-001"],
+        "name lookup should return matching entity",
+      );
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "city", "Warszawa"),
+        ["user-001"],
+        "city lookup should return matching entity",
+      );
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "name", "Warszawa"),
         [],
-        "stale index rows should be removed by rebuild",
-      );
-      assertDeepEqual(indexStore.lookup(table, "name", "Jan"), ["user-001"], "rebuild should add Jan");
-      assertDeepEqual(indexStore.lookup(table, "name", "Anna"), ["user-002"], "rebuild should add Anna");
-    },
-    "drops an index": (ctx) => {
-      const adapter = ctx.state.getAdapter();
-      const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.createIndex(table, "email");
-      indexStore.dropIndex(table, "email");
-      assertTrue(
-        !adapter.getSheetNames().includes(`_idx_${table}_email`),
-        "dropped index sheet should be removed",
+        "lookups must stay scoped to field",
       );
     },
-    "exists() checks for index sheet": (ctx) => {
+    "drops a combined index": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      assertTrue(!indexStore.exists(table, "email"), "index should not exist before create");
-      indexStore.createIndex(table, "email");
-      assertTrue(indexStore.exists(table, "email"), "index should exist after create");
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.dropCombinedIndex(indexTable);
+      assertTrue(!adapter.getSheetNames().includes(indexTable), "dropped index sheet should be removed");
+    },
+    "existsCombined() checks for index sheet": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      assertTrue(!indexStore.existsCombined(indexTable), "index should not exist before create");
+      indexStore.createCombinedIndex(indexTable);
+      assertTrue(indexStore.existsCombined(indexTable), "index should exist after create");
     },
     "getIndexedFields() returns registered fields": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
-      const table = ctx.state.nextTableName("Users");
-      indexStore.registerIndex(table, "email", true);
-      indexStore.registerIndex(table, "name", false);
-      const fields = indexStore.getIndexedFields(table);
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.registerIndex(indexTable, "email", true);
+      indexStore.registerIndex(indexTable, "name", false);
+      const fields = indexStore.getIndexedFields(indexTable);
       assertEqual(fields.length, 2, "there should be two registered indexed fields");
       assertDeepEqual(
         fields.map((f) => f.field).sort(),

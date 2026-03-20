@@ -13,112 +13,114 @@ describe('IndexStore', () => {
     indexStore = new IndexStore(adapter, cache);
   });
 
-  it('creates an index sheet', () => {
-    indexStore.createIndex('Users', 'email', { unique: true });
-    expect(adapter.getSheetNames()).toContain('_idx_Users_email');
+  it('creates a combined index sheet', () => {
+    indexStore.createCombinedIndex('idx_Users');
+    expect(adapter.getSheetNames()).toContain('idx_Users');
   });
 
   it('adds and looks up entries', () => {
-    indexStore.createIndex('Users', 'email');
-    indexStore.registerIndex('Users', 'email', false);
-    indexStore.add('Users', 'email', 'jan@example.com', 'user-001');
-    indexStore.add('Users', 'email', 'anna@example.com', 'user-002');
+    indexStore.createCombinedIndex('idx_Users');
+    indexStore.registerIndex('idx_Users', 'email', false);
+    indexStore.addToCombined('idx_Users', 'email', 'jan@example.com', 'user-001');
+    indexStore.addToCombined('idx_Users', 'email', 'anna@example.com', 'user-002');
 
-    const ids = indexStore.lookup('Users', 'email', 'jan@example.com');
+    const ids = indexStore.lookupCombined('idx_Users', 'email', 'jan@example.com');
     expect(ids).toEqual(['user-001']);
   });
 
   it('enforces unique index', () => {
-    indexStore.createIndex('Users', 'email', { unique: true });
-    indexStore.registerIndex('Users', 'email', true);
-    indexStore.add('Users', 'email', 'jan@example.com', 'user-001');
+    indexStore.createCombinedIndex('idx_Users');
+    indexStore.registerIndex('idx_Users', 'email', true);
+    indexStore.addToCombined('idx_Users', 'email', 'jan@example.com', 'user-001');
 
     expect(() => {
-      indexStore.add('Users', 'email', 'jan@example.com', 'user-002');
+      indexStore.addToCombined('idx_Users', 'email', 'jan@example.com', 'user-002');
     }).toThrow(/Unique index violation/);
   });
 
   it('allows same entity to re-index with same value (unique)', () => {
-    indexStore.createIndex('Users', 'email', { unique: true });
-    indexStore.registerIndex('Users', 'email', true);
-    indexStore.add('Users', 'email', 'jan@example.com', 'user-001');
+    indexStore.createCombinedIndex('idx_Users');
+    indexStore.registerIndex('idx_Users', 'email', true);
+    indexStore.addToCombined('idx_Users', 'email', 'jan@example.com', 'user-001');
     // Should not throw
-    indexStore.add('Users', 'email', 'jan@example.com', 'user-001');
+    indexStore.addToCombined('idx_Users', 'email', 'jan@example.com', 'user-001');
   });
 
-  it('removes entries', () => {
-    indexStore.createIndex('Users', 'email');
-    indexStore.registerIndex('Users', 'email', false);
-    indexStore.add('Users', 'email', 'jan@example.com', 'user-001');
-    indexStore.remove('Users', 'email', 'jan@example.com', 'user-001');
+  it('removes entries when value is cleared in update', () => {
+    indexStore.createCombinedIndex('idx_Users');
+    indexStore.registerIndex('idx_Users', 'email', false);
+    indexStore.addToCombined('idx_Users', 'email', 'jan@example.com', 'user-001');
+    indexStore.updateInCombined(
+      'idx_Users',
+      'user-001',
+      { email: 'jan@example.com' },
+      { email: '' },
+    );
 
-    const ids = indexStore.lookup('Users', 'email', 'jan@example.com');
+    const ids = indexStore.lookupCombined('idx_Users', 'email', 'jan@example.com');
     expect(ids).toEqual([]);
   });
 
   it('removes all entries for an entity', () => {
-    indexStore.createIndex('Users', 'email');
-    indexStore.createIndex('Users', 'name');
-    indexStore.registerIndex('Users', 'email', false);
-    indexStore.registerIndex('Users', 'name', false);
+    indexStore.createCombinedIndex('idx_Users');
+    indexStore.registerIndex('idx_Users', 'email', false);
+    indexStore.registerIndex('idx_Users', 'name', false);
 
-    indexStore.add('Users', 'email', 'jan@example.com', 'user-001');
-    indexStore.add('Users', 'name', 'Jan', 'user-001');
+    indexStore.addToCombined('idx_Users', 'email', 'jan@example.com', 'user-001');
+    indexStore.addToCombined('idx_Users', 'name', 'Jan', 'user-001');
 
-    indexStore.removeAllForEntity('Users', 'user-001');
+    indexStore.removeAllFromCombined('idx_Users', 'user-001');
 
-    expect(indexStore.lookup('Users', 'email', 'jan@example.com')).toEqual([]);
-    expect(indexStore.lookup('Users', 'name', 'Jan')).toEqual([]);
+    expect(indexStore.lookupCombined('idx_Users', 'email', 'jan@example.com')).toEqual([]);
+    expect(indexStore.lookupCombined('idx_Users', 'name', 'Jan')).toEqual([]);
   });
 
   it('updates entries when value changes', () => {
-    indexStore.createIndex('Users', 'email');
-    indexStore.registerIndex('Users', 'email', false);
-    indexStore.add('Users', 'email', 'old@example.com', 'user-001');
+    indexStore.createCombinedIndex('idx_Users');
+    indexStore.registerIndex('idx_Users', 'email', false);
+    indexStore.addToCombined('idx_Users', 'email', 'old@example.com', 'user-001');
 
-    indexStore.updateForEntity(
-      'Users',
+    indexStore.updateInCombined(
+      'idx_Users',
       'user-001',
       { email: 'old@example.com' },
       { email: 'new@example.com' },
     );
 
-    expect(indexStore.lookup('Users', 'email', 'old@example.com')).toEqual([]);
-    expect(indexStore.lookup('Users', 'email', 'new@example.com')).toEqual(['user-001']);
+    expect(indexStore.lookupCombined('idx_Users', 'email', 'old@example.com')).toEqual([]);
+    expect(indexStore.lookupCombined('idx_Users', 'email', 'new@example.com')).toEqual(['user-001']);
   });
 
-  it('rebuilds index from entity data', () => {
-    indexStore.createIndex('Users', 'name');
-    indexStore.registerIndex('Users', 'name', false);
-    indexStore.add('Users', 'name', 'stale-data', 'user-xxx');
+  it('supports independent lookups per indexed field', () => {
+    indexStore.createCombinedIndex('idx_Users');
+    indexStore.registerIndex('idx_Users', 'name', false);
+    indexStore.registerIndex('idx_Users', 'city', false);
 
-    indexStore.rebuild('Users', 'name', [
-      { id: 'user-001', value: 'Jan' },
-      { id: 'user-002', value: 'Anna' },
-    ]);
+    indexStore.addToCombined('idx_Users', 'name', 'Jan', 'user-001');
+    indexStore.addToCombined('idx_Users', 'city', 'Warszawa', 'user-001');
 
-    expect(indexStore.lookup('Users', 'name', 'stale-data')).toEqual([]);
-    expect(indexStore.lookup('Users', 'name', 'Jan')).toEqual(['user-001']);
-    expect(indexStore.lookup('Users', 'name', 'Anna')).toEqual(['user-002']);
+    expect(indexStore.lookupCombined('idx_Users', 'name', 'Jan')).toEqual(['user-001']);
+    expect(indexStore.lookupCombined('idx_Users', 'city', 'Warszawa')).toEqual(['user-001']);
+    expect(indexStore.lookupCombined('idx_Users', 'name', 'Warszawa')).toEqual([]);
   });
 
-  it('drops an index', () => {
-    indexStore.createIndex('Users', 'email');
-    indexStore.dropIndex('Users', 'email');
-    expect(adapter.getSheetNames()).not.toContain('_idx_Users_email');
+  it('drops a combined index', () => {
+    indexStore.createCombinedIndex('idx_Users');
+    indexStore.dropCombinedIndex('idx_Users');
+    expect(adapter.getSheetNames()).not.toContain('idx_Users');
   });
 
-  it('exists() checks for index sheet', () => {
-    expect(indexStore.exists('Users', 'email')).toBe(false);
-    indexStore.createIndex('Users', 'email');
-    expect(indexStore.exists('Users', 'email')).toBe(true);
+  it('existsCombined() checks for index sheet', () => {
+    expect(indexStore.existsCombined('idx_Users')).toBe(false);
+    indexStore.createCombinedIndex('idx_Users');
+    expect(indexStore.existsCombined('idx_Users')).toBe(true);
   });
 
   it('getIndexedFields() returns registered fields', () => {
-    indexStore.registerIndex('Users', 'email', true);
-    indexStore.registerIndex('Users', 'name', false);
+    indexStore.registerIndex('idx_Users', 'email', true);
+    indexStore.registerIndex('idx_Users', 'name', false);
 
-    const fields = indexStore.getIndexedFields('Users');
+    const fields = indexStore.getIndexedFields('idx_Users');
     expect(fields).toHaveLength(2);
     expect(fields.map((f) => f.field).sort()).toEqual(['email', 'name']);
   });
