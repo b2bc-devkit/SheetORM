@@ -1,9 +1,9 @@
-export interface ParitySuite {
+interface ParitySuite {
   file: string;
   tests: string[];
 }
 
-export const PARITY_SUITES: ParitySuite[] = [
+const PARITY_SUITES: ParitySuite[] = [
   {
     file: "cache.test.ts",
     tests: [
@@ -157,10 +157,16 @@ export const PARITY_SUITES: ParitySuite[] = [
   },
 ];
 
-export function toParityCaseId(file: string, testName: string): string {
+function toParityCaseId(file: string, testName: string): string {
   return `${file}::${testName}`;
 }
 
-export const PARITY_CASE_IDS: string[] = PARITY_SUITES.flatMap((suite) =>
+const PARITY_CASE_IDS: string[] = PARITY_SUITES.flatMap((suite) =>
   suite.tests.map((testName) => toParityCaseId(suite.file, testName)),
 );
+
+export class ParityCatalog {
+  static readonly SUITES = PARITY_SUITES;
+  static readonly CASE_IDS = PARITY_CASE_IDS;
+  static toCaseId = toParityCaseId;
+}

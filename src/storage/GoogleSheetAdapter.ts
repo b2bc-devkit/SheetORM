@@ -1,6 +1,6 @@
-// SheetORM — Google Sheets adapter implementing ISpreadsheetAdapter / ISheetAdapter
+// SheetORM — Google Sheet adapter implementing ISheetAdapter
 
-import { ISpreadsheetAdapter, ISheetAdapter } from "../core/types";
+import type { ISheetAdapter } from "../core/types/ISheetAdapter";
 
 /**
  * Adapter wrapping a real Google Apps Script Sheet object.
@@ -114,41 +114,5 @@ export class GoogleSheetAdapter implements ISheetAdapter {
 
   flush(): void {
     SpreadsheetApp.flush();
-  }
-}
-
-/**
- * Adapter wrapping a Google Apps Script Spreadsheet.
- */
-export class GoogleSpreadsheetAdapter implements ISpreadsheetAdapter {
-  private spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet;
-
-  constructor(spreadsheet?: GoogleAppsScript.Spreadsheet.Spreadsheet) {
-    this.spreadsheet = spreadsheet ?? SpreadsheetApp.getActiveSpreadsheet();
-  }
-
-  getSheetByName(name: string): ISheetAdapter | null {
-    const sheet = this.spreadsheet.getSheetByName(name);
-    return sheet ? new GoogleSheetAdapter(sheet) : null;
-  }
-
-  createSheet(name: string): ISheetAdapter {
-    const existing = this.spreadsheet.getSheetByName(name);
-    if (existing) {
-      return new GoogleSheetAdapter(existing);
-    }
-    const sheet = this.spreadsheet.insertSheet(name);
-    return new GoogleSheetAdapter(sheet);
-  }
-
-  deleteSheet(name: string): void {
-    const sheet = this.spreadsheet.getSheetByName(name);
-    if (sheet) {
-      this.spreadsheet.deleteSheet(sheet);
-    }
-  }
-
-  getSheetNames(): string[] {
-    return this.spreadsheet.getSheets().map((s) => s.getName());
   }
 }

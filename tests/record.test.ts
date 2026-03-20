@@ -1,6 +1,7 @@
-import { MockSpreadsheetAdapter } from "./mocks";
+import { MockSpreadsheetAdapter } from "./MockSpreadsheetAdapter";
 import { Record } from "../src/core/Record";
-import { Indexed, Required, resetDecoratorCaches } from "../src/core/decorators";
+import { Decorators } from "../src/core/Decorators";
+const { Indexed, Required, resetDecoratorCaches } = Decorators;
 import { Query } from "../src/query/Query";
 import { Registry } from "../src/core/Registry";
 

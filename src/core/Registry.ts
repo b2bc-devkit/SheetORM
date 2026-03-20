@@ -1,19 +1,16 @@
 // SheetORM — Global Registry: singleton managing adapter, repositories, and class map
 
-import { Entity, ICacheProvider, ISpreadsheetAdapter, TableSchema } from "./types";
+import type { Entity } from "./types/Entity";
+import type { ICacheProvider } from "./types/ICacheProvider";
+import type { ISpreadsheetAdapter } from "./types/ISpreadsheetAdapter";
+import type { TableSchema } from "./types/TableSchema";
 import { SheetRepository } from "./SheetRepository";
 import { IndexStore } from "../index/IndexStore";
-import { MemoryCache } from "../utils/cache";
-import { buildHeaders } from "../utils/serialization";
-import { GoogleSpreadsheetAdapter } from "../storage/GoogleSheetsAdapter";
-import { getFields, getIndexes } from "./decorators";
-
-export interface RecordStatic {
-  new (): Entity;
-  tableName: string;
-  indexTableName: string;
-  name: string;
-}
+import { MemoryCache } from "./cache/MemoryCache";
+import { Serialization } from "../utils/Serialization";
+import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter";
+import { Decorators } from "./Decorators";
+import type { RecordStatic } from "./RecordStatic";
 
 export class Registry {
   private static instance: Registry | null = null;
@@ -68,7 +65,7 @@ export class Registry {
     if (!sheet) {
       sheet = adapter.createSheet(schema.tableName);
     }
-    sheet.setHeaders(buildHeaders(schema.fields));
+    sheet.setHeaders(Serialization.buildHeaders(schema.fields));
 
     if (schema.indexes.length === 0) return;
 
@@ -109,8 +106,8 @@ export class Registry {
     const schema: TableSchema = {
       tableName,
       indexTableName: ctor.indexTableName,
-      fields: getFields(ctor),
-      indexes: getIndexes(ctor),
+      fields: Decorators.getFields(ctor),
+      indexes: Decorators.getIndexes(ctor),
     };
 
     this.ensureTable(schema, indexStore);

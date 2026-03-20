@@ -3,28 +3,22 @@
 
 import {
   Entity,
-  FieldDefinition,
-  ISpreadsheetAdapter,
-  ISheetAdapter,
-  TableSchema,
-  QueryOptions,
-  PaginatedResult,
-  GroupResult,
-  LifecycleHooks,
-  ICacheProvider,
-  SYSTEM_COLUMNS,
-} from "../core/types";
-import { generateUUID } from "../utils/uuid";
-import { buildHeaders, entityToRow, rowToEntity } from "../utils/serialization";
+} from "../core/types/Entity";
+import type { FieldDefinition } from "../core/types/FieldDefinition";
+import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter";
+import type { ISheetAdapter } from "../core/types/ISheetAdapter";
+import type { TableSchema } from "../core/types/TableSchema";
+import type { QueryOptions } from "../core/types/QueryOptions";
+import type { PaginatedResult } from "../core/types/PaginatedResult";
+import type { GroupResult } from "../core/types/GroupResult";
+import type { LifecycleHooks } from "../core/types/LifecycleHooks";
+import type { ICacheProvider } from "../core/types/ICacheProvider";
+import { SystemColumns } from "../core/types/SystemColumns";
+import { Uuid } from "../utils/Uuid";
+import { Serialization } from "../utils/Serialization";
 import { IndexStore } from "../index/IndexStore";
 import { Query } from "../query/Query";
-import {
-  executeQuery,
-  filterEntities,
-  sortEntities,
-  paginateEntities,
-  groupEntities,
-} from "../query/QueryEngine";
+import { QueryEngine } from "../query/QueryEngine";
 
 export class SheetRepository<T extends Entity> {
   private adapter: ISpreadsheetAdapter;
@@ -54,8 +48,8 @@ export class SheetRepository<T extends Entity> {
     this.indexStore = indexStore;
     this.cache = cache ?? null;
     this.hooks = hooks ?? {};
-    this.headers = buildHeaders(schema.fields);
-    this.idColIdx = this.headers.indexOf(SYSTEM_COLUMNS.ID);
+    this.headers = Serialization.buildHeaders(schema.fields);
+    this.idColIdx = this.headers.indexOf(SystemColumns.ID);
     this.requiredFields = schema.fields.filter((f) => f.required);
     this.defaultableFields = schema.fields.filter((f) => f.defaultValue !== undefined);
     this.dataCacheKey = `data:${schema.tableName}`;
@@ -79,7 +73,7 @@ export class SheetRepository<T extends Entity> {
       const now = new Date().toISOString();
       return {
         ...partial,
-        __id: partial.__id ?? generateUUID(),
+        __id: partial.__id ?? Uuid.generate(),
         __createdAt: now,
         __updatedAt: now,
       } as T;
@@ -122,7 +116,7 @@ export class SheetRepository<T extends Entity> {
           rowIndex.set(rowId, i);
           if (rowId === partial.__id) {
             existingIdx = i;
-            existingEntity = rowToEntity<T>(data[i], this.headers, this.schema.fields, this.fieldMap);
+            existingEntity = Serialization.rowToEntity<T>(data[i], this.headers, this.schema.fields, this.fieldMap);
           }
         }
         this.idToRowIndex = rowIndex;
@@ -169,12 +163,12 @@ export class SheetRepository<T extends Entity> {
       // CREATE
       entity = {
         ...entityData,
-        __id: entityData.__id ?? generateUUID(),
+        __id: entityData.__id ?? Uuid.generate(),
         __createdAt: now,
         __updatedAt: now,
       } as T;
 
-      const row = entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
+      const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
 
       // Write at computed position — single setValues call, no flush needed
       let dataIndex: number;
@@ -214,7 +208,7 @@ export class SheetRepository<T extends Entity> {
         __updatedAt: now,
       } as T;
 
-      const row = entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
+      const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
       sheet.updateRow(existingIdx!, row);
 
       // Update indexes
@@ -314,14 +308,14 @@ export class SheetRepository<T extends Entity> {
         if (!candidateIds || candidateIds.size === 0) return [];
 
         const narrowed = all.filter((e) => candidateIds!.has(e.__id));
-        return executeQuery(narrowed, {
+        return QueryEngine.executeQuery(narrowed, {
           ...options,
           where: otherFilters.length > 0 ? otherFilters : undefined,
         });
       }
     }
 
-    return executeQuery(all, options);
+    return QueryEngine.executeQuery(all, options);
   }
 
   /**
@@ -407,7 +401,7 @@ export class SheetRepository<T extends Entity> {
     }
 
     const all = this.loadAllEntities();
-    const toDelete = options?.where ? filterEntities(all, options.where) : [...all];
+    const toDelete = options?.where ? QueryEngine.filterEntities(all, options.where) : [...all];
     if (toDelete.length === 0) return 0;
 
     // For small batches, individual deletes are cheaper than replaceAllData
@@ -429,7 +423,7 @@ export class SheetRepository<T extends Entity> {
 
     const remaining = all.filter((e) => !deleteIds.has(e.__id));
     const sheet = this.getSheet();
-    const rows = remaining.map((e) => entityToRow(e, this.schema.fields, this.headers, this.fieldMap));
+    const rows = remaining.map((e) => Serialization.entityToRow(e, this.schema.fields, this.headers, this.fieldMap));
     sheet.replaceAllData(rows);
 
     if (this.schema.indexTableName) {
@@ -458,7 +452,7 @@ export class SheetRepository<T extends Entity> {
   count(options?: QueryOptions): number {
     const all = this.loadAllEntities();
     if (!options || !options.where) return all.length;
-    return filterEntities(all, options.where).length;
+    return QueryEngine.filterEntities(all, options.where).length;
   }
 
   /**
@@ -468,13 +462,13 @@ export class SheetRepository<T extends Entity> {
     let entities = this.loadAllEntities();
 
     if (options?.where) {
-      entities = filterEntities(entities, options.where);
+      entities = QueryEngine.filterEntities(entities, options.where);
     }
     if (options?.orderBy) {
-      entities = sortEntities(entities, options.orderBy);
+      entities = QueryEngine.sortEntities(entities, options.orderBy);
     }
 
-    return paginateEntities(entities, offset, limit);
+    return QueryEngine.paginateEntities(entities, offset, limit);
   }
 
   /**
@@ -484,13 +478,13 @@ export class SheetRepository<T extends Entity> {
     let entities = this.loadAllEntities();
 
     if (options?.where) {
-      entities = filterEntities(entities, options.where);
+      entities = QueryEngine.filterEntities(entities, options.where);
     }
     if (options?.orderBy) {
-      entities = sortEntities(entities, options.orderBy);
+      entities = QueryEngine.sortEntities(entities, options.orderBy);
     }
 
-    return groupEntities(entities, field);
+    return QueryEngine.groupEntities(entities, field);
   }
 
   /**
@@ -568,7 +562,7 @@ export class SheetRepository<T extends Entity> {
     const entities: T[] = new Array(len);
     const rowIndex = new Map<string, number>();
     for (let i = 0; i < len; i++) {
-      entities[i] = rowToEntity<T>(data[i], headers, fields, fMap);
+      entities[i] = Serialization.rowToEntity<T>(data[i], headers, fields, fMap);
       rowIndex.set(entities[i].__id, i);
     }
     this.idToRowIndex = rowIndex;

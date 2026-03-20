@@ -2,9 +2,10 @@
 // Test 1: tbl_Cars (1,000 records, @Indexed on all fields) → idx_Cars auto-created
 // Test 2: tbl_Workers (1,000 records, no @Indexed) → idx_Workers NOT created
 
-import { MockSpreadsheetAdapter } from "./mocks";
+import { MockSpreadsheetAdapter } from "./MockSpreadsheetAdapter";
 import { Record as OrmRecord } from "../src/core/Record";
-import { Indexed, Required, resetDecoratorCaches } from "../src/core/decorators";
+import { Decorators } from "../src/core/Decorators";
+const { Indexed, Required, resetDecoratorCaches } = Decorators;
 import { Query } from "../src/query/Query";
 import { Registry } from "../src/core/Registry";
 

@@ -1,4 +1,4 @@
-import { Entity } from "../src/core/types";
+import type { Entity } from "../src/core/types/Entity";
 import { Query } from "../src/query/Query";
 
 interface TestItem extends Entity {

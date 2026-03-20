@@ -3,16 +3,16 @@
 // Fields are auto-discovered from ESNext class field declarations.
 // Use @Indexed() to mark indexed fields, @Field() for type/required overrides.
 
-import { Entity, FilterOperator, QueryOptions, PaginatedResult, GroupResult } from "./types";
-import { Registry, RecordStatic } from "./Registry";
+import type { Entity } from "./types/Entity";
+import type { FilterOperator } from "./types/FilterOperator";
+import type { QueryOptions } from "./types/QueryOptions";
+import type { PaginatedResult } from "./types/PaginatedResult";
+import type { GroupResult } from "./types/GroupResult";
+import { Registry } from "./Registry";
+import type { RecordStatic } from "./RecordStatic";
 import { Query } from "../query/Query";
-import { getFields } from "./decorators";
-
-export interface RecordConstructor<T extends Record = Record> {
-  new (): T;
-  tableName: string;
-  indexTableName: string;
-}
+import { Decorators } from "./Decorators";
+import type { RecordConstructor } from "./RecordConstructor";
 
 type QueryableRecordClass =
   | string
@@ -61,7 +61,7 @@ export class Record implements Entity {
 
   save(): this {
     const Ctor = this.constructor as unknown as RecordStatic;
-    const fields = getFields(Ctor);
+    const fields = Decorators.getFields(Ctor);
     const repo = Registry.getInstance().ensureRepository(Ctor);
 
     const partial: { [key: string]: unknown } = {};
@@ -97,7 +97,7 @@ export class Record implements Entity {
 
   toJSON(): { [key: string]: unknown } {
     const Ctor = this.constructor as unknown as RecordStatic;
-    const fields = getFields(Ctor);
+    const fields = Decorators.getFields(Ctor);
     const result: { [key: string]: unknown } = {
       __id: this.__id,
       __createdAt: this.__createdAt,

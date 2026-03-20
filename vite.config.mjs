@@ -8,17 +8,27 @@ const __dirname = path.dirname(__filename);
 
 const REAL_ENTRY = path.resolve(__dirname, "build/src/index.js");
 const VIRTUAL_ID = "\0gas-entry";
+const GAS_CLASS_ENTRYPOINTS = {
+  GasEntrypoints: ["runTests", "validateTests", "runBenchmark"],
+};
 
 /**
  * Detect named exports from the compiled ES module entry file
- * by scanning `export { Name, ... } from "..."` statements.
+ * by scanning both:
+ * - `export { Name, ... }` statements
+ * - direct named exports (`export class Name`, `export function Name`, ...)
  */
 function detectExportNames(entryPath) {
   const src = fs.readFileSync(entryPath, "utf8");
   const names = new Set();
-  const re = /export\s*\{([^}]+)\}/g;
+
+  // export { Foo, Bar as Baz }
+  const reNamedList = /export\s*\{([^}]+)\}/g;
+  // export class Foo / export function Foo / export const Foo ...
+  const reDirect = /export\s+(?:class|function|const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+
   let m;
-  while ((m = re.exec(src)) !== null) {
+  while ((m = reNamedList.exec(src)) !== null) {
     for (const token of m[1].split(",")) {
       const name = token
         .trim()
@@ -28,7 +38,31 @@ function detectExportNames(entryPath) {
       if (name) names.add(name);
     }
   }
+
+  while ((m = reDirect.exec(src)) !== null) {
+    const name = m[1]?.trim();
+    if (name) names.add(name);
+  }
+
   return [...names];
+}
+
+function resolveGasBindings(exportNames) {
+  const bindings = [];
+
+  for (const exportName of exportNames) {
+    const methods = GAS_CLASS_ENTRYPOINTS[exportName];
+    if (methods) {
+      for (const methodName of methods) {
+        bindings.push({ globalName: methodName, exportName, methodName });
+      }
+      continue;
+    }
+
+    bindings.push({ globalName: exportName, exportName, methodName: null });
+  }
+
+  return bindings;
 }
 
 /**
@@ -41,6 +75,7 @@ function detectExportNames(entryPath) {
  */
 function gasPlugin() {
   let exportNames = [];
+  let gasBindings = [];
 
   return {
     name: "gas-plugin",
@@ -53,9 +88,16 @@ function gasPlugin() {
     load(id) {
       if (id === VIRTUAL_ID) {
         exportNames = detectExportNames(REAL_ENTRY);
-        const imports = exportNames.join(", ");
+        gasBindings = resolveGasBindings(exportNames);
+        const imports = [...new Set(gasBindings.map((binding) => binding.exportName))].join(", ");
         const entryUrl = REAL_ENTRY.replace(/\\/g, "/");
-        const assignments = exportNames.map((n) => `__g.${n} = ${n};`).join("\n");
+        const assignments = gasBindings
+          .map((binding) =>
+            binding.methodName
+              ? `__g.${binding.globalName} = function(){ return ${binding.exportName}.${binding.methodName}(); };`
+              : `__g.${binding.globalName} = ${binding.exportName};`,
+          )
+          .join("\n");
         return [
           `import { ${imports} } from "${entryUrl}";`,
           `var __g = typeof globalThis !== "undefined" ? globalThis : this;`,
@@ -66,8 +108,8 @@ function gasPlugin() {
 
     generateBundle(_options, bundle) {
       for (const chunk of Object.values(bundle)) {
-        if (chunk.type === "chunk" && exportNames.length > 0) {
-          const stubs = exportNames.map((name) => `function ${name}() {}`).join("\n");
+        if (chunk.type === "chunk" && gasBindings.length > 0) {
+          const stubs = gasBindings.map((binding) => `function ${binding.globalName}() {}`).join("\n");
           // Wrap the entire Rollup output in an outer IIFE so that Rollup-generated
           // module helpers (__defNormalProp, __publicField, etc.) are kept out of the
           // GAS global scope — otherwise GAS shows them in the script editor Run menu.

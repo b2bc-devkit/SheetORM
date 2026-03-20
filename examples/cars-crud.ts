@@ -5,8 +5,10 @@
 // In GAS, import from the bundled SheetORM globals directly.
 
 import { Record } from "../src/core/Record";
-import { Indexed, Required } from "../src/core/decorators";
+import { Decorators } from "../src/core/Decorators";
 import { Query } from "../src/query/Query";
+
+const { Indexed, Required } = Decorators;
 
 // ─── Define models by extending Record ───────────────
 

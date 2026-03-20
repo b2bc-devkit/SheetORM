@@ -1,27 +1,21 @@
-import { Entity, FieldDefinition, Filter, QueryOptions, SortClause } from "../core/types";
+import type { Entity } from "../core/types/Entity";
+import type { FieldDefinition } from "../core/types/FieldDefinition";
+import type { Filter } from "../core/types/Filter";
+import type { QueryOptions } from "../core/types/QueryOptions";
+import type { SortClause } from "../core/types/SortClause";
 import { Registry } from "../core/Registry";
 import { IndexStore } from "../index/IndexStore";
 import { Query } from "../query/Query";
 import { Record as BaseRecord } from "../core/Record";
-import { Indexed, Required, resetDecoratorCaches } from "../core/decorators";
-import {
-  executeQuery,
-  filterEntities,
-  groupEntities,
-  paginateEntities,
-  sortEntities,
-} from "../query/QueryEngine";
-import { GoogleSpreadsheetAdapter } from "../storage/GoogleSheetsAdapter";
-import { MemoryCache } from "../utils/cache";
-import {
-  buildHeaders,
-  deserializeValue,
-  entityToRow,
-  rowToEntity,
-  serializeValue,
-} from "../utils/serialization";
-import { generateUUID } from "../utils/uuid";
-import { PARITY_CASE_IDS, PARITY_SUITES, toParityCaseId } from "./parityCatalog";
+import { Decorators } from "../core/Decorators";
+import { QueryEngine } from "../query/QueryEngine";
+import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter";
+import { MemoryCache } from "../core/cache/MemoryCache";
+import { Serialization } from "../utils/Serialization";
+import { Uuid } from "../utils/Uuid";
+import { ParityCatalog } from "./ParityCatalog";
+
+const { Indexed, Required, resetDecoratorCaches } = Decorators;
 
 interface RuntimeCaseContext {
   state: RuntimeParityState;
@@ -612,7 +606,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
   "query-engine.test.ts": {
     "filters with = operator": () => {
       const filters: Filter[] = [{ field: "city", operator: "=", value: "Kraków" }];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 2, "equals filter should match two users");
       assertDeepEqual(
         result.map((u) => u.name),
@@ -622,17 +616,17 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "filters with != operator": () => {
       const filters: Filter[] = [{ field: "active", operator: "!=", value: false }];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 3, "not-equal filter should match three users");
     },
     "filters with > operator": () => {
       const filters: Filter[] = [{ field: "age", operator: ">", value: 40 }];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 2, "greater-than filter should match two users");
     },
     "filters with < operator": () => {
       const filters: Filter[] = [{ field: "age", operator: "<", value: 30 }];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 2, "less-than filter should match two users");
     },
     "filters with >= and <= operators": () => {
@@ -640,27 +634,27 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         { field: "age", operator: ">=", value: 28 },
         { field: "age", operator: "<=", value: 45 },
       ];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 3, "range filters should match three users");
     },
     "filters with contains operator": () => {
       const filters: Filter[] = [{ field: "name", operator: "contains", value: "an" }];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 2, "contains filter should be case-insensitive and match two users");
     },
     "filters with startsWith operator": () => {
       const filters: Filter[] = [{ field: "name", operator: "startsWith", value: "A" }];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 1, "startsWith should match one user");
     },
     "filters with in operator": () => {
       const filters: Filter[] = [{ field: "city", operator: "in", value: ["Gdańsk", "Kraków"] }];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 3, "in operator should match users in both cities");
     },
     "filters with search operator (substring match)": () => {
       const filters: Filter[] = [{ field: "name", operator: "search", value: "an" }];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 2, "search operator should match Anna and Jan");
     },
     "applies multiple filters as AND": () => {
@@ -668,15 +662,15 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         { field: "active", operator: "=", value: true },
         { field: "age", operator: ">", value: 25 },
       ];
-      const result = filterEntities(queryEngineUsers, filters);
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 2, "multiple filters should combine with AND");
     },
     "returns all when no filters": () => {
-      assertEqual(filterEntities(queryEngineUsers, []).length, 5, "empty filters should return all users");
+      assertEqual(QueryEngine.filterEntities(queryEngineUsers, []).length, 5, "empty filters should return all users");
     },
     "sorts ascending by number": () => {
       const sorts: SortClause[] = [{ field: "age", direction: "asc" }];
-      const result = sortEntities(queryEngineUsers, sorts);
+      const result = QueryEngine.sortEntities(queryEngineUsers, sorts);
       assertDeepEqual(
         result.map((u) => u.age),
         [22, 28, 35, 45, 60],
@@ -685,7 +679,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "sorts descending by number": () => {
       const sorts: SortClause[] = [{ field: "age", direction: "desc" }];
-      const result = sortEntities(queryEngineUsers, sorts);
+      const result = QueryEngine.sortEntities(queryEngineUsers, sorts);
       assertDeepEqual(
         result.map((u) => u.age),
         [60, 45, 35, 28, 22],
@@ -694,7 +688,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "sorts by string": () => {
       const sorts: SortClause[] = [{ field: "name", direction: "asc" }];
-      const result = sortEntities(queryEngineUsers, sorts);
+      const result = QueryEngine.sortEntities(queryEngineUsers, sorts);
       assertDeepEqual(
         result.map((u) => u.name),
         ["Anna", "Jan", "Maria", "Piotr", "Zofia"],
@@ -706,7 +700,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         { field: "city", direction: "asc" },
         { field: "age", direction: "desc" },
       ];
-      const result = sortEntities(queryEngineUsers, sorts);
+      const result = QueryEngine.sortEntities(queryEngineUsers, sorts);
       assertDeepEqual(
         result.map((u) => u.name),
         ["Maria", "Zofia", "Jan", "Piotr", "Anna"],
@@ -715,11 +709,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "does not mutate original array": () => {
       const original = [...queryEngineUsers];
-      sortEntities(queryEngineUsers, [{ field: "age", direction: "asc" }]);
+      QueryEngine.sortEntities(queryEngineUsers, [{ field: "age", direction: "asc" }]);
       assertDeepEqual(queryEngineUsers, original, "sortEntities should not mutate input array");
     },
     "returns first page": () => {
-      const result = paginateEntities(queryEngineUsers, 0, 2);
+      const result = QueryEngine.paginateEntities(queryEngineUsers, 0, 2);
       assertEqual(result.items.length, 2, "first page should contain two items");
       assertEqual(result.total, 5, "total should be full collection size");
       assertEqual(result.offset, 0, "offset should match input");
@@ -727,23 +721,23 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertTrue(result.hasNext, "first page should have next page");
     },
     "returns last page": () => {
-      const result = paginateEntities(queryEngineUsers, 4, 2);
+      const result = QueryEngine.paginateEntities(queryEngineUsers, 4, 2);
       assertEqual(result.items.length, 1, "last page should contain single item");
       assertTrue(!result.hasNext, "last page should not have next page");
     },
     "returns empty if offset exceeds total": () => {
-      const result = paginateEntities(queryEngineUsers, 10, 2);
+      const result = QueryEngine.paginateEntities(queryEngineUsers, 10, 2);
       assertEqual(result.items.length, 0, "offset beyond total should return empty page");
       assertTrue(!result.hasNext, "empty out-of-range page should not have next");
     },
     "groups by field": () => {
-      const groups = groupEntities(queryEngineUsers, "city");
+      const groups = QueryEngine.groupEntities(queryEngineUsers, "city");
       assertEqual(groups.length, 3, "city grouping should produce three groups");
       const waw = groups.find((g) => g.key === "Warszawa");
       assertEqual(waw?.count, 2, "Warszawa group should contain two users");
     },
     "groups by boolean": () => {
-      const groups = groupEntities(queryEngineUsers, "active");
+      const groups = QueryEngine.groupEntities(queryEngineUsers, "active");
       assertEqual(groups.length, 2, "boolean grouping should produce two groups");
       const active = groups.find((g) => g.key === true);
       assertEqual(active?.count, 3, "active=true group should contain three users");
@@ -755,7 +749,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         offset: 1,
         limit: 1,
       };
-      const result = executeQuery(queryEngineUsers, options);
+      const result = QueryEngine.executeQuery(queryEngineUsers, options);
       assertEqual(result.length, 1, "combined query should return one entity");
       assertEqual(result[0].name, "Anna", "combined query should return Anna");
     },
@@ -763,26 +757,26 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
   "serialization.test.ts": {
     "serializes string": () => {
       const fd: FieldDefinition = { name: "x", type: "string" };
-      assertEqual(serializeValue("hello", fd), "hello", "string serialization should preserve string value");
-      assertEqual(serializeValue(123, fd), "123", "string serialization should coerce number to string");
-      assertEqual(serializeValue(null, fd), "", "string serialization should map null to empty string");
+      assertEqual(Serialization.serializeValue("hello", fd), "hello", "string serialization should preserve string value");
+      assertEqual(Serialization.serializeValue(123, fd), "123", "string serialization should coerce number to string");
+      assertEqual(Serialization.serializeValue(null, fd), "", "string serialization should map null to empty string");
     },
     "serializes number": () => {
       const fd: FieldDefinition = { name: "x", type: "number" };
-      assertEqual(serializeValue(42, fd), 42, "number serialization should preserve number");
-      assertEqual(serializeValue("7", fd), 7, "number serialization should coerce numeric string");
+      assertEqual(Serialization.serializeValue(42, fd), 42, "number serialization should preserve number");
+      assertEqual(Serialization.serializeValue("7", fd), 7, "number serialization should coerce numeric string");
     },
     "serializes boolean": () => {
       const fd: FieldDefinition = { name: "x", type: "boolean" };
-      assertEqual(serializeValue(true, fd), true, "boolean serialization should preserve boolean");
-      assertEqual(serializeValue("true", fd), true, "boolean serialization should parse true string");
-      assertEqual(serializeValue("false", fd), false, "boolean serialization should parse false string");
+      assertEqual(Serialization.serializeValue(true, fd), true, "boolean serialization should preserve boolean");
+      assertEqual(Serialization.serializeValue("true", fd), true, "boolean serialization should parse true string");
+      assertEqual(Serialization.serializeValue("false", fd), false, "boolean serialization should parse false string");
     },
     "serializes json": () => {
       const fd: FieldDefinition = { name: "x", type: "json" };
-      assertEqual(serializeValue({ a: 1 }, fd), '{"a":1}', "json serialization should stringify object");
+      assertEqual(Serialization.serializeValue({ a: 1 }, fd), '{"a":1}', "json serialization should stringify object");
       assertEqual(
-        serializeValue("already string", fd),
+        Serialization.serializeValue("already string", fd),
         "already string",
         "json serialization should keep string untouched",
       );
@@ -791,7 +785,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const fd: FieldDefinition = { name: "x", type: "date" };
       const date = new Date("2024-01-15T10:00:00.000Z");
       assertEqual(
-        serializeValue(date, fd),
+        Serialization.serializeValue(date, fd),
         "2024-01-15T10:00:00.000Z",
         "date serialization should use ISO format",
       );
@@ -799,40 +793,40 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "serializes reference": () => {
       const fd: FieldDefinition = { name: "x", type: "reference" };
       assertEqual(
-        serializeValue("user-001", fd),
+        Serialization.serializeValue("user-001", fd),
         "user-001",
         "reference serialization should keep id string",
       );
     },
     "deserializes string": () => {
       const fd: FieldDefinition = { name: "x", type: "string" };
-      assertEqual(deserializeValue("hello", fd), "hello", "string deserialization should preserve text");
-      assertEqual(deserializeValue("", fd), null, "empty string should deserialize to null without default");
+      assertEqual(Serialization.deserializeValue("hello", fd), "hello", "string deserialization should preserve text");
+      assertEqual(Serialization.deserializeValue("", fd), null, "empty string should deserialize to null without default");
     },
     "applies defaultValue when empty": () => {
       const fd: FieldDefinition = { name: "x", type: "string", defaultValue: "default" };
-      assertEqual(deserializeValue("", fd), "default", "empty value should use defaultValue");
+      assertEqual(Serialization.deserializeValue("", fd), "default", "empty value should use defaultValue");
     },
     "deserializes number": () => {
       const fd: FieldDefinition = { name: "x", type: "number" };
-      assertEqual(deserializeValue(42, fd), 42, "number deserialization should preserve number");
-      assertEqual(deserializeValue("3.14", fd), 3.14, "number deserialization should parse decimal string");
-      assertEqual(deserializeValue("abc", fd), null, "invalid number should deserialize to null");
+      assertEqual(Serialization.deserializeValue(42, fd), 42, "number deserialization should preserve number");
+      assertEqual(Serialization.deserializeValue("3.14", fd), 3.14, "number deserialization should parse decimal string");
+      assertEqual(Serialization.deserializeValue("abc", fd), null, "invalid number should deserialize to null");
     },
     "deserializes boolean": () => {
       const fd: FieldDefinition = { name: "x", type: "boolean" };
-      assertEqual(deserializeValue(true, fd), true, "boolean deserialization should preserve boolean");
-      assertEqual(deserializeValue("true", fd), true, "boolean deserialization should parse true string");
-      assertEqual(deserializeValue("false", fd), false, "boolean deserialization should parse false string");
+      assertEqual(Serialization.deserializeValue(true, fd), true, "boolean deserialization should preserve boolean");
+      assertEqual(Serialization.deserializeValue("true", fd), true, "boolean deserialization should parse true string");
+      assertEqual(Serialization.deserializeValue("false", fd), false, "boolean deserialization should parse false string");
     },
     "deserializes json": () => {
       const fd: FieldDefinition = { name: "x", type: "json" };
       assertDeepEqual(
-        deserializeValue('{"a":1}', fd),
+        Serialization.deserializeValue('{"a":1}', fd),
         { a: 1 },
         "json deserialization should parse valid json",
       );
-      assertEqual(deserializeValue("invalid json", fd), null, "invalid json should deserialize to null");
+      assertEqual(Serialization.deserializeValue("invalid json", fd), null, "invalid json should deserialize to null");
     },
     "prepends system columns": () => {
       const fields: FieldDefinition[] = [
@@ -840,7 +834,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         { name: "age", type: "number" },
       ];
       assertDeepEqual(
-        buildHeaders(fields),
+        Serialization.buildHeaders(fields),
         ["__id", "__createdAt", "__updatedAt", "name", "age"],
         "buildHeaders should prepend system columns",
       );
@@ -851,7 +845,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         { name: "age", type: "number" },
         { name: "active", type: "boolean" },
       ];
-      const headers = buildHeaders(fields);
+      const headers = Serialization.buildHeaders(fields);
       const entity: Entity = {
         __id: "id-1",
         __createdAt: "2024-01-01T00:00:00.000Z",
@@ -860,13 +854,13 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         age: 30,
         active: true,
       };
-      const row = entityToRow(entity, fields, headers);
+      const row = Serialization.entityToRow(entity, fields, headers);
       assertDeepEqual(
         row,
         ["id-1", "2024-01-01T00:00:00.000Z", "2024-01-02T00:00:00.000Z", "Jan", 30, true],
         "entityToRow should serialize in header order",
       );
-      const restored = rowToEntity<Entity>(row, headers, fields);
+      const restored = Serialization.rowToEntity<Entity>(row, headers, fields);
       assertEqual(restored.__id, "id-1", "rowToEntity should restore __id");
       assertEqual(restored.name, "Jan", "rowToEntity should restore string field");
       assertEqual(restored.age, 30, "rowToEntity should restore number field");
@@ -878,30 +872,30 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         { name: "age", type: "number" },
         { name: "active", type: "boolean" },
       ];
-      const headers = buildHeaders(fields);
+      const headers = Serialization.buildHeaders(fields);
       const entity: Entity = {
         __id: "id-2",
         name: "Anna",
         age: 25,
         active: false,
       };
-      const row = entityToRow(entity, fields, headers);
+      const row = Serialization.entityToRow(entity, fields, headers);
       assertEqual(row[1], "", "missing __createdAt should serialize to empty string");
       assertEqual(row[2], "", "missing __updatedAt should serialize to empty string");
-      const restored = rowToEntity<Entity>(row, headers, fields);
+      const restored = Serialization.rowToEntity<Entity>(row, headers, fields);
       assertEqual(restored.__createdAt, undefined, "missing __createdAt should restore as undefined");
     },
   },
   "uuid.test.ts": {
     "returns a string of UUID v4 format": () => {
-      const uuid = generateUUID();
+      const uuid = Uuid.generate();
       assertTrue(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid),
         "generated UUID should match v4 format",
       );
     },
     "generates unique values": () => {
-      const uuids = new Set(Array.from({ length: 100 }, () => generateUUID()));
+      const uuids = new Set(Array.from({ length: 100 }, () => Uuid.generate()));
       assertEqual(uuids.size, 100, "100 generated UUIDs should be unique");
     },
   },
@@ -1362,15 +1356,15 @@ function getRuntimeCaseHandler(id: string): RuntimeCaseHandler {
   return caseHandler;
 }
 
-export const RUNTIME_PARITY_CASE_IDS: string[] = Object.entries(runtimeSuiteHandlers)
-  .flatMap(([file, testMap]) => Object.keys(testMap).map((testName) => toParityCaseId(file, testName)))
+const RUNTIME_PARITY_CASE_IDS: string[] = Object.entries(runtimeSuiteHandlers)
+  .flatMap(([file, testMap]) => Object.keys(testMap).map((testName) => ParityCatalog.toCaseId(file, testName)))
   .sort();
 
-export function validateTests(): void {
-  const expected = new Set(PARITY_CASE_IDS);
+function validateTests(): void {
+  const expected = new Set(ParityCatalog.CASE_IDS);
   const actual = new Set(RUNTIME_PARITY_CASE_IDS);
 
-  const missingInRuntime = PARITY_CASE_IDS.filter((id) => !actual.has(id));
+  const missingInRuntime = ParityCatalog.CASE_IDS.filter((id) => !actual.has(id));
   const extraInRuntime = RUNTIME_PARITY_CASE_IDS.filter((id) => !expected.has(id));
 
   if (missingInRuntime.length > 0 || extraInRuntime.length > 0) {
@@ -1385,13 +1379,13 @@ export function validateTests(): void {
   }
 }
 
-export function runTests(): string {
+function runTests(): string {
   validateTests();
 
   const runStartedAt = Date.now();
   const state = new RuntimeParityState();
   const results: RuntimeCaseResult[] = [];
-  const total = PARITY_CASE_IDS.length;
+  const total = ParityCatalog.CASE_IDS.length;
 
   const log = (msg: string): void => {
     if (typeof Logger !== "undefined" && typeof Logger.log === "function") {
@@ -1403,11 +1397,11 @@ export function runTests(): string {
   log("[SheetORM] Clearing all existing sheets from active spreadsheet before test run");
   state.clearAllSheets(log);
 
-  for (const suite of PARITY_SUITES) {
+  for (const suite of ParityCatalog.SUITES) {
     log(`[Suite] ${suite.file} (${suite.tests.length} tests)`);
 
     for (const testName of suite.tests) {
-      const id = toParityCaseId(suite.file, testName);
+      const id = ParityCatalog.toCaseId(suite.file, testName);
       const num = results.length + 1;
       const startedAt = Date.now();
       try {
@@ -1484,4 +1478,10 @@ export function runTests(): string {
 
   log(JSON.stringify(report));
   return JSON.stringify(report);
+}
+
+export class RuntimeParity {
+  static run = runTests;
+  static validate = validateTests;
+  static readonly CASE_IDS = RUNTIME_PARITY_CASE_IDS;
 }

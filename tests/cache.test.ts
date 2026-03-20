@@ -1,4 +1,4 @@
-import { MemoryCache } from '../src/utils/cache';
+import { MemoryCache } from '../src/core/cache/MemoryCache';
 
 describe('MemoryCache', () => {
   let cache: MemoryCache;

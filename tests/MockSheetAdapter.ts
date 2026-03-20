@@ -1,6 +1,4 @@
-// Mock implementations of ISheetAdapter and ISpreadsheetAdapter for testing
-
-import { ISheetAdapter, ISpreadsheetAdapter } from "../src/core/types";
+import type { ISheetAdapter } from "../src/core/types/ISheetAdapter";
 
 export class MockSheetAdapter implements ISheetAdapter {
   private name: string;
@@ -99,37 +97,7 @@ export class MockSheetAdapter implements ISheetAdapter {
     // no-op in mock
   }
 
-  // Test helpers
   _getRawData(): unknown[][] {
     return this.data;
-  }
-}
-
-export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
-  private sheets = new Map<string, MockSheetAdapter>();
-
-  getSheetByName(name: string): ISheetAdapter | null {
-    return this.sheets.get(name) ?? null;
-  }
-
-  createSheet(name: string): ISheetAdapter {
-    const existing = this.sheets.get(name);
-    if (existing) return existing;
-    const sheet = new MockSheetAdapter(name);
-    this.sheets.set(name, sheet);
-    return sheet;
-  }
-
-  deleteSheet(name: string): void {
-    this.sheets.delete(name);
-  }
-
-  getSheetNames(): string[] {
-    return Array.from(this.sheets.keys());
-  }
-
-  // Test helper
-  _getSheet(name: string): MockSheetAdapter | undefined {
-    return this.sheets.get(name);
   }
 }

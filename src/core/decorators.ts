@@ -1,6 +1,8 @@
 // SheetORM — Decorators: @Indexed, @Field for declarative Record model definitions
 
-import { FieldDefinition, FieldType, IndexDefinition } from "./types";
+import type { FieldDefinition } from "./types/FieldDefinition";
+import type { FieldType } from "./types/FieldType";
+import type { IndexDefinition } from "./types/IndexDefinition";
 
 interface DecoratedModelCtor {
   new (): object;
@@ -39,7 +41,7 @@ function upsertFieldMetadata(
  * Mark a field as indexed for faster lookups.
  * Optionally specify `unique` or index storage `type`.
  */
-export function Indexed(options?: {
+function Indexed(options?: {
   unique?: boolean;
   type?: "string" | "number" | "date";
 }): PropertyDecorator {
@@ -57,7 +59,7 @@ export function Indexed(options?: {
  * Mark a field as required using shorthand decorator syntax.
  * Equivalent to `@Field({ required: true })`.
  */
-export function Required(): PropertyDecorator {
+function Required(): PropertyDecorator {
   return (target: object, propertyKey: string | symbol) => {
     const ctor = (target as DecoratorTarget).constructor;
     upsertFieldMetadata(ctor, propertyKey, { required: true });
@@ -68,7 +70,7 @@ export function Required(): PropertyDecorator {
  * Override field metadata: type, required, defaultValue, referenceTable.
  * Fields without @Field() are auto-discovered and default to auto type inference.
  */
-export function Field(options?: {
+function Field(options?: {
   type?: FieldType;
   required?: boolean;
   defaultValue?: unknown;
@@ -88,7 +90,7 @@ export function Field(options?: {
  *  1. Own properties from a temp instance (ESNext [[Define]] class fields)
  *  2. Decorated properties from @Indexed/@Field metadata ([[Set]] fields)
  */
-export function getFields(ctor: DecoratedModelCtor): FieldDefinition[] {
+function getFields(ctor: DecoratedModelCtor): FieldDefinition[] {
   if (fieldsCache.has(ctor)) return fieldsCache.get(ctor)!;
 
   // 1. Discover own properties from temp instance (undecorated fields with [[Define]])
@@ -122,7 +124,7 @@ export function getFields(ctor: DecoratedModelCtor): FieldDefinition[] {
 /**
  * Get all index definitions for a Record subclass (from @Indexed decorators).
  */
-export function getIndexes(ctor: DecoratedModelCtor): IndexDefinition[] {
+function getIndexes(ctor: DecoratedModelCtor): IndexDefinition[] {
   if (indexesCache.has(ctor)) return indexesCache.get(ctor)!;
   const indexes = indexedMeta.get(ctor) || [];
   indexesCache.set(ctor, indexes);
@@ -132,7 +134,16 @@ export function getIndexes(ctor: DecoratedModelCtor): IndexDefinition[] {
 /**
  * Reset all decorator caches. Called by SheetORM.reset() for testing.
  */
-export function resetDecoratorCaches(): void {
+function resetDecoratorCaches(): void {
   fieldsCache.clear();
   indexesCache.clear();
+}
+
+export class Decorators {
+  static Indexed = Indexed;
+  static Required = Required;
+  static Field = Field;
+  static getFields = getFields;
+  static getIndexes = getIndexes;
+  static resetDecoratorCaches = resetDecoratorCaches;
 }

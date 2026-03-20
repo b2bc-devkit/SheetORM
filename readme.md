@@ -46,7 +46,10 @@ Extend `Record` and declare fields as plain TypeScript properties. Use `@Indexed
 auto-discovered as fields.
 
 ```ts
-import { Record, Indexed, Required } from "sheetorm";
+import { Record } from "./src/core/Record";
+import { Decorators } from "./src/core/Decorators";
+
+const { Indexed, Required } = Decorators;
 
 class Car extends Record {
   @Indexed()
@@ -209,23 +212,57 @@ See [`examples/cars-crud.ts`](examples/cars-crud.ts) for a complete runnable exa
 ```
 src/
   core/Record.ts          — ActiveRecord base class (primary API); tableName = tbl_{Name}s, indexTableName = idx_{Name}s
+  core/RecordConstructor.ts — Constructor contract for Record subclasses
+  core/RecordStatic.ts    — Registry-facing static Record contract
   core/Registry.ts        — Global singleton: adapter, repos, class map
   core/SheetRepository.ts — Generic repository: CRUD, batch, hooks, cache
-  core/types.ts           — All interfaces, types, constants
+  core/types/             — One exported type / interface / class per file
+    Entity.ts             —   Entity
+    FieldType.ts          —   FieldType
+    FieldDefinition.ts    —   FieldDefinition
+    IndexDefinition.ts    —   IndexDefinition
+    TableSchema.ts        —   TableSchema
+    FilterOperator.ts     —   FilterOperator
+    Filter.ts             —   Filter
+    SortClause.ts         —   SortClause
+    QueryOptions.ts       —   QueryOptions
+    PaginatedResult.ts    —   PaginatedResult
+    GroupResult.ts        —   GroupResult
+    LifecycleHooks.ts     —   LifecycleHooks
+    ISheetAdapter.ts      —   ISheetAdapter
+    ISpreadsheetAdapter.ts —  ISpreadsheetAdapter
+    ICacheProvider.ts     —   ICacheProvider
+    SystemColumns.ts      —   SystemColumns
   query/Query.ts          — Fluent query API + Query.from()
   query/QueryEngine.ts    — filter, sort, paginate, group pipeline
+  index/IndexMeta.ts      — Index metadata contract
   index/IndexStore.ts     — Secondary index management
-  storage/GoogleSheetsAdapter.ts — ISheetAdapter / ISpreadsheetAdapter wrappers
-  utils/uuid.ts           — UUID v4 generation (GAS / fallback)
-  utils/cache.ts          — MemoryCache (ICacheProvider)
-  utils/serialization.ts  — Row ↔ Entity conversion
-  testing/parityCatalog.ts  — Canonical Jest ↔ runtime test case list
-  testing/runtimeParity.ts  — GAS runtime parity suite
-  testing/runtimeBenchmark.ts — GAS runtime benchmark (Cars + Workers, 1 000 records)
-  index.ts                — Barrel exports + GAS trigger stubs
+  storage/GoogleSheetAdapter.ts — Native GAS sheet wrapper
+  storage/GoogleSpreadsheetAdapter.ts — Native GAS spreadsheet wrapper
+  storage/SheetsAPIv4SheetAdapter.ts — Buffered Sheets API v4 sheet wrapper
+  storage/SheetsAPIv4SpreadsheetAdapter.ts — Buffered Sheets API v4 spreadsheet wrapper
+  core/cache/MemoryCache.ts — In-memory cache implementation
+  utils/Uuid.ts           — UUID v4 generation (GAS / fallback)
+  utils/Serialization.ts  — Row ↔ Entity conversion
+  testing/ParityCatalog.ts  — Canonical Jest ↔ runtime test case list
+  testing/RuntimeParity.ts  — GAS runtime parity suite
+  testing/RuntimeBenchmark.ts — GAS runtime benchmark (Cars + Workers, 1 000 records)
+  index.ts                — `GasEntrypoints` export for GAS globals
 examples/
   cars-crud.ts            — Full ActiveRecord example
 ```
+
+## Code Organization Rules
+
+Repository conventions are intentionally strict:
+
+- one exported class / interface / type / enum per file
+- no barrel files and no multi-export "grab bag" modules
+- exported free functions are not allowed; behavior should live on classes as static methods
+- filenames must match the exported artifact name (for example `Record.ts`, `QueryOptions.ts`, `SystemColumns.ts`)
+- internal helpers may stay private to a file, but the file's public surface must stay singular and obvious
+
+When adding new files, follow these rules first and treat them as part of the repository contract.
 
 ## API Reference
 
@@ -273,6 +310,9 @@ Any property declared on a `Record` subclass that is **not** a system column (`_
 `__updatedAt`) and is **not** a function is automatically treated as a schema field. Its type is inferred at
 runtime from the value (`typeof`). You only need `@Field()` when you want to set options like `required` or an
 explicit type.
+
+> In this repository, examples use direct source imports such as `./src/core/Record`. The GAS bundle itself
+> exposes callable globals through `GasEntrypoints`, not a general-purpose npm package surface.
 
 #### Instance methods
 
@@ -348,7 +388,7 @@ const ids = indexStore.searchCombined("idx_Cars", "model", "320i");
 npm test
 ```
 
-Runs **108 unit and benchmark tests** across 9 test suites using Jest + ts-jest with in-memory mock adapters:
+Runs **128 unit and benchmark tests** across 9 test suites using Jest + ts-jest with in-memory mock adapters:
 
 | Suite                      | Tests | Description                                  |
 | -------------------------- | ----- | -------------------------------------------- |
@@ -399,8 +439,8 @@ Note: in mock environment @Indexed adds write overhead (index sheet writes).
 Every Jest test has a matching handler in the GAS runtime parity suite. This ensures the library works
 identically with real Google Sheets:
 
-- `src/testing/parityCatalog.ts` — canonical list of all Jest test cases
-- `src/testing/runtimeParity.ts` — runtime suite executing against real Sheets API
+- `src/testing/ParityCatalog.ts` — canonical list of all Jest test cases
+- `src/testing/RuntimeParity.ts` — runtime suite executing against real Sheets API
 - `tests/parity-validator.test.ts` — fails when Jest and runtime cases diverge
 
 Run locally (mock adapters):
@@ -418,7 +458,7 @@ Run in Google Apps Script (real Sheets API):
 
 A runtime benchmark mirrors `tests/benchmark.test.ts` and runs against the real Sheets API:
 
-- `src/testing/runtimeBenchmark.ts` — benchmark runner for Cars + Workers (100 records each)
+- `src/testing/RuntimeBenchmark.ts` — benchmark runner for Cars + Workers (100 records each)
 
 Run in Google Apps Script (real Sheets API):
 
@@ -426,14 +466,14 @@ Run in Google Apps Script (real Sheets API):
 
 ## Exposed GAS Functions
 
-Only three top-level functions are surfaced as GAS globals (visible in the Apps Script editor Run menu and
+Only three callable functions are surfaced as GAS globals (visible in the Apps Script editor Run menu and
 callable as triggers). Everything else is an internal implementation detail bundled into `Code.js`.
 
 | Function        | Signature                | Purpose                                                                                                                                                                                                           | When to use                                                                                                                |
 | --------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `runTests`      | `runTests(): string`     | Executes the full runtime parity suite (all ~146 test cases) against the active Google Spreadsheet. Returns a JSON summary and logs per-test PASS/FAIL to `Logger`. Cleans up all temporary sheets after the run. | After deploying a new version of SheetORM to GAS to verify the real Sheets API behaves identically to the Jest mock suite. |
+| `runTests`      | `runTests(): void`       | Executes the full runtime parity suite (all ~146 test cases) against the active Google Spreadsheet. Logs per-test PASS/FAIL to `Logger` and cleans up all temporary sheets after the run.                         | After deploying a new version of SheetORM to GAS to verify the real Sheets API behaves identically to the Jest mock suite. |
 | `validateTests` | `validateTests(): void`  | Checks that every Jest test case has a matching GAS handler (and vice versa). Throws immediately if the two catalogs have drifted — no Sheets API calls made.                                                     | Quick sanity check during development; runs in milliseconds without touching any spreadsheet.                              |
-| `runBenchmark`  | `runBenchmark(): string` | Runs a write/read/query/delete cycle for Cars (with `@Indexed`) and Workers (without `@Indexed`) using 100 records each. Logs per-operation timings and a comparison summary to `Logger`. Returns a JSON report.  | Measuring real-world Sheets API performance and understanding the latency trade-off of `@Indexed` versus plain tables.     |
+| `runBenchmark`  | `runBenchmark(): void`   | Runs a write/read/query/delete cycle for Cars (with `@Indexed`) and Workers (without `@Indexed`) using 100 records each. Logs per-operation timings and a comparison summary to `Logger`.                         | Measuring real-world Sheets API performance and understanding the latency trade-off of `@Indexed` versus plain tables.     |
 
 ## CI
 
@@ -470,25 +510,121 @@ Special sheets:
   has at least one `@Indexed` field. Columns: `[field, value, entityId]` — each row maps one indexed field
   value to its owning record. Classes with no `@Indexed` fields do **not** get an index sheet.
 
+## Storage Adapters
+
+SheetORM separates sheet I/O behind two interfaces defined in `src/core/types/ISheetAdapter.ts` and `src/core/types/ISpreadsheetAdapter.ts`:
+
+- **`ISpreadsheetAdapter`** — spreadsheet-level operations: `getSheetByName`, `createSheet`, `deleteSheet`, `getSheetNames`
+- **`ISheetAdapter`** — sheet-level operations: read (`getAllData`, `getHeaders`, `getRow`, …), write (`appendRows`, `writeRowsAt`, `updateRow`, …), `clear`, `flush`
+
+Two production adapters are provided. Both implement the full interface; they differ only in how write calls reach Google Sheets.
+
+### `GoogleSpreadsheetAdapter` / `GoogleSheetAdapter`
+
+**Location**: `src/storage/GoogleSpreadsheetAdapter.ts`, `src/storage/GoogleSheetAdapter.ts`
+
+Uses the native GAS `SpreadsheetApp` / `Sheet` objects directly. This is the default adapter — no configuration required.
+
+```ts
+import { GoogleSpreadsheetAdapter } from "./src/storage/GoogleSpreadsheetAdapter";
+import { Registry } from "./src/core/Registry";
+
+Registry.getInstance().configure({
+  adapter: new GoogleSpreadsheetAdapter(), // uses active spreadsheet
+});
+// … or pass an explicit spreadsheet:
+Registry.getInstance().configure({
+  adapter: new GoogleSpreadsheetAdapter(SpreadsheetApp.openById("…")),
+});
+```
+
+| Property             | Value                                                              |
+| -------------------- | ------------------------------------------------------------------ |
+| Write mechanism      | `Range.setValues()` — GAS native API                               |
+| Calls per `saveAll`  | **2** — one `setValues` for entity sheet + one for index sheet     |
+| Flush required       | No — writes are synchronous and immediately visible                |
+| Quota impact         | Counts against SpreadsheetApp call budget (no daily UrlFetch quota)|
+| Read operations      | Native `Range.getValues()`                                         |
+| GAS V8 latency       | ~300–500 ms per `setValues` call on large ranges                   |
+| Best for             | All production use; default choice                                 |
+
+### `SheetsAPIv4SpreadsheetAdapter` / `SheetsAPIv4SheetAdapter`
+
+**Location**: `src/storage/SheetsAPIv4SpreadsheetAdapter.ts`, `src/storage/SheetsAPIv4SheetAdapter.ts`
+
+Buffers all write operations (`writeRowsAt`, `appendRows`) in memory as A1-notation `ValueRange` objects and sends them all in a **single HTTP `spreadsheets.values.batchUpdate` request** when `flushAllPending()` is called. Read operations still use the native GAS API (the ORM reads from in-memory cache after `saveAll`, so extra sheet reads are rare).
+
+```ts
+import { SheetsAPIv4SpreadsheetAdapter } from "./src/storage/SheetsAPIv4SpreadsheetAdapter";
+import { Registry } from "./src/core/Registry";
+
+const v4 = new SheetsAPIv4SpreadsheetAdapter(); // uses active spreadsheet
+Registry.getInstance().configure({ adapter: v4 });
+
+MyRecord.saveAll(items);     // buffers entity rows + index rows in memory
+v4.flushAllPending();        // ONE HTTP batchUpdate — both sheets at once
+```
+
+| Property             | Value                                                                      |
+| -------------------- | -------------------------------------------------------------------------- |
+| Write mechanism      | `UrlFetchApp.fetch()` → Sheets REST API v4 `values:batchUpdate`            |
+| Calls per `saveAll`  | **1** — entity sheet + index sheet rows combined in one HTTP request       |
+| Flush required       | **Yes** — call `v4.flushAllPending()` after each `saveAll` (or batch)      |
+| Auth                 | `ScriptApp.getOAuthToken()` — reuses the existing `spreadsheets` scope     |
+| Quota impact         | `UrlFetchApp` quota: 20 000 calls/day per script                           |
+| Read operations      | Native `Range.getValues()` — unchanged                                     |
+| GAS V8 latency       | 1 HTTP round-trip instead of N `setValues()` calls                         |
+| Best for             | Benchmarking / high-volume batch imports where minimising API calls matters |
+
+**Required OAuth scopes** (already set in `appsscript.json`):
+
+```json
+"oauthScopes": [
+  "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/script.external_request"
+]
+```
+
+### Adapter comparison
+
+| Criterion                   | `GoogleSpreadsheetAdapter` | `SheetsAPIv4SpreadsheetAdapter` |
+| --------------------------- | :------------------------: | :-----------------------------: |
+| Setup complexity            | None                       | Requires `flushAllPending()` call |
+| Write batching              | 2 calls per `saveAll`      | 1 HTTP call per flush           |
+| Flush step needed           | No                         | Yes                             |
+| UrlFetch daily quota used   | No                         | Yes (1 per flush)               |
+| Works without internet auth | Yes (native GAS)           | No (needs `UrlFetchApp`)        |
+| In-band error visibility    | Immediate on write         | Deferred to flush               |
+| Recommended default         | ✅ Yes                     | Only for bulk-write optimisation |
+
+The `GoogleSpreadsheetAdapter` is the default and recommended choice for all production use. The `SheetsAPIv4SpreadsheetAdapter` is provided as an opt-in for scenarios where reducing the number of GAS API calls is the primary concern (e.g. large batch imports exceeding GAS execution-time limits).
+
 ## Development Notes
 
 ### Exposing Functions to GAS
 
-Only functions exported from `index.ts` via `export { name }` syntax are available in Google Apps Script. Due
-to a gas-webpack-plugin limitation, `export function` and `export const` forms do not work.
+`src/index.ts` now exports a single `GasEntrypoints` class. During bundling, the Vite GAS plugin maps its
+static methods to GAS globals (`runTests`, `validateTests`, `runBenchmark`) and also emits matching stub
+functions so that Apps Script still shows them in the Run menu.
 
 ```ts
-// ✅ Works
-function myFunction() {
-  /* ... */
-}
-export { myFunction };
+export class GasEntrypoints {
+  static runTests(): void {
+    RuntimeParity.run();
+  }
 
-// ❌ Does NOT work
-export function myFunction() {
-  /* ... */
+  static validateTests(): void {
+    RuntimeParity.validate();
+  }
+
+  static runBenchmark(): void {
+    RuntimeBenchmark.run();
+  }
 }
 ```
+
+This keeps the source aligned with the repository rule of one public export per file while preserving the same
+three callable GAS entrypoints.
 
 ### Circular Dependencies
 

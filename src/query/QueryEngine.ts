@@ -1,7 +1,12 @@
 // SheetORM — QueryEngine: filters, sorts, paginates in-memory entity arrays
 // Optimized for GAS V8 runtime performance
 
-import { Entity, Filter, SortClause, QueryOptions, PaginatedResult, GroupResult } from "../core/types";
+import type { Entity } from "../core/types/Entity";
+import type { Filter } from "../core/types/Filter";
+import type { SortClause } from "../core/types/SortClause";
+import type { QueryOptions } from "../core/types/QueryOptions";
+import type { PaginatedResult } from "../core/types/PaginatedResult";
+import type { GroupResult } from "../core/types/GroupResult";
 
 /**
  * Resolve a field path to its parts. Single-segment paths (no dots/slashes)
@@ -90,7 +95,7 @@ function compileFilter(f: Filter): (entity: Entity) => boolean {
  * Filter an array of entities by an array of Filter conditions (AND logic).
  * Uses compiled predicates and manual loop for minimal GC pressure.
  */
-export function filterEntities<T extends Entity>(entities: T[], filters: Filter[]): T[] {
+function filterEntities<T extends Entity>(entities: T[], filters: Filter[]): T[] {
   if (!filters || filters.length === 0) return entities;
 
   // Compile all filters once
@@ -118,7 +123,7 @@ export function filterEntities<T extends Entity>(entities: T[], filters: Filter[
  * Sort entities by multiple sort clauses.
  * Pre-extracts sort keys to avoid repeated field navigation during comparisons.
  */
-export function sortEntities<T extends Entity>(entities: T[], sorts: SortClause[]): T[] {
+function sortEntities<T extends Entity>(entities: T[], sorts: SortClause[]): T[] {
   if (!sorts || sorts.length === 0) return entities;
 
   const len = entities.length;
@@ -179,7 +184,7 @@ export function sortEntities<T extends Entity>(entities: T[], sorts: SortClause[
 /**
  * Apply pagination (offset + limit) to an array.
  */
-export function paginateEntities<T>(entities: T[], offset: number, limit: number): PaginatedResult<T> {
+function paginateEntities<T>(entities: T[], offset: number, limit: number): PaginatedResult<T> {
   const total = entities.length;
   const sliced = entities.slice(offset, offset + limit);
   return {
@@ -195,7 +200,7 @@ export function paginateEntities<T>(entities: T[], offset: number, limit: number
  * Group entities by a field.
  * Uses pre-compiled accessor and manual iteration.
  */
-export function groupEntities<T extends Entity>(entities: T[], field: string): GroupResult<T>[] {
+function groupEntities<T extends Entity>(entities: T[], field: string): GroupResult<T>[] {
   const accessor = compileFieldAccessor(field);
   const groups = new Map<unknown, T[]>();
 
@@ -221,7 +226,7 @@ export function groupEntities<T extends Entity>(entities: T[], field: string): G
 /**
  * Execute a full query pipeline: filter → sort → paginate or return all.
  */
-export function executeQuery<T extends Entity>(entities: T[], options: QueryOptions): T[] {
+function executeQuery<T extends Entity>(entities: T[], options: QueryOptions): T[] {
   let result = entities;
 
   if (options.where && options.where.length > 0) {
@@ -239,4 +244,12 @@ export function executeQuery<T extends Entity>(entities: T[], options: QueryOpti
   }
 
   return result;
+}
+
+export class QueryEngine {
+  static filterEntities = filterEntities;
+  static sortEntities = sortEntities;
+  static paginateEntities = paginateEntities;
+  static groupEntities = groupEntities;
+  static executeQuery = executeQuery;
 }

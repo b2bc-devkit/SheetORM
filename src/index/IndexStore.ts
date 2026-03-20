@@ -1,7 +1,9 @@
 // SheetORM — IndexStore: manages secondary indexes stored in separate sheets
 // Inspired by the index-table pattern from document-oriented ORMs
 
-import { ISpreadsheetAdapter, ICacheProvider } from "../core/types";
+import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter";
+import type { ICacheProvider } from "../core/types/ICacheProvider";
+import type { IndexMeta } from "./IndexMeta";
 
 /**
  * Combined (per-class) index sheet layout (idx_{ClassName}s):
@@ -10,12 +12,6 @@ import { ISpreadsheetAdapter, ICacheProvider } from "../core/types";
  *
  * For unique indexes, there should be at most one row per value per field.
  */
-
-export interface IndexMeta {
-  tableName: string;
-  field: string;
-  unique: boolean;
-}
 
 /** In-memory n-gram search index for a single field inside a combined index sheet. */
 interface SearchIndex {

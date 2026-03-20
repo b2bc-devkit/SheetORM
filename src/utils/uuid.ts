@@ -7,7 +7,7 @@ for (let i = 0; i < 256; i++) {
   HEX[i] = (i + 0x100).toString(16).substring(1);
 }
 
-export function generateUUID(): string {
+function generateUUID(): string {
   // GAS V8 runtime supports Utilities.getUuid() but we provide a fallback
   // for testing environments
   if (typeof Utilities !== "undefined" && typeof Utilities.getUuid === "function") {
@@ -43,4 +43,8 @@ export function generateUUID(): string {
     HEX[r[14]] +
     HEX[r[15]]
   );
+}
+
+export class Uuid {
+  static generate = generateUUID;
 }

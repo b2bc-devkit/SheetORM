@@ -3,14 +3,14 @@
 
 import {
   Entity,
-  Filter,
-  FilterOperator,
-  SortClause,
-  QueryOptions,
-  PaginatedResult,
-  GroupResult,
-} from "../core/types";
-import { filterEntities, sortEntities, paginateEntities, groupEntities } from "./QueryEngine";
+} from "../core/types/Entity";
+import type { Filter } from "../core/types/Filter";
+import type { FilterOperator } from "../core/types/FilterOperator";
+import type { SortClause } from "../core/types/SortClause";
+import type { QueryOptions } from "../core/types/QueryOptions";
+import type { PaginatedResult } from "../core/types/PaginatedResult";
+import type { GroupResult } from "../core/types/GroupResult";
+import { QueryEngine } from "./QueryEngine";
 
 type FromResolver = (
   classOrName:
@@ -99,11 +99,11 @@ export class Query<T extends Entity> {
     let entities = this.dataProvider();
 
     if (this.filters.length > 0) {
-      entities = filterEntities(entities, this.filters);
+      entities = QueryEngine.filterEntities(entities, this.filters);
     }
 
     if (this.sorts.length > 0) {
-      entities = sortEntities(entities, this.sorts);
+      entities = QueryEngine.sortEntities(entities, this.sorts);
     }
 
     const offset = this._offset ?? 0;
@@ -119,11 +119,11 @@ export class Query<T extends Entity> {
     let entities = this.dataProvider();
 
     if (this.filters.length > 0) {
-      entities = filterEntities(entities, this.filters);
+      entities = QueryEngine.filterEntities(entities, this.filters);
     }
 
     if (this.sorts.length > 0) {
-      entities = sortEntities(entities, this.sorts);
+      entities = QueryEngine.sortEntities(entities, this.sorts);
     }
 
     const offset = this._offset ?? 0;
@@ -137,14 +137,14 @@ export class Query<T extends Entity> {
     let entities = this.dataProvider();
 
     if (this.filters.length > 0) {
-      entities = filterEntities(entities, this.filters);
+      entities = QueryEngine.filterEntities(entities, this.filters);
     }
 
     if (this.sorts.length > 0) {
-      entities = sortEntities(entities, this.sorts);
+      entities = QueryEngine.sortEntities(entities, this.sorts);
     }
 
-    return paginateEntities(entities, offset, limit);
+    return QueryEngine.paginateEntities(entities, offset, limit);
   }
 
   /**
@@ -153,7 +153,7 @@ export class Query<T extends Entity> {
   count(): number {
     let entities = this.dataProvider();
     if (this.filters.length > 0) {
-      entities = filterEntities(entities, this.filters);
+      entities = QueryEngine.filterEntities(entities, this.filters);
     }
     return entities.length;
   }
@@ -165,13 +165,13 @@ export class Query<T extends Entity> {
     let entities = this.dataProvider();
 
     if (this.filters.length > 0) {
-      entities = filterEntities(entities, this.filters);
+      entities = QueryEngine.filterEntities(entities, this.filters);
     }
 
     if (this.sorts.length > 0) {
-      entities = sortEntities(entities, this.sorts);
+      entities = QueryEngine.sortEntities(entities, this.sorts);
     }
 
-    return groupEntities(entities, field);
+    return QueryEngine.groupEntities(entities, field);
   }
 }

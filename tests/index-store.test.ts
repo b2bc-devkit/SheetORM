@@ -1,6 +1,6 @@
-import { MockSpreadsheetAdapter } from "./mocks";
+import { MockSpreadsheetAdapter } from "./MockSpreadsheetAdapter";
 import { IndexStore } from "../src/index/IndexStore";
-import { MemoryCache } from "../src/utils/cache";
+import { MemoryCache } from "../src/core/cache/MemoryCache";
 
 describe("IndexStore", () => {
   let adapter: MockSpreadsheetAdapter;
