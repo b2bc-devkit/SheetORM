@@ -1,6 +1,6 @@
 // SheetORM — Google Sheet adapter implementing ISheetAdapter
 
-import type { ISheetAdapter } from "../core/types/ISheetAdapter";
+import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
 
 /**
  * Adapter wrapping a real Google Apps Script Sheet object.

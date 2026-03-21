@@ -1,6 +1,6 @@
 // SheetORM — Sheets REST API v4 sheet adapter
 
-import type { ISheetAdapter } from "../core/types/ISheetAdapter";
+import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
 
 // ─── A1 notation helpers ──────────────────────────────────────────────────────
 

@@ -1,8 +1,8 @@
 // SheetORM — Serialization utilities for converting between entity objects and sheet rows
 
-import type { FieldDefinition } from "../core/types/FieldDefinition";
-import type { Entity } from "../core/types/Entity";
-import { SystemColumns } from "../core/types/SystemColumns";
+import type { FieldDefinition } from "../core/types/FieldDefinition.js";
+import type { Entity } from "../core/types/Entity.js";
+import { SystemColumns } from "../core/types/SystemColumns.js";
 
 /**
  * Serialize a field value for storage in a Google Sheet cell.
@@ -16,10 +16,17 @@ function serializeValue(value: unknown, fieldDef: FieldDefinition): unknown {
       case "string":
       case "reference":
         return String(value);
-      case "number":
-        return typeof value === "number" ? value : Number(value);
-      case "boolean":
-        return typeof value === "boolean" ? value : value === "true";
+      case "number": {
+        if (typeof value === "number") return isNaN(value) ? "" : value;
+        const num = Number(value);
+        return isNaN(num) ? "" : num;
+      }
+      case "boolean": {
+        if (typeof value === "boolean") return value;
+        if (typeof value === "number") return value !== 0;
+        const lower = typeof value === "string" ? value.toLowerCase().trim() : "";
+        return lower === "true" || lower === "1" || lower === "yes";
+      }
       case "date":
         if (value instanceof Date) return value.toISOString();
         return String(value);
@@ -58,7 +65,11 @@ function deserializeValue(cellValue: unknown, fieldDef: FieldDefinition): unknow
       }
       case "boolean":
         if (typeof cellValue === "boolean") return cellValue;
-        if (typeof cellValue === "string") return cellValue.toLowerCase() === "true";
+        if (typeof cellValue === "number") return cellValue !== 0;
+        if (typeof cellValue === "string") {
+          const lower = cellValue.toLowerCase().trim();
+          return lower === "true" || lower === "1" || lower === "yes";
+        }
         return Boolean(cellValue);
       case "date":
         return String(cellValue);
@@ -84,12 +95,7 @@ function deserializeValue(cellValue: unknown, fieldDef: FieldDefinition): unknow
  * Build the full header row for a table (system columns + field columns).
  */
 function buildHeaders(fields: FieldDefinition[]): string[] {
-  return [
-    SystemColumns.ID,
-    SystemColumns.CREATED_AT,
-    SystemColumns.UPDATED_AT,
-    ...fields.map((f) => f.name),
-  ];
+  return [SystemColumns.ID, SystemColumns.CREATED_AT, SystemColumns.UPDATED_AT, ...fields.map((f) => f.name)];
 }
 
 /**

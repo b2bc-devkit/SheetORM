@@ -2,10 +2,10 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "npm: build",
+      "label": "NPM: build",
       "type": "shell",
       "command": "npm run build",
-      "detail": "Clean + compile TypeScript + bundle via Vite.",
+      "detail": "Clean + compile TypeScript + bundle via Webpack.",
       "group": {
         "kind": "build",
         "isDefault": true
@@ -21,7 +21,7 @@
       "problemMatcher": []
     },
     {
-      "label": "npm: test",
+      "label": "NPM: test",
       "type": "shell",
       "command": "npm test",
       "detail": "Run all Jest tests.",
@@ -37,7 +37,7 @@
       "problemMatcher": []
     },
     {
-      "label": "npm: lint",
+      "label": "NPM: lint",
       "type": "shell",
       "command": "npm run lint",
       "detail": "Lint TypeScript sources with ESLint.",
@@ -52,7 +52,7 @@
       "problemMatcher": []
     },
     {
-      "label": "npm: format",
+      "label": "NPM: format",
       "type": "shell",
       "command": "npm run format",
       "detail": "Format the workspace with Prettier.",
@@ -67,7 +67,7 @@
       "problemMatcher": []
     },
     {
-      "label": "npm: login",
+      "label": "NPM: login",
       "type": "shell",
       "command": "npm run login",
       "detail": "Authenticate clasp with Google Apps Script.",
@@ -82,7 +82,7 @@
       "problemMatcher": []
     },
     {
-      "label": "npm: verify",
+      "label": "NPM: verify",
       "type": "shell",
       "command": "echo SheetORM verification complete",
       "detail": "Run lint, tests, and build in sequence.",
@@ -99,7 +99,7 @@
       "problemMatcher": []
     },
     {
-      "label": "npm: push",
+      "label": "NPM: push",
       "type": "shell",
       "command": "npx clasp push -f",
       "detail": "Build and push the bundled script to Google Apps Script.",
@@ -116,7 +116,7 @@
       "problemMatcher": []
     },
     {
-      "label": "npm: deploy",
+      "label": "NPM: deploy",
       "type": "shell",
       "command": "npx clasp deploy",
       "detail": "Build, push, and create a versioned GAS deployment.",
@@ -131,6 +131,28 @@
         "showReuseMessage": false
       },
       "problemMatcher": []
+    },
+    {
+      "label": "Publish: Apps Script library",
+      "type": "shell",
+      "command": "node scripts/publish-gas.mjs",
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Publish: npm package",
+      "type": "shell",
+      "command": "node scripts/publish-npm.mjs",
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     }
   ]
 }

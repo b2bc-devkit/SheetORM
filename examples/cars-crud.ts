@@ -3,6 +3,7 @@
 //
 // This file is NOT compiled into the library — it serves as a reference.
 // In GAS, import from the bundled SheetORM globals directly.
+// For npm: import { Record, Decorators, Query } from "sheetorm";
 
 import { Record } from "../src/core/Record";
 import { Decorators } from "../src/core/Decorators";

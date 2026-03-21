@@ -180,3 +180,62 @@ describe("executeQuery", () => {
     expect(result[0].name).toBe("Anna"); // active sorted by age: Maria(22), Anna(28), Jan(35) → offset 1 = Anna
   });
 });
+
+describe("filterEntitiesOr", () => {
+  it("matches entities passing any group", () => {
+    const groups: Filter[][] = [
+      [{ field: "city", operator: "=", value: "Gdańsk" }],
+      [{ field: "city", operator: "=", value: "Kraków" }],
+    ];
+    const result = QueryEngine.filterEntitiesOr(users, groups);
+    expect(result).toHaveLength(3);
+    expect(result.map((u) => u.name).sort()).toEqual(["Jan", "Maria", "Zofia"]);
+  });
+
+  it("applies AND within each group", () => {
+    const groups: Filter[][] = [
+      [
+        { field: "city", operator: "=", value: "Kraków" },
+        { field: "active", operator: "=", value: true },
+      ],
+      [
+        { field: "city", operator: "=", value: "Warszawa" },
+        { field: "active", operator: "=", value: false },
+      ],
+    ];
+    const result = QueryEngine.filterEntitiesOr(users, groups);
+    expect(result).toHaveLength(2);
+    expect(result.map((u) => u.name).sort()).toEqual(["Jan", "Piotr"]);
+  });
+
+  it("returns all entities for empty groups", () => {
+    const result = QueryEngine.filterEntitiesOr(users, []);
+    expect(result).toHaveLength(5);
+  });
+});
+
+describe("executeQuery with whereGroups", () => {
+  it("uses OR groups when whereGroups is provided", () => {
+    const options: QueryOptions = {
+      whereGroups: [
+        [{ field: "city", operator: "=", value: "Gdańsk" }],
+        [{ field: "name", operator: "=", value: "Anna" }],
+      ],
+      orderBy: [{ field: "age", direction: "asc" }],
+    };
+    const result = QueryEngine.executeQuery(users, options);
+    expect(result).toHaveLength(2);
+    expect(result[0].name).toBe("Maria");
+    expect(result[1].name).toBe("Anna");
+  });
+
+  it("prefers whereGroups over where", () => {
+    const options: QueryOptions = {
+      where: [{ field: "active", operator: "=", value: true }],
+      whereGroups: [[{ field: "city", operator: "=", value: "Gdańsk" }]],
+    };
+    const result = QueryEngine.executeQuery(users, options);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("Maria");
+  });
+});

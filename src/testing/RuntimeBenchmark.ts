@@ -4,12 +4,12 @@
 // Functions exposed to GAS:
 //   runBenchmark()  — full benchmark for Cars + Workers (100 records each)
 
-import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter";
-import { SheetsAPIv4SpreadsheetAdapter } from "../storage/SheetsAPIv4SpreadsheetAdapter";
-import { Registry } from "../core/Registry";
-import { Record as BaseRecord } from "../core/Record";
-import { Decorators } from "../core/Decorators";
-import { Query } from "../query/Query";
+import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
+import { SheetsAPIv4SpreadsheetAdapter } from "../storage/SheetsAPIv4SpreadsheetAdapter.js";
+import { Registry } from "../core/Registry.js";
+import { Record as BaseRecord } from "../core/Record.js";
+import { Decorators } from "../core/Decorators.js";
+import { Query } from "../query/Query.js";
 
 const { Indexed, Required, resetDecoratorCaches } = Decorators;
 
@@ -267,8 +267,6 @@ function runBenchmarkFor<T extends BaseRecord>(
   const durationMs = Date.now() - startMs;
 
   // Check index sheet
-  const adapter = Registry.getInstance().getIndexStore();
-  void adapter;
   const indexSheetCreated = Registry.getInstance().getIndexStore().existsCombined(indexTableName);
 
   log(`[SheetORM] ────────────────────────────────────────────────────`);
@@ -368,7 +366,9 @@ function runBenchmark(): string {
 
   log(`[SheetORM] ─── @Indexed "search" on Cars (${approxCars} records) ───`);
   log(`[SheetORM]   find(make search "toy") × ${SEARCH_ITERS}: ${indexedSearchMs} ms`);
-  log(`[SheetORM]   → n-gram pre-filter → ~${Math.round(approxCars / 5)} candidates → 2-field sort → limit 10`);
+  log(
+    `[SheetORM]   → n-gram pre-filter → ~${Math.round(approxCars / 5)} candidates → 2-field sort → limit 10`,
+  );
 
   // ── Step 2: Full-scan "contains" on Workers ───────────────────────────────
   Registry.reset();
@@ -395,7 +395,8 @@ function runBenchmark(): string {
   log(`[SheetORM]   → scan all ${approxWorkers} entities → 2-field sort → limit 10`);
 
   log(`[SheetORM] ────────────────────────────────────────────────────`);
-  const searchRatio = indexedSearchMs > 0 ? `${(fullScanMs / indexedSearchMs).toFixed(2)}x` : `>${fullScanMs}x`;
+  const searchRatio =
+    indexedSearchMs > 0 ? `${(fullScanMs / indexedSearchMs).toFixed(2)}x` : `>${fullScanMs}x`;
   const searchFaster = indexedSearchMs < fullScanMs ? "indexed" : "full-scan";
   log(`[SheetORM] @Indexed search: ${indexedSearchMs} ms  vs  Full-scan: ${fullScanMs} ms`);
   log(`[SheetORM] Ratio: ${searchRatio}  (${searchFaster} is faster over ${SEARCH_ITERS} iterations)`);
@@ -459,9 +460,7 @@ function runBenchmark(): string {
     const adapterFasterMs = Math.min(adapterBuiltinMs, adapterV4Ms);
     const adapterSlowerMs = Math.max(adapterBuiltinMs, adapterV4Ms);
     adapterRatio =
-      adapterFasterMs > 0
-        ? `${(adapterSlowerMs / adapterFasterMs).toFixed(2)}x`
-        : `>${adapterSlowerMs}x`;
+      adapterFasterMs > 0 ? `${(adapterSlowerMs / adapterFasterMs).toFixed(2)}x` : `>${adapterSlowerMs}x`;
     adapterFaster = adapterV4Ms <= adapterBuiltinMs ? "REST API v4" : "built-in SpreadsheetApp";
 
     log(`[SheetORM] ────────────────────────────────────────────────────`);

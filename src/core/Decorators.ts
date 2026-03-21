@@ -1,8 +1,8 @@
 // SheetORM — Decorators: @Indexed, @Field for declarative Record model definitions
 
-import type { FieldDefinition } from "./types/FieldDefinition";
-import type { FieldType } from "./types/FieldType";
-import type { IndexDefinition } from "./types/IndexDefinition";
+import type { FieldDefinition } from "./types/FieldDefinition.js";
+import type { FieldType } from "./types/FieldType.js";
+import type { IndexDefinition } from "./types/IndexDefinition.js";
 
 interface DecoratedModelCtor {
   new (): object;

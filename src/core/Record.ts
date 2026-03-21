@@ -3,16 +3,16 @@
 // Fields are auto-discovered from ESNext class field declarations.
 // Use @Indexed() to mark indexed fields, @Field() for type/required overrides.
 
-import type { Entity } from "./types/Entity";
-import type { FilterOperator } from "./types/FilterOperator";
-import type { QueryOptions } from "./types/QueryOptions";
-import type { PaginatedResult } from "./types/PaginatedResult";
-import type { GroupResult } from "./types/GroupResult";
-import { Registry } from "./Registry";
-import type { RecordStatic } from "./RecordStatic";
-import { Query } from "../query/Query";
-import { Decorators } from "./Decorators";
-import type { RecordConstructor } from "./RecordConstructor";
+import type { Entity } from "./types/Entity.js";
+import type { FilterOperator } from "./types/FilterOperator.js";
+import type { QueryOptions } from "./types/QueryOptions.js";
+import type { PaginatedResult } from "./types/PaginatedResult.js";
+import type { GroupResult } from "./types/GroupResult.js";
+import { Registry } from "./Registry.js";
+import type { RecordStatic } from "./RecordStatic.js";
+import { Query } from "../query/Query.js";
+import { Decorators } from "./Decorators.js";
+import type { RecordConstructor } from "./RecordConstructor.js";
 
 type QueryableRecordClass =
   | string

@@ -14,9 +14,9 @@
 //   MyRecord.saveAll(items);   // buffers entity + index writes
 //   v4.flushAllPending();      // one HTTP request instead of N setValues() calls
 
-import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter";
-import type { ISheetAdapter } from "../core/types/ISheetAdapter";
-import { SheetsAPIv4SheetAdapter } from "./SheetsAPIv4SheetAdapter";
+import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter.js";
+import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
+import { SheetsAPIv4SheetAdapter } from "./SheetsAPIv4SheetAdapter.js";
 
 // ─── Spreadsheet adapter ──────────────────────────────────────────────────────
 

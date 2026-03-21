@@ -1,9 +1,9 @@
 // SheetORM — IndexStore: manages secondary indexes stored in separate sheets
 // Inspired by the index-table pattern from document-oriented ORMs
 
-import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter";
-import type { ICacheProvider } from "../core/types/ICacheProvider";
-import type { IndexMeta } from "./IndexMeta";
+import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter.js";
+import type { ICacheProvider } from "../core/types/ICacheProvider.js";
+import type { IndexMeta } from "./IndexMeta.js";
 
 /**
  * Combined (per-class) index sheet layout (idx_{ClassName}s):
@@ -622,6 +622,14 @@ export class IndexStore {
   private clearCache(): void {
     this.searchIndexCache.clear();
     if (!this.cache) return;
-    this.cache.clear();
+    // Only invalidate index-specific keys rather than clearing entire cache
+    const cleared = new Set<string>();
+    for (const key of this.indexRegistry.keys()) {
+      const tableName = key.split("::")[0];
+      if (!cleared.has(tableName)) {
+        cleared.add(tableName);
+        this.cache.delete(`cidx:${tableName}`);
+      }
+    }
   }
 }

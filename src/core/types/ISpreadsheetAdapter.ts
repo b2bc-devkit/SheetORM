@@ -1,4 +1,4 @@
-import type { ISheetAdapter } from "./ISheetAdapter";
+import type { ISheetAdapter } from "./ISheetAdapter.js";
 
 export interface ISpreadsheetAdapter {
   getSheetByName(name: string): ISheetAdapter | null;

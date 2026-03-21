@@ -94,4 +94,105 @@ describe("Query", () => {
     expect(qo.limit).toBe(5);
     expect(qo.offset).toBe(0);
   });
+
+  describe("or()", () => {
+    it("returns entities matching either condition", () => {
+      const result = createBuilder()
+        .where("category", "=", "pastry")
+        .or("category", "=", "vegetable")
+        .execute();
+      expect(result).toHaveLength(3);
+      expect(result.map((r) => r.name).sort()).toEqual(["Carrot", "Donut", "Eggplant"]);
+    });
+
+    it("applies AND within each OR group", () => {
+      // (category=fruit AND price>1) OR (category=vegetable AND price<2)
+      const result = createBuilder()
+        .where("category", "=", "fruit")
+        .and("price", ">", 1)
+        .or("category", "=", "vegetable")
+        .and("price", "<", 2)
+        .execute();
+      expect(result).toHaveLength(2);
+      expect(result.map((r) => r.name).sort()).toEqual(["Apple", "Carrot"]);
+    });
+
+    it("chains multiple or() calls", () => {
+      const result = createBuilder()
+        .where("name", "=", "Apple")
+        .or("name", "=", "Banana")
+        .or("name", "=", "Donut")
+        .execute();
+      expect(result).toHaveLength(3);
+    });
+
+    it("works with orderBy", () => {
+      const result = createBuilder()
+        .where("category", "=", "fruit")
+        .or("category", "=", "pastry")
+        .orderBy("price", "desc")
+        .execute();
+      expect(result[0].name).toBe("Donut");
+      expect(result[result.length - 1].name).toBe("Banana");
+    });
+
+    it("works with limit and offset", () => {
+      const result = createBuilder()
+        .where("category", "=", "fruit")
+        .or("category", "=", "vegetable")
+        .orderBy("price", "asc")
+        .limit(2)
+        .offset(1)
+        .execute();
+      expect(result).toHaveLength(2);
+      expect(result[0].name).toBe("Carrot");
+    });
+
+    it("first() returns first OR match", () => {
+      const result = createBuilder()
+        .where("category", "=", "vegetable")
+        .or("category", "=", "pastry")
+        .orderBy("price", "asc")
+        .first();
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe("Carrot");
+    });
+
+    it("count() counts OR matches", () => {
+      const count = createBuilder().where("category", "=", "fruit").or("category", "=", "pastry").count();
+      expect(count).toBe(3);
+    });
+
+    it("select() paginates OR results", () => {
+      const result = createBuilder()
+        .where("category", "=", "fruit")
+        .or("category", "=", "vegetable")
+        .select(0, 2);
+      expect(result.total).toBe(4);
+      expect(result.items).toHaveLength(2);
+      expect(result.hasNext).toBe(true);
+    });
+
+    it("groupBy() groups OR results", () => {
+      const groups = createBuilder()
+        .where("category", "=", "fruit")
+        .or("category", "=", "vegetable")
+        .groupBy("category");
+      expect(groups).toHaveLength(2);
+    });
+
+    it("build() returns whereGroups for OR queries", () => {
+      const qo = createBuilder().where("category", "=", "fruit").or("name", "=", "Donut").build();
+      expect(qo.where).toBeUndefined();
+      expect(qo.whereGroups).toHaveLength(2);
+      expect(qo.whereGroups![0]).toHaveLength(1);
+      expect(qo.whereGroups![1]).toHaveLength(1);
+    });
+
+    it("build() returns where (not whereGroups) for AND-only queries", () => {
+      const qo = createBuilder().where("category", "=", "fruit").and("price", ">", 1).build();
+      expect(qo.where).toHaveLength(2);
+      expect(qo.whereGroups).toBeUndefined();
+    });
+  });
 });

@@ -1,16 +1,14 @@
 // SheetORM — Query: fluent API for building and executing queries
 // Inspired by common ORM query builder patterns
 
-import {
-  Entity,
-} from "../core/types/Entity";
-import type { Filter } from "../core/types/Filter";
-import type { FilterOperator } from "../core/types/FilterOperator";
-import type { SortClause } from "../core/types/SortClause";
-import type { QueryOptions } from "../core/types/QueryOptions";
-import type { PaginatedResult } from "../core/types/PaginatedResult";
-import type { GroupResult } from "../core/types/GroupResult";
-import { QueryEngine } from "./QueryEngine";
+import { Entity } from "../core/types/Entity.js";
+import type { Filter } from "../core/types/Filter.js";
+import type { FilterOperator } from "../core/types/FilterOperator.js";
+import type { SortClause } from "../core/types/SortClause.js";
+import type { QueryOptions } from "../core/types/QueryOptions.js";
+import type { PaginatedResult } from "../core/types/PaginatedResult.js";
+import type { GroupResult } from "../core/types/GroupResult.js";
+import { QueryEngine } from "./QueryEngine.js";
 
 type FromResolver = (
   classOrName:
@@ -22,7 +20,7 @@ type FromResolver = (
 ) => () => Entity[];
 
 export class Query<T extends Entity> {
-  private filters: Filter[] = [];
+  private filterGroups: Filter[][] = [[]];
   private sorts: SortClause[] = [];
   private _limit?: number;
   private _offset?: number;
@@ -49,7 +47,7 @@ export class Query<T extends Entity> {
   }
 
   where(field: string, operator: FilterOperator, value: unknown): Query<T> {
-    this.filters.push({ field, operator, value });
+    this.filterGroups[this.filterGroups.length - 1].push({ field, operator, value });
     return this;
   }
 
@@ -57,11 +55,8 @@ export class Query<T extends Entity> {
     return this.where(field, operator, value);
   }
 
-  or(_field: string, _operator: FilterOperator, _value: unknown): Query<T> {
-    // OR is implemented as a separate filter group in a simplified model.
-    // For MVP, OR adds an additional filter that is evaluated separately.
-    // Full OR support would require compound predicate trees.
-    this.filters.push({ field: _field, operator: _operator, value: _value });
+  or(field: string, operator: FilterOperator, value: unknown): Query<T> {
+    this.filterGroups.push([{ field, operator, value }]);
     return this;
   }
 
@@ -71,21 +66,53 @@ export class Query<T extends Entity> {
   }
 
   limit(count: number): Query<T> {
-    this._limit = count;
+    if (!Number.isFinite(count) || count < 0) {
+      throw new Error(`limit() requires a non-negative finite number, got ${count}`);
+    }
+    this._limit = Math.floor(count);
     return this;
   }
 
   offset(count: number): Query<T> {
-    this._offset = count;
+    if (!Number.isFinite(count) || count < 0) {
+      throw new Error(`offset() requires a non-negative finite number, got ${count}`);
+    }
+    this._offset = Math.floor(count);
     return this;
+  }
+
+  private get hasFilters(): boolean {
+    return this.filterGroups.some((g) => g.length > 0);
+  }
+
+  private get isOrQuery(): boolean {
+    return this.filterGroups.filter((g) => g.length > 0).length > 1;
+  }
+
+  private get flatFilters(): Filter[] {
+    return this.filterGroups[0];
+  }
+
+  private applyFilters(entities: T[]): T[] {
+    if (!this.hasFilters) return entities;
+    if (this.isOrQuery) {
+      return QueryEngine.filterEntitiesOr(
+        entities,
+        this.filterGroups.filter((g) => g.length > 0),
+      );
+    }
+    return QueryEngine.filterEntities(entities, this.flatFilters);
   }
 
   /**
    * Build QueryOptions from the current builder state.
    */
   build(): QueryOptions {
+    const nonEmpty = this.filterGroups.filter((g) => g.length > 0);
+    const isOr = nonEmpty.length > 1;
     return {
-      where: this.filters.length > 0 ? [...this.filters] : undefined,
+      where: !isOr && nonEmpty.length === 1 ? [...nonEmpty[0]] : undefined,
+      whereGroups: isOr ? nonEmpty.map((g) => [...g]) : undefined,
       orderBy: this.sorts.length > 0 ? [...this.sorts] : undefined,
       limit: this._limit,
       offset: this._offset,
@@ -97,10 +124,7 @@ export class Query<T extends Entity> {
    */
   execute(): T[] {
     let entities = this.dataProvider();
-
-    if (this.filters.length > 0) {
-      entities = QueryEngine.filterEntities(entities, this.filters);
-    }
+    entities = this.applyFilters(entities);
 
     if (this.sorts.length > 0) {
       entities = QueryEngine.sortEntities(entities, this.sorts);
@@ -117,10 +141,7 @@ export class Query<T extends Entity> {
    */
   first(): T | null {
     let entities = this.dataProvider();
-
-    if (this.filters.length > 0) {
-      entities = QueryEngine.filterEntities(entities, this.filters);
-    }
+    entities = this.applyFilters(entities);
 
     if (this.sorts.length > 0) {
       entities = QueryEngine.sortEntities(entities, this.sorts);
@@ -135,10 +156,7 @@ export class Query<T extends Entity> {
    */
   select(offset: number, limit: number): PaginatedResult<T> {
     let entities = this.dataProvider();
-
-    if (this.filters.length > 0) {
-      entities = QueryEngine.filterEntities(entities, this.filters);
-    }
+    entities = this.applyFilters(entities);
 
     if (this.sorts.length > 0) {
       entities = QueryEngine.sortEntities(entities, this.sorts);
@@ -152,9 +170,7 @@ export class Query<T extends Entity> {
    */
   count(): number {
     let entities = this.dataProvider();
-    if (this.filters.length > 0) {
-      entities = QueryEngine.filterEntities(entities, this.filters);
-    }
+    entities = this.applyFilters(entities);
     return entities.length;
   }
 
@@ -163,10 +179,7 @@ export class Query<T extends Entity> {
    */
   groupBy(field: string): GroupResult<T>[] {
     let entities = this.dataProvider();
-
-    if (this.filters.length > 0) {
-      entities = QueryEngine.filterEntities(entities, this.filters);
-    }
+    entities = this.applyFilters(entities);
 
     if (this.sorts.length > 0) {
       entities = QueryEngine.sortEntities(entities, this.sorts);

@@ -1,16 +1,16 @@
 // SheetORM — Global Registry: singleton managing adapter, repositories, and class map
 
-import type { Entity } from "./types/Entity";
-import type { ICacheProvider } from "./types/ICacheProvider";
-import type { ISpreadsheetAdapter } from "./types/ISpreadsheetAdapter";
-import type { TableSchema } from "./types/TableSchema";
-import { SheetRepository } from "./SheetRepository";
-import { IndexStore } from "../index/IndexStore";
-import { MemoryCache } from "./cache/MemoryCache";
-import { Serialization } from "../utils/Serialization";
-import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter";
-import { Decorators } from "./Decorators";
-import type { RecordStatic } from "./RecordStatic";
+import type { Entity } from "./types/Entity.js";
+import type { ICacheProvider } from "./types/ICacheProvider.js";
+import type { ISpreadsheetAdapter } from "./types/ISpreadsheetAdapter.js";
+import type { TableSchema } from "./types/TableSchema.js";
+import { SheetRepository } from "./SheetRepository.js";
+import { IndexStore } from "../index/IndexStore.js";
+import { MemoryCache } from "./cache/MemoryCache.js";
+import { Serialization } from "../utils/Serialization.js";
+import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
+import { Decorators } from "./Decorators.js";
+import type { RecordStatic } from "./RecordStatic.js";
 
 export class Registry {
   private static instance: Registry | null = null;

@@ -1,14 +1,57 @@
 {
+  "name": "sheetorm",
+  "version": "0.1.0",
+  "description": "TypeScript ORM for Google Sheets (Google Apps Script runtime)",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "push": "npm run build && clasp push -f",
-    "deploy": "npm run push && clasp deploy",
+    "build:npm": "node scripts/build-npm.mjs",
     "lint": "eslint .",
     "format": "prettier . --write",
     "test": "jest --verbose",
     "login": "clasp login"
   },
-  "license": "GPL",
+  "files": [
+    "dist/npm/**/*"
+  ],
+  "main": "./dist/npm/SheetOrm.js",
+  "module": "./dist/npm/SheetOrm.js",
+  "types": "./dist/npm/SheetOrm.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/npm/SheetOrm.js",
+      "types": "./dist/npm/SheetOrm.d.ts"
+    },
+    "./SheetOrm": {
+      "import": "./dist/npm/SheetOrm.js",
+      "types": "./dist/npm/SheetOrm.d.ts"
+    },
+    "./core/Record": {
+      "import": "./dist/npm/core/Record.js",
+      "types": "./dist/npm/core/Record.d.ts"
+    },
+    "./core/Decorators": {
+      "import": "./dist/npm/core/Decorators.js",
+      "types": "./dist/npm/core/Decorators.d.ts"
+    },
+    "./query/Query": {
+      "import": "./dist/npm/query/Query.js",
+      "types": "./dist/npm/query/Query.d.ts"
+    },
+    "./index/IndexStore": {
+      "import": "./dist/npm/index/IndexStore.js",
+      "types": "./dist/npm/index/IndexStore.d.ts"
+    },
+    "./core/Registry": {
+      "import": "./dist/npm/core/Registry.js",
+      "types": "./dist/npm/core/Registry.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@babel/core": "^7.29.0",
     "@babel/plugin-transform-class-properties": "^7.28.6",
@@ -30,6 +73,5 @@
     "ts-jest": "^29.4.6",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
-  },
-  "private": true
+  }
 }

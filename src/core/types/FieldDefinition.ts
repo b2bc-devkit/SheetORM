@@ -1,4 +1,4 @@
-import type { FieldType } from "./FieldType";
+import type { FieldType } from "./FieldType.js";
 
 export interface FieldDefinition {
   name: string;

@@ -457,4 +457,57 @@ describe("Record ActiveRecord API", () => {
       expect(result[1].name).toBe("Apple");
     });
   });
+
+  describe("OR support in repository methods", () => {
+    beforeEach(() => {
+      Car.create({ make: "Toyota", model: "Corolla", year: 2020 }).save();
+      Car.create({ make: "Honda", model: "Civic", year: 2022 }).save();
+      Car.create({ make: "BMW", model: "X5", year: 2024 }).save();
+    });
+
+    it("count() with whereGroups counts only matching entities", () => {
+      const count = Car.count({
+        whereGroups: [
+          [{ field: "make", operator: "=", value: "Toyota" }],
+          [{ field: "make", operator: "=", value: "BMW" }],
+        ],
+      });
+      expect(count).toBe(2);
+    });
+
+    it("deleteAll() with whereGroups deletes only matching entities", () => {
+      const deleted = Car.deleteAll({
+        whereGroups: [
+          [{ field: "make", operator: "=", value: "Toyota" }],
+          [{ field: "make", operator: "=", value: "BMW" }],
+        ],
+      });
+      expect(deleted).toBe(2);
+      expect(Car.count()).toBe(1);
+      const remaining = Car.find();
+      expect(remaining[0].make).toBe("Honda");
+    });
+
+    it("select() with whereGroups paginates only matching entities", () => {
+      const page = Car.select(0, 10, {
+        whereGroups: [
+          [{ field: "make", operator: "=", value: "Toyota" }],
+          [{ field: "make", operator: "=", value: "Honda" }],
+        ],
+      });
+      expect(page.total).toBe(2);
+      expect(page.items).toHaveLength(2);
+    });
+
+    it("groupBy() with whereGroups groups only matching entities", () => {
+      const groups = Car.groupBy("make", {
+        whereGroups: [
+          [{ field: "make", operator: "=", value: "Toyota" }],
+          [{ field: "make", operator: "=", value: "Honda" }],
+        ],
+      });
+      expect(groups).toHaveLength(2);
+      expect(groups.every((g) => g.count === 1)).toBe(true);
+    });
+  });
 });

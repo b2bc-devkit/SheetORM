@@ -9,14 +9,22 @@ for (let i = 0; i < 256; i++) {
 
 function generateUUID(): string {
   // GAS V8 runtime supports Utilities.getUuid() but we provide a fallback
-  // for testing environments
+  // for testing environments and npm usage
   if (typeof Utilities !== "undefined" && typeof Utilities.getUuid === "function") {
     return Utilities.getUuid();
   }
   // RFC 4122 v4 UUID — direct array approach, avoids per-char regex replace
-  const r = new Array<number>(16);
-  for (let i = 0; i < 16; i++) {
-    r[i] = (Math.random() * 256) | 0;
+  const r = new Uint8Array(16);
+  // Use Web Crypto API when available (Node.js, browsers); fall back to Math.random
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = typeof globalThis !== "undefined" ? (globalThis as any).crypto : undefined;
+  if (g && typeof g.getRandomValues === "function") {
+    g.getRandomValues(r);
+  } else {
+    // Last resort fallback (non-cryptographic) for environments without Web Crypto
+    for (let i = 0; i < 16; i++) {
+      r[i] = (Math.random() * 256) | 0;
+    }
   }
   r[6] = (r[6] & 0x0f) | 0x40; // version 4
   r[8] = (r[8] & 0x3f) | 0x80; // variant 10xx

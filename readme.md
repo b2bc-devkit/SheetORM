@@ -36,7 +36,7 @@ npm run build
 
 ```bash
 npm run login   # once per device
-npm run push    # build + push to GAS
+node scripts/publish-gas.mjs  # build + push + version (+ deploy if GAS_DEPLOYMENT_ID is set)
 ```
 
 ### 3. Define a model
@@ -207,6 +207,36 @@ Car.groupBy("make");
 
 See [`examples/cars-crud.ts`](examples/cars-crud.ts) for a complete runnable example.
 
+## Publishing (Apps Script & npm)
+
+### Apps Script library
+
+- Prerequisites: `npm run login` (clasp), `appsscript.json` configured for your script, and a Script ID to share.
+- Run `npm run publish:gas` (or VS Code task “Publish: Apps Script library”). It lints, tests, builds, pushes via `clasp push -f`, creates a new version with `GAS_VERSION_MESSAGE` (default: “SheetORM Apps Script release”), and, if `GAS_DEPLOYMENT_ID` is set, deploys with that description.
+- In the Apps Script editor, add the library by Script ID. Use `GasEntrypoints.Record`, `GasEntrypoints.Query`, and `GasEntrypoints.Decorators` in your GAS project; callable menu functions stay limited to `runTests`, `validateTests`, and `runBenchmark`.
+
+### npm package
+
+- Build distributable JS + type definitions with `npm run build:npm` (emits to `dist/npm`).
+- Vite stays dedicated to the GAS bundle; the npm build is plain TypeScript output so consumers can use their own bundler.
+- Publish with `node scripts/publish-npm.mjs` (or VS Code task “Publish: npm package”); set `NPM_TAG` to publish under a dist-tag if needed. The script runs lint, tests, build, then `npm publish --access public`.
+- Import via the bundled aggregator:
+
+```ts
+import { SheetOrm } from "sheetorm";
+
+const { Record, Query, Decorators } = SheetOrm;
+```
+
+- Or import individual surfaces directly: `import { Record } from "sheetorm/core/Record";`, `import { Query } from "sheetorm/query/Query";`, `import { Decorators } from "sheetorm/core/Decorators";`.
+
+### VS Code tasks
+
+Two tasks are available in `.vscode/tasks.json`:
+
+- `Publish: Apps Script library` → runs `npm run publish:gas`
+- `Publish: npm package` → runs `npm run publish:npm`
+
 ## Architecture
 
 ```
@@ -247,6 +277,7 @@ src/
   testing/ParityCatalog.ts  — Canonical Jest ↔ runtime test case list
   testing/RuntimeParity.ts  — GAS runtime parity suite
   testing/RuntimeBenchmark.ts — GAS runtime benchmark (Cars + Workers, 1 000 records)
+  SheetOrm.ts             — npm-facing aggregator for Record/Query/Decorators
   index.ts                — `GasEntrypoints` export for GAS globals
 examples/
   cars-crud.ts            — Full ActiveRecord example

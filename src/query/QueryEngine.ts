@@ -1,12 +1,12 @@
 // SheetORM — QueryEngine: filters, sorts, paginates in-memory entity arrays
 // Optimized for GAS V8 runtime performance
 
-import type { Entity } from "../core/types/Entity";
-import type { Filter } from "../core/types/Filter";
-import type { SortClause } from "../core/types/SortClause";
-import type { QueryOptions } from "../core/types/QueryOptions";
-import type { PaginatedResult } from "../core/types/PaginatedResult";
-import type { GroupResult } from "../core/types/GroupResult";
+import type { Entity } from "../core/types/Entity.js";
+import type { Filter } from "../core/types/Filter.js";
+import type { SortClause } from "../core/types/SortClause.js";
+import type { QueryOptions } from "../core/types/QueryOptions.js";
+import type { PaginatedResult } from "../core/types/PaginatedResult.js";
+import type { GroupResult } from "../core/types/GroupResult.js";
 
 /**
  * Resolve a field path to its parts. Single-segment paths (no dots/slashes)
@@ -114,6 +114,56 @@ function filterEntities<T extends Entity>(entities: T[], filters: Filter[]): T[]
       if (!predicates[j](entity)) continue outer;
     }
     result.push(entity);
+  }
+
+  return result;
+}
+
+/**
+ * Filter entities with OR-connected groups.
+ * Each inner group is AND-connected; an entity matches if it passes ANY group.
+ */
+function filterEntitiesOr<T extends Entity>(entities: T[], groups: Filter[][]): T[] {
+  if (!groups || groups.length === 0) return entities;
+
+  // Compile each group into an array of predicates
+  const compiledGroups: Array<Array<(entity: Entity) => boolean>> = new Array(groups.length);
+  for (let g = 0; g < groups.length; g++) {
+    const group = groups[g];
+    const predicates = new Array<(entity: Entity) => boolean>(group.length);
+    for (let i = 0; i < group.length; i++) {
+      predicates[i] = compileFilter(group[i]);
+    }
+    compiledGroups[g] = predicates;
+  }
+
+  const len = entities.length;
+  const numGroups = compiledGroups.length;
+  const result: T[] = [];
+
+  for (let i = 0; i < len; i++) {
+    const entity = entities[i];
+    let matched = false;
+
+    for (let g = 0; g < numGroups; g++) {
+      const predicates = compiledGroups[g];
+      const predLen = predicates.length;
+      let groupMatch = true;
+
+      for (let j = 0; j < predLen; j++) {
+        if (!predicates[j](entity)) {
+          groupMatch = false;
+          break;
+        }
+      }
+
+      if (groupMatch) {
+        matched = true;
+        break;
+      }
+    }
+
+    if (matched) result.push(entity);
   }
 
   return result;
@@ -229,7 +279,9 @@ function groupEntities<T extends Entity>(entities: T[], field: string): GroupRes
 function executeQuery<T extends Entity>(entities: T[], options: QueryOptions): T[] {
   let result = entities;
 
-  if (options.where && options.where.length > 0) {
+  if (options.whereGroups && options.whereGroups.length > 0) {
+    result = filterEntitiesOr(result, options.whereGroups);
+  } else if (options.where && options.where.length > 0) {
     result = filterEntities(result, options.where);
   }
 
@@ -248,6 +300,7 @@ function executeQuery<T extends Entity>(entities: T[], options: QueryOptions): T
 
 export class QueryEngine {
   static filterEntities = filterEntities;
+  static filterEntitiesOr = filterEntitiesOr;
   static sortEntities = sortEntities;
   static paginateEntities = paginateEntities;
   static groupEntities = groupEntities;

@@ -1,8 +1,8 @@
 // SheetORM — Google Spreadsheet adapter implementing ISpreadsheetAdapter
 
-import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter";
-import type { ISheetAdapter } from "../core/types/ISheetAdapter";
-import { GoogleSheetAdapter } from "./GoogleSheetAdapter";
+import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter.js";
+import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
+import { GoogleSheetAdapter } from "./GoogleSheetAdapter.js";
 
 /**
  * Adapter wrapping a Google Apps Script Spreadsheet.

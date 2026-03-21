@@ -1,13 +1,11 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const tsEslintPlugin = require("@typescript-eslint/eslint-plugin");
 const tsParser = require("@typescript-eslint/parser");
 const googleAppsScript = require("eslint-plugin-googleappsscript");
 const prettierConfig = require("eslint-config-prettier");
 
 const gasGlobals = Object.fromEntries(
-  Object.keys(googleAppsScript.environments.googleappsscript.globals).map((name) => [
-    name,
-    "readonly",
-  ]),
+  Object.keys(googleAppsScript.environments.googleappsscript.globals).map((name) => [name, "readonly"]),
 );
 
 const jestGlobals = {
@@ -24,7 +22,7 @@ const jestGlobals = {
 
 module.exports = [
   {
-    ignores: ["build/**", "node_modules/**", "coverage/**", "**/*.js"],
+    ignores: ["build/**", "dist/**", "node_modules/**", "coverage/**", "**/*.js"],
   },
   ...tsEslintPlugin.configs["flat/recommended"],
   {

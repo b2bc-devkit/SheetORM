@@ -1,24 +1,22 @@
 // SheetORM — SheetRepository: main CRUD + query interface for a single entity type
 // Inspired by the Repository pattern from common ORM architectures
 
-import {
-  Entity,
-} from "../core/types/Entity";
-import type { FieldDefinition } from "../core/types/FieldDefinition";
-import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter";
-import type { ISheetAdapter } from "../core/types/ISheetAdapter";
-import type { TableSchema } from "../core/types/TableSchema";
-import type { QueryOptions } from "../core/types/QueryOptions";
-import type { PaginatedResult } from "../core/types/PaginatedResult";
-import type { GroupResult } from "../core/types/GroupResult";
-import type { LifecycleHooks } from "../core/types/LifecycleHooks";
-import type { ICacheProvider } from "../core/types/ICacheProvider";
-import { SystemColumns } from "../core/types/SystemColumns";
-import { Uuid } from "../utils/Uuid";
-import { Serialization } from "../utils/Serialization";
-import { IndexStore } from "../index/IndexStore";
-import { Query } from "../query/Query";
-import { QueryEngine } from "../query/QueryEngine";
+import { Entity } from "../core/types/Entity.js";
+import type { FieldDefinition } from "../core/types/FieldDefinition.js";
+import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter.js";
+import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
+import type { TableSchema } from "../core/types/TableSchema.js";
+import type { QueryOptions } from "../core/types/QueryOptions.js";
+import type { PaginatedResult } from "../core/types/PaginatedResult.js";
+import type { GroupResult } from "../core/types/GroupResult.js";
+import type { LifecycleHooks } from "../core/types/LifecycleHooks.js";
+import type { ICacheProvider } from "../core/types/ICacheProvider.js";
+import { SystemColumns } from "../core/types/SystemColumns.js";
+import { Uuid } from "../utils/Uuid.js";
+import { Serialization } from "../utils/Serialization.js";
+import { IndexStore } from "../index/IndexStore.js";
+import { Query } from "../query/Query.js";
+import { QueryEngine } from "../query/QueryEngine.js";
 
 export class SheetRepository<T extends Entity> {
   private adapter: ISpreadsheetAdapter;
@@ -116,7 +114,12 @@ export class SheetRepository<T extends Entity> {
           rowIndex.set(rowId, i);
           if (rowId === partial.__id) {
             existingIdx = i;
-            existingEntity = Serialization.rowToEntity<T>(data[i], this.headers, this.schema.fields, this.fieldMap);
+            existingEntity = Serialization.rowToEntity<T>(
+              data[i],
+              this.headers,
+              this.schema.fields,
+              this.fieldMap,
+            );
           }
         }
         this.idToRowIndex = rowIndex;
@@ -265,6 +268,13 @@ export class SheetRepository<T extends Entity> {
    * Find an entity by ID.
    */
   findById(id: string): T | null {
+    // Fast path: hit cached row-index map to avoid full scan
+    if (this.idToRowIndex && this.cache) {
+      const rowIdx = this.idToRowIndex.get(id);
+      if (rowIdx === undefined) return null;
+      const cached = this.cache.get<T[]>(this.dataCacheKey);
+      if (cached) return cached[rowIdx] ?? null;
+    }
     const all = this.loadAllEntities();
     return all.find((e) => e.__id === id) ?? null;
   }
@@ -279,7 +289,7 @@ export class SheetRepository<T extends Entity> {
     const all = this.loadAllEntities();
     if (!options) return all;
 
-    if (options.where && this.schema.indexTableName) {
+    if (options.where && !options.whereGroups && this.schema.indexTableName) {
       const searchFilters: { field: string; value: string }[] = [];
       const otherFilters: typeof options.where = [];
 
@@ -401,7 +411,7 @@ export class SheetRepository<T extends Entity> {
     }
 
     const all = this.loadAllEntities();
-    const toDelete = options?.where ? QueryEngine.filterEntities(all, options.where) : [...all];
+    const toDelete = options ? QueryEngine.executeQuery(all, options) : [...all];
     if (toDelete.length === 0) return 0;
 
     // For small batches, individual deletes are cheaper than replaceAllData
@@ -423,7 +433,9 @@ export class SheetRepository<T extends Entity> {
 
     const remaining = all.filter((e) => !deleteIds.has(e.__id));
     const sheet = this.getSheet();
-    const rows = remaining.map((e) => Serialization.entityToRow(e, this.schema.fields, this.headers, this.fieldMap));
+    const rows = remaining.map((e) =>
+      Serialization.entityToRow(e, this.schema.fields, this.headers, this.fieldMap),
+    );
     sheet.replaceAllData(rows);
 
     if (this.schema.indexTableName) {
@@ -451,8 +463,8 @@ export class SheetRepository<T extends Entity> {
    */
   count(options?: QueryOptions): number {
     const all = this.loadAllEntities();
-    if (!options || !options.where) return all.length;
-    return QueryEngine.filterEntities(all, options.where).length;
+    if (!options || (!options.where && !options.whereGroups)) return all.length;
+    return QueryEngine.executeQuery(all, options).length;
   }
 
   /**
@@ -461,11 +473,8 @@ export class SheetRepository<T extends Entity> {
   select(offset: number, limit: number, options?: QueryOptions): PaginatedResult<T> {
     let entities = this.loadAllEntities();
 
-    if (options?.where) {
-      entities = QueryEngine.filterEntities(entities, options.where);
-    }
-    if (options?.orderBy) {
-      entities = QueryEngine.sortEntities(entities, options.orderBy);
+    if (options) {
+      entities = QueryEngine.executeQuery(entities, { ...options, offset: undefined, limit: undefined });
     }
 
     return QueryEngine.paginateEntities(entities, offset, limit);
@@ -477,11 +486,8 @@ export class SheetRepository<T extends Entity> {
   groupBy(field: string, options?: QueryOptions): GroupResult<T>[] {
     let entities = this.loadAllEntities();
 
-    if (options?.where) {
-      entities = QueryEngine.filterEntities(entities, options.where);
-    }
-    if (options?.orderBy) {
-      entities = QueryEngine.sortEntities(entities, options.orderBy);
+    if (options) {
+      entities = QueryEngine.executeQuery(entities, options);
     }
 
     return QueryEngine.groupEntities(entities, field);

@@ -1,6 +1,6 @@
 // SheetORM — In-memory cache with TTL support
 
-import type { ICacheProvider } from '../types/ICacheProvider';
+import type { ICacheProvider } from '../types/ICacheProvider.js';
 
 interface CacheEntry<T> {
   data: T;

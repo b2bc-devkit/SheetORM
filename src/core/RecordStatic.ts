@@ -1,4 +1,4 @@
-import type { Entity } from "./types/Entity";
+import type { Entity } from "./types/Entity.js";
 
 export interface RecordStatic {
   new (): Entity;

@@ -8,62 +8,6 @@ const __dirname = path.dirname(__filename);
 
 const REAL_ENTRY = path.resolve(__dirname, "build/src/index.js");
 const VIRTUAL_ID = "\0gas-entry";
-const GAS_CLASS_ENTRYPOINTS = {
-  GasEntrypoints: ["runTests", "validateTests", "runBenchmark"],
-};
-
-/**
- * Detect named exports from the compiled ES module entry file
- * by scanning both:
- * - `export { Name, ... }` statements
- * - direct named exports (`export class Name`, `export function Name`, ...)
- */
-function detectExportNames(entryPath) {
-  const src = fs.readFileSync(entryPath, "utf8");
-  const names = new Set();
-
-  // export { Foo, Bar as Baz }
-  const reNamedList = /export\s*\{([^}]+)\}/g;
-  // export class Foo / export function Foo / export const Foo ...
-  const reDirect = /export\s+(?:class|function|const|let|var)\s+([A-Za-z_$][\w$]*)/g;
-
-  let m;
-  while ((m = reNamedList.exec(src)) !== null) {
-    for (const token of m[1].split(",")) {
-      const name = token
-        .trim()
-        .split(/\s+as\s+/)
-        .pop()
-        .trim();
-      if (name) names.add(name);
-    }
-  }
-
-  while ((m = reDirect.exec(src)) !== null) {
-    const name = m[1]?.trim();
-    if (name) names.add(name);
-  }
-
-  return [...names];
-}
-
-function resolveGasBindings(exportNames) {
-  const bindings = [];
-
-  for (const exportName of exportNames) {
-    const methods = GAS_CLASS_ENTRYPOINTS[exportName];
-    if (methods) {
-      for (const methodName of methods) {
-        bindings.push({ globalName: methodName, exportName, methodName });
-      }
-      continue;
-    }
-
-    bindings.push({ globalName: exportName, exportName, methodName: null });
-  }
-
-  return bindings;
-}
 
 /**
  * Vite/Rollup plugin that replicates gas-webpack-plugin behaviour for GAS:
@@ -74,7 +18,40 @@ function resolveGasBindings(exportNames) {
  *    all exported names at parse time (shown in the script editor Run menu).
  */
 function gasPlugin() {
-  let exportNames = [];
+  const CLASS_ENTRYPOINTS = {
+    GasEntrypoints: ["runTests", "validateTests", "runBenchmark"],
+  };
+
+  function detectExportNames(entryPath) {
+    const src = fs.readFileSync(entryPath, "utf8");
+    const names = new Set();
+
+    for (const [, list] of src.matchAll(/export\s*\{([^}]+)\}/g)) {
+      for (const token of list.split(",")) {
+        const name = token
+          .trim()
+          .split(/\s+as\s+/)
+          .pop()
+          .trim();
+        if (name) names.add(name);
+      }
+    }
+    for (const [, name] of src.matchAll(/export\s+(?:class|function|const|let|var)\s+([A-Za-z_$][\w$]*)/g)) {
+      if (name) names.add(name.trim());
+    }
+
+    return [...names];
+  }
+
+  function resolveBindings(exportNames) {
+    return exportNames.flatMap((name) => {
+      const methods = CLASS_ENTRYPOINTS[name];
+      return methods
+        ? methods.map((m) => ({ globalName: m, exportName: name, methodName: m }))
+        : [{ globalName: name, exportName: name, methodName: null }];
+    });
+  }
+
   let gasBindings = [];
 
   return {
@@ -87,8 +64,8 @@ function gasPlugin() {
 
     load(id) {
       if (id === VIRTUAL_ID) {
-        exportNames = detectExportNames(REAL_ENTRY);
-        gasBindings = resolveGasBindings(exportNames);
+        const exportNames = detectExportNames(REAL_ENTRY);
+        gasBindings = resolveBindings(exportNames);
         const imports = [...new Set(gasBindings.map((binding) => binding.exportName))].join(", ");
         const entryUrl = REAL_ENTRY.replace(/\\/g, "/");
         const assignments = gasBindings
@@ -126,8 +103,8 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    // GAS V8 runtime supports ES2020+ natively — no need for Babel down-level transforms
-    target: "es2020",
+    // TypeScript emits ESNext; no syntax down-levelling needed for the GAS V8 runtime
+    target: "esnext",
     rollupOptions: {
       input: "gas-entry",
       output: {

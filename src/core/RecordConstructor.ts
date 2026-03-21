@@ -1,4 +1,4 @@
-import type { Record } from "./Record";
+import type { Record } from "./Record.js";
 
 export interface RecordConstructor<T extends Record = Record> {
   new (): T;

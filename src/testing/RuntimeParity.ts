@@ -1,19 +1,19 @@
-import type { Entity } from "../core/types/Entity";
-import type { FieldDefinition } from "../core/types/FieldDefinition";
-import type { Filter } from "../core/types/Filter";
-import type { QueryOptions } from "../core/types/QueryOptions";
-import type { SortClause } from "../core/types/SortClause";
-import { Registry } from "../core/Registry";
-import { IndexStore } from "../index/IndexStore";
-import { Query } from "../query/Query";
-import { Record as BaseRecord } from "../core/Record";
-import { Decorators } from "../core/Decorators";
-import { QueryEngine } from "../query/QueryEngine";
-import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter";
-import { MemoryCache } from "../core/cache/MemoryCache";
-import { Serialization } from "../utils/Serialization";
-import { Uuid } from "../utils/Uuid";
-import { ParityCatalog } from "./ParityCatalog";
+import type { Entity } from "../core/types/Entity.js";
+import type { FieldDefinition } from "../core/types/FieldDefinition.js";
+import type { Filter } from "../core/types/Filter.js";
+import type { QueryOptions } from "../core/types/QueryOptions.js";
+import type { SortClause } from "../core/types/SortClause.js";
+import { Registry } from "../core/Registry.js";
+import { IndexStore } from "../index/IndexStore.js";
+import { Query } from "../query/Query.js";
+import { Record as BaseRecord } from "../core/Record.js";
+import { Decorators } from "../core/Decorators.js";
+import { QueryEngine } from "../query/QueryEngine.js";
+import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
+import { MemoryCache } from "../core/cache/MemoryCache.js";
+import { Serialization } from "../utils/Serialization.js";
+import { Uuid } from "../utils/Uuid.js";
+import { ParityCatalog } from "./ParityCatalog.js";
 
 const { Indexed, Required, resetDecoratorCaches } = Decorators;
 
@@ -76,12 +76,10 @@ class RuntimeParityState {
     let remainingToDelete = originalSheets.length - 1;
     for (let i = 1; i < originalSheets.length; i += 1) {
       const sheetToDelete = originalSheets[i];
-      emit(
-        `[SheetORM] Deleting sheet: "${sheetToDelete.getName()}" | pozostało do usunięcia: ${remainingToDelete}`,
-      );
+      emit(`[SheetORM] Deleting sheet: "${sheetToDelete.getName()}" | remaining: ${remainingToDelete}`);
       spreadsheet.deleteSheet(sheetToDelete);
       remainingToDelete -= 1;
-      emit(`[SheetORM] Usunięto. Pozostało do usunięcia: ${remainingToDelete}`);
+      emit(`[SheetORM] Deleted. Remaining: ${remainingToDelete}`);
     }
 
     // Keep one clean, minimal sheet so subsequent test sheets fit under cell limits.
@@ -602,6 +600,88 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(query.limit, 5, "build should preserve limit");
       assertEqual(query.offset, 0, "build should preserve offset");
     },
+    "returns entities matching either condition": () => {
+      const result = createBuilder()
+        .where("category", "=", "pastry")
+        .or("category", "=", "vegetable")
+        .execute();
+      assertEqual(result.length, 3, "or should return entities matching either condition");
+    },
+    "applies AND within each OR group": () => {
+      const result = createBuilder()
+        .where("category", "=", "fruit")
+        .and("price", ">", 1)
+        .or("category", "=", "vegetable")
+        .and("price", "<", 2)
+        .execute();
+      assertEqual(result.length, 2, "AND within OR groups should produce correct results");
+    },
+    "chains multiple or() calls": () => {
+      const result = createBuilder()
+        .where("name", "=", "Apple")
+        .or("name", "=", "Banana")
+        .or("name", "=", "Donut")
+        .execute();
+      assertEqual(result.length, 3, "multiple or() calls should chain correctly");
+    },
+    "works with orderBy": () => {
+      const result = createBuilder()
+        .where("category", "=", "fruit")
+        .or("category", "=", "pastry")
+        .orderBy("price", "desc")
+        .execute();
+      assertEqual(result[0].name, "Donut", "first result should be Donut (highest price)");
+    },
+    "works with limit and offset": () => {
+      const result = createBuilder()
+        .where("category", "=", "fruit")
+        .or("category", "=", "vegetable")
+        .orderBy("price", "asc")
+        .limit(2)
+        .offset(1)
+        .execute();
+      assertEqual(result.length, 2, "limit+offset should work with or()");
+      assertEqual(result[0].name, "Carrot", "offset 1 should start at Carrot");
+    },
+    "first() returns first OR match": () => {
+      const result = createBuilder()
+        .where("category", "=", "vegetable")
+        .or("category", "=", "pastry")
+        .orderBy("price", "asc")
+        .first();
+      assertTrue(result !== null, "first() should return a match");
+      assertEqual(result?.name, "Carrot", "first OR match sorted by price should be Carrot");
+    },
+    "count() counts OR matches": () => {
+      const count = createBuilder().where("category", "=", "fruit").or("category", "=", "pastry").count();
+      assertEqual(count, 3, "count should include all OR matches");
+    },
+    "select() paginates OR results": () => {
+      const result = createBuilder()
+        .where("category", "=", "fruit")
+        .or("category", "=", "vegetable")
+        .select(0, 2);
+      assertEqual(result.total, 4, "total should count all OR matches");
+      assertEqual(result.items.length, 2, "items should be limited to page size");
+      assertTrue(result.hasNext, "hasNext should be true when more items remain");
+    },
+    "groupBy() groups OR results": () => {
+      const groups = createBuilder()
+        .where("category", "=", "fruit")
+        .or("category", "=", "vegetable")
+        .groupBy("category");
+      assertEqual(groups.length, 2, "groupBy should produce 2 groups from OR results");
+    },
+    "build() returns whereGroups for OR queries": () => {
+      const qo = createBuilder().where("category", "=", "fruit").or("name", "=", "Donut").build();
+      assertEqual(qo.where, undefined, "where should be undefined for OR queries");
+      assertEqual(qo.whereGroups?.length, 2, "whereGroups should have 2 groups");
+    },
+    "build() returns where (not whereGroups) for AND-only queries": () => {
+      const qo = createBuilder().where("category", "=", "fruit").and("price", ">", 1).build();
+      assertEqual(qo.where?.length, 2, "where should have 2 filters for AND-only");
+      assertEqual(qo.whereGroups, undefined, "whereGroups should be undefined for AND-only");
+    },
   },
   "query-engine.test.ts": {
     "filters with = operator": () => {
@@ -666,7 +746,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result.length, 2, "multiple filters should combine with AND");
     },
     "returns all when no filters": () => {
-      assertEqual(QueryEngine.filterEntities(queryEngineUsers, []).length, 5, "empty filters should return all users");
+      assertEqual(
+        QueryEngine.filterEntities(queryEngineUsers, []).length,
+        5,
+        "empty filters should return all users",
+      );
     },
     "sorts ascending by number": () => {
       const sorts: SortClause[] = [{ field: "age", direction: "asc" }];
@@ -753,28 +837,107 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result.length, 1, "combined query should return one entity");
       assertEqual(result[0].name, "Anna", "combined query should return Anna");
     },
+    "matches entities passing any group": () => {
+      const groups: Filter[][] = [
+        [{ field: "city", operator: "=", value: "Gdańsk" }],
+        [{ field: "city", operator: "=", value: "Kraków" }],
+      ];
+      const result = QueryEngine.filterEntitiesOr(queryEngineUsers, groups);
+      assertEqual(result.length, 3, "OR groups should match entities passing any group");
+    },
+    "applies AND within each group": () => {
+      const groups: Filter[][] = [
+        [
+          { field: "city", operator: "=", value: "Kraków" },
+          { field: "active", operator: "=", value: true },
+        ],
+        [
+          { field: "city", operator: "=", value: "Warszawa" },
+          { field: "active", operator: "=", value: false },
+        ],
+      ];
+      const result = QueryEngine.filterEntitiesOr(queryEngineUsers, groups);
+      assertEqual(result.length, 2, "AND within each OR group should narrow correctly");
+    },
+    "returns all entities for empty groups": () => {
+      const result = QueryEngine.filterEntitiesOr(queryEngineUsers, []);
+      assertEqual(result.length, 5, "empty groups should return all entities");
+    },
+    "uses OR groups when whereGroups is provided": () => {
+      const options: QueryOptions = {
+        whereGroups: [
+          [{ field: "city", operator: "=", value: "Gdańsk" }],
+          [{ field: "name", operator: "=", value: "Anna" }],
+        ],
+        orderBy: [{ field: "age", direction: "asc" }],
+      };
+      const result = QueryEngine.executeQuery(queryEngineUsers, options);
+      assertEqual(result.length, 2, "executeQuery should use whereGroups");
+      assertEqual(result[0].name, "Maria", "first sorted result should be Maria");
+    },
+    "prefers whereGroups over where": () => {
+      const options: QueryOptions = {
+        where: [{ field: "active", operator: "=", value: true }],
+        whereGroups: [[{ field: "city", operator: "=", value: "Gdańsk" }]],
+      };
+      const result = QueryEngine.executeQuery(queryEngineUsers, options);
+      assertEqual(result.length, 1, "whereGroups should take precedence over where");
+      assertEqual(result[0].name, "Maria", "only Maria should match Gdańsk group");
+    },
   },
   "serialization.test.ts": {
     "serializes string": () => {
       const fd: FieldDefinition = { name: "x", type: "string" };
-      assertEqual(Serialization.serializeValue("hello", fd), "hello", "string serialization should preserve string value");
-      assertEqual(Serialization.serializeValue(123, fd), "123", "string serialization should coerce number to string");
-      assertEqual(Serialization.serializeValue(null, fd), "", "string serialization should map null to empty string");
+      assertEqual(
+        Serialization.serializeValue("hello", fd),
+        "hello",
+        "string serialization should preserve string value",
+      );
+      assertEqual(
+        Serialization.serializeValue(123, fd),
+        "123",
+        "string serialization should coerce number to string",
+      );
+      assertEqual(
+        Serialization.serializeValue(null, fd),
+        "",
+        "string serialization should map null to empty string",
+      );
     },
     "serializes number": () => {
       const fd: FieldDefinition = { name: "x", type: "number" };
       assertEqual(Serialization.serializeValue(42, fd), 42, "number serialization should preserve number");
-      assertEqual(Serialization.serializeValue("7", fd), 7, "number serialization should coerce numeric string");
+      assertEqual(
+        Serialization.serializeValue("7", fd),
+        7,
+        "number serialization should coerce numeric string",
+      );
     },
     "serializes boolean": () => {
       const fd: FieldDefinition = { name: "x", type: "boolean" };
-      assertEqual(Serialization.serializeValue(true, fd), true, "boolean serialization should preserve boolean");
-      assertEqual(Serialization.serializeValue("true", fd), true, "boolean serialization should parse true string");
-      assertEqual(Serialization.serializeValue("false", fd), false, "boolean serialization should parse false string");
+      assertEqual(
+        Serialization.serializeValue(true, fd),
+        true,
+        "boolean serialization should preserve boolean",
+      );
+      assertEqual(
+        Serialization.serializeValue("true", fd),
+        true,
+        "boolean serialization should parse true string",
+      );
+      assertEqual(
+        Serialization.serializeValue("false", fd),
+        false,
+        "boolean serialization should parse false string",
+      );
     },
     "serializes json": () => {
       const fd: FieldDefinition = { name: "x", type: "json" };
-      assertEqual(Serialization.serializeValue({ a: 1 }, fd), '{"a":1}', "json serialization should stringify object");
+      assertEqual(
+        Serialization.serializeValue({ a: 1 }, fd),
+        '{"a":1}',
+        "json serialization should stringify object",
+      );
       assertEqual(
         Serialization.serializeValue("already string", fd),
         "already string",
@@ -800,8 +963,16 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "deserializes string": () => {
       const fd: FieldDefinition = { name: "x", type: "string" };
-      assertEqual(Serialization.deserializeValue("hello", fd), "hello", "string deserialization should preserve text");
-      assertEqual(Serialization.deserializeValue("", fd), null, "empty string should deserialize to null without default");
+      assertEqual(
+        Serialization.deserializeValue("hello", fd),
+        "hello",
+        "string deserialization should preserve text",
+      );
+      assertEqual(
+        Serialization.deserializeValue("", fd),
+        null,
+        "empty string should deserialize to null without default",
+      );
     },
     "applies defaultValue when empty": () => {
       const fd: FieldDefinition = { name: "x", type: "string", defaultValue: "default" };
@@ -809,15 +980,39 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "deserializes number": () => {
       const fd: FieldDefinition = { name: "x", type: "number" };
-      assertEqual(Serialization.deserializeValue(42, fd), 42, "number deserialization should preserve number");
-      assertEqual(Serialization.deserializeValue("3.14", fd), 3.14, "number deserialization should parse decimal string");
-      assertEqual(Serialization.deserializeValue("abc", fd), null, "invalid number should deserialize to null");
+      assertEqual(
+        Serialization.deserializeValue(42, fd),
+        42,
+        "number deserialization should preserve number",
+      );
+      assertEqual(
+        Serialization.deserializeValue("3.14", fd),
+        3.14,
+        "number deserialization should parse decimal string",
+      );
+      assertEqual(
+        Serialization.deserializeValue("abc", fd),
+        null,
+        "invalid number should deserialize to null",
+      );
     },
     "deserializes boolean": () => {
       const fd: FieldDefinition = { name: "x", type: "boolean" };
-      assertEqual(Serialization.deserializeValue(true, fd), true, "boolean deserialization should preserve boolean");
-      assertEqual(Serialization.deserializeValue("true", fd), true, "boolean deserialization should parse true string");
-      assertEqual(Serialization.deserializeValue("false", fd), false, "boolean deserialization should parse false string");
+      assertEqual(
+        Serialization.deserializeValue(true, fd),
+        true,
+        "boolean deserialization should preserve boolean",
+      );
+      assertEqual(
+        Serialization.deserializeValue("true", fd),
+        true,
+        "boolean deserialization should parse true string",
+      );
+      assertEqual(
+        Serialization.deserializeValue("false", fd),
+        false,
+        "boolean deserialization should parse false string",
+      );
     },
     "deserializes json": () => {
       const fd: FieldDefinition = { name: "x", type: "json" };
@@ -826,7 +1021,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         { a: 1 },
         "json deserialization should parse valid json",
       );
-      assertEqual(Serialization.deserializeValue("invalid json", fd), null, "invalid json should deserialize to null");
+      assertEqual(
+        Serialization.deserializeValue("invalid json", fd),
+        null,
+        "invalid json should deserialize to null",
+      );
     },
     "prepends system columns": () => {
       const fields: FieldDefinition[] = [
@@ -1336,6 +1535,96 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         assertEqual(results.length, 1, "Query.from e2e should return 1");
         assertEqual(results[0].make, "Toyota", "result should be Toyota");
       },
+      "count() with whereGroups counts only matching entities": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Honda";
+        c2.model = "Civic";
+        c2.save();
+        const c3 = new Car();
+        c3.make = "Toyota";
+        c3.model = "Camry";
+        c3.save();
+        const count = Car.count({
+          whereGroups: [
+            [{ field: "make", operator: "=", value: "Honda" }],
+            [{ field: "model", operator: "=", value: "Camry" }],
+          ],
+        });
+        assertEqual(count, 2, "count with whereGroups should be 2");
+      },
+      "deleteAll() with whereGroups deletes only matching entities": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Honda";
+        c2.model = "Civic";
+        c2.save();
+        const c3 = new Car();
+        c3.make = "Toyota";
+        c3.model = "Camry";
+        c3.save();
+        const deleted = Car.deleteAll({
+          whereGroups: [
+            [{ field: "make", operator: "=", value: "Honda" }],
+            [{ field: "model", operator: "=", value: "Camry" }],
+          ],
+        });
+        assertEqual(deleted, 2, "deleteAll with whereGroups should delete 2");
+        assertEqual(Car.count(), 1, "one entity should remain");
+      },
+      "select() with whereGroups paginates only matching entities": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Honda";
+        c2.model = "Civic";
+        c2.save();
+        const c3 = new Car();
+        c3.make = "Toyota";
+        c3.model = "Camry";
+        c3.save();
+        const page = Car.select(0, 10, {
+          whereGroups: [
+            [{ field: "make", operator: "=", value: "Honda" }],
+            [{ field: "model", operator: "=", value: "Camry" }],
+          ],
+        });
+        assertEqual(page.total, 2, "select total with whereGroups should be 2");
+        assertEqual(page.items.length, 2, "select items with whereGroups should be 2");
+      },
+      "groupBy() with whereGroups groups only matching entities": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Toyota";
+        c1.model = "Corolla";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Honda";
+        c2.model = "Civic";
+        c2.save();
+        const c3 = new Car();
+        c3.make = "Toyota";
+        c3.model = "Camry";
+        c3.save();
+        const groups = Car.groupBy("make", {
+          whereGroups: [
+            [{ field: "make", operator: "=", value: "Honda" }],
+            [{ field: "model", operator: "=", value: "Camry" }],
+          ],
+        });
+        assertEqual(groups.length, 2, "groupBy with whereGroups should have 2 groups");
+      },
     } as Record<string, RuntimeCaseHandler>;
   })(),
 };
@@ -1357,7 +1646,9 @@ function getRuntimeCaseHandler(id: string): RuntimeCaseHandler {
 }
 
 const RUNTIME_PARITY_CASE_IDS: string[] = Object.entries(runtimeSuiteHandlers)
-  .flatMap(([file, testMap]) => Object.keys(testMap).map((testName) => ParityCatalog.toCaseId(file, testName)))
+  .flatMap(([file, testMap]) =>
+    Object.keys(testMap).map((testName) => ParityCatalog.toCaseId(file, testName)),
+  )
   .sort();
 
 function validateTests(): void {

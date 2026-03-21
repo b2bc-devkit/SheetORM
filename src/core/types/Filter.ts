@@ -1,4 +1,4 @@
-import type { FilterOperator } from "./FilterOperator";
+import type { FilterOperator } from "./FilterOperator.js";
 
 export interface Filter {
   field: string;
