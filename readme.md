@@ -36,9 +36,7 @@ npm run build
 
 ```bash
 npm run login   # once per device
-npm run push    # build + push to GAS
-# to publish as a reusable GAS library (push + version + optional deploy):
-npm run publish:gas
+node scripts/publish-gas.mjs  # build + push + version (+ deploy if GAS_DEPLOYMENT_ID is set)
 ```
 
 ### 3. Define a model
@@ -221,7 +219,7 @@ See [`examples/cars-crud.ts`](examples/cars-crud.ts) for a complete runnable exa
 
 - Build distributable JS + type definitions with `npm run build:npm` (emits to `dist/npm`).
 - Vite stays dedicated to the GAS bundle; the npm build is plain TypeScript output so consumers can use their own bundler.
-- Publish with `npm run publish:npm` (or VS Code task “Publish: npm package”); set `NPM_TAG` to publish under a dist-tag if needed. The script runs lint, tests, build, then `npm publish --access public`.
+- Publish with `node scripts/publish-npm.mjs` (or VS Code task “Publish: npm package”); set `NPM_TAG` to publish under a dist-tag if needed. The script runs lint, tests, build, then `npm publish --access public`.
 - Import via the bundled aggregator:
 
 ```ts

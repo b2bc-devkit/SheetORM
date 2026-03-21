@@ -4,7 +4,7 @@
     {
       "label": "Publish: Apps Script library",
       "type": "shell",
-      "command": "npm run publish:gas",
+      "command": "node scripts/publish-gas.mjs",
       "group": "build",
       "problemMatcher": [],
       "presentation": {
@@ -15,7 +15,7 @@
     {
       "label": "Publish: npm package",
       "type": "shell",
-      "command": "npm run publish:npm",
+      "command": "node scripts/publish-npm.mjs",
       "group": "build",
       "problemMatcher": [],
       "presentation": {

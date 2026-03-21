@@ -7,10 +7,6 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:npm": "node scripts/build-npm.mjs",
-    "push": "npm run build && clasp push -f",
-    "deploy": "npm run push && clasp deploy",
-    "publish:gas": "node scripts/publish-gas.mjs",
-    "publish:npm": "node scripts/publish-npm.mjs",
     "lint": "eslint .",
     "format": "prettier . --write",
     "test": "jest --verbose",
