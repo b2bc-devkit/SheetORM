@@ -6,7 +6,9 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "target": "ES2020"
+    "target": "ES2020",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
   },
   "include": ["src"]
 }

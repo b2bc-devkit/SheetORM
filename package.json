@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "TypeScript ORM for Google Sheets (Google Apps Script runtime)",
   "type": "module",
-  "license": "GPL",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:npm": "node scripts/build-npm.mjs",
