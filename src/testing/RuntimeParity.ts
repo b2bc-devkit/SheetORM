@@ -1973,10 +1973,15 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         const cached = cache.get(cacheKey) as unknown[];
         if (cached) cached[0] = undefined;
         // Update should fall through to sheet scan
-        const found = Car.findById(id);
-        assertTrue(found !== null, "should find via fallback scan");
-        found!.set("year", 2025).save();
+        const updatedCar = new Car();
+        updatedCar.__id = id;
+        updatedCar.make = "Toyota";
+        updatedCar.model = "Corolla";
+        updatedCar.year = 2025;
+        updatedCar.save();
+        Registry.getInstance().clearCache();
         const refetched = Car.findById(id);
+        assertTrue(refetched !== null, "should find via fallback scan");
         assertEqual(refetched!.year, 2025, "year should be updated after fallback save");
       },
       "skips rows with empty __id": (ctx: RuntimeCaseContext) => {

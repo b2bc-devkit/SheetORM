@@ -654,7 +654,7 @@ export class SheetRepository<T extends Entity> {
       cached.push(entity);
     } else {
       for (let i = 0; i < cached.length; i++) {
-        if (cached[i].__id === entity.__id) {
+        if (cached[i]?.__id === entity.__id) {
           cached[i] = entity;
           return;
         }
@@ -668,7 +668,7 @@ export class SheetRepository<T extends Entity> {
     if (!cached) return;
 
     for (let i = 0; i < cached.length; i++) {
-      if (cached[i].__id === id) {
+      if (cached[i]?.__id === id) {
         cached.splice(i, 1);
         return;
       }

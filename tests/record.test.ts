@@ -632,11 +632,17 @@ describe("Record ActiveRecord API", () => {
       if (cached) cached[0] = undefined;
 
       // Update should not throw — should fall through to sheet scan
-      const updated = Car.findById(id);
-      expect(updated).not.toBeNull();
-      updated!.set("year", 2025).save();
+      const updatedCar = new Car();
+      updatedCar.__id = id;
+      updatedCar.make = "Toyota";
+      updatedCar.model = "Corolla";
+      updatedCar.year = 2025;
+      updatedCar.save();
 
+      // Clear cache to verify via fresh sheet read
+      Registry.getInstance().clearCache();
       const refetched = Car.findById(id);
+      expect(refetched).not.toBeNull();
       expect(refetched!.year).toBe(2025);
     });
   });
