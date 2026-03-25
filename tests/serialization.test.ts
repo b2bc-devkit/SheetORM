@@ -13,6 +13,7 @@ describe("serializeValue", () => {
     const fd: FieldDefinition = { name: "x", type: "number" };
     expect(Serialization.serializeValue(42, fd)).toBe(42);
     expect(Serialization.serializeValue("7", fd)).toBe(7);
+    expect(Serialization.serializeValue(NaN, fd)).toBe("");
   });
 
   it("serializes boolean", () => {
@@ -20,12 +21,13 @@ describe("serializeValue", () => {
     expect(Serialization.serializeValue(true, fd)).toBe(true);
     expect(Serialization.serializeValue("true", fd)).toBe(true);
     expect(Serialization.serializeValue("false", fd)).toBe(false);
+    expect(Serialization.serializeValue(NaN, fd)).toBe(false);
   });
 
   it("serializes json", () => {
     const fd: FieldDefinition = { name: "x", type: "json" };
     expect(Serialization.serializeValue({ a: 1 }, fd)).toBe('{"a":1}');
-    expect(Serialization.serializeValue("already string", fd)).toBe("already string");
+    expect(Serialization.serializeValue("already string", fd)).toBe('"already string"');
   });
 
   it("serializes date", () => {
@@ -45,6 +47,8 @@ describe("deserializeValue", () => {
     const fd: FieldDefinition = { name: "x", type: "string" };
     expect(Serialization.deserializeValue("hello", fd)).toBe("hello");
     expect(Serialization.deserializeValue("", fd)).toBeNull();
+    expect(Serialization.deserializeValue(null, fd)).toBeNull();
+    expect(Serialization.deserializeValue(undefined, fd)).toBeNull();
   });
 
   it("applies defaultValue when empty", () => {
@@ -64,12 +68,25 @@ describe("deserializeValue", () => {
     expect(Serialization.deserializeValue(true, fd)).toBe(true);
     expect(Serialization.deserializeValue("true", fd)).toBe(true);
     expect(Serialization.deserializeValue("false", fd)).toBe(false);
+    expect(Serialization.deserializeValue(NaN, fd)).toBe(false);
+  });
+
+  it("deserializes date from ISO string", () => {
+    const fd: FieldDefinition = { name: "x", type: "date" };
+    const result = Serialization.deserializeValue("2024-01-15T10:00:00.000Z", fd);
+    expect(result).toBe("2024-01-15T10:00:00.000Z");
   });
 
   it("deserializes json", () => {
     const fd: FieldDefinition = { name: "x", type: "json" };
     expect(Serialization.deserializeValue('{"a":1}', fd)).toEqual({ a: 1 });
     expect(Serialization.deserializeValue("invalid json", fd)).toBeNull();
+  });
+
+  it("round-trips json string values", () => {
+    const fd: FieldDefinition = { name: "x", type: "json" };
+    const serialized = Serialization.serializeValue("hello", fd);
+    expect(Serialization.deserializeValue(serialized, fd)).toBe("hello");
   });
 });
 

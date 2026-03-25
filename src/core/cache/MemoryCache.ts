@@ -1,6 +1,6 @@
 // SheetORM — In-memory cache with TTL support
 
-import type { ICacheProvider } from '../types/ICacheProvider.js';
+import type { ICacheProvider } from "../types/ICacheProvider.js";
 
 interface CacheEntry<T> {
   data: T;
@@ -14,6 +14,9 @@ export class MemoryCache implements ICacheProvider {
   private defaultTtlMs: number;
 
   constructor(defaultTtlMs: number = DEFAULT_TTL_MS) {
+    if (!Number.isFinite(defaultTtlMs) || defaultTtlMs < 0) {
+      throw new Error(`MemoryCache: defaultTtlMs must be a non-negative finite number, got ${defaultTtlMs}`);
+    }
     this.defaultTtlMs = defaultTtlMs;
   }
 
@@ -29,6 +32,9 @@ export class MemoryCache implements ICacheProvider {
 
   set<T>(key: string, value: T, ttlMs?: number): void {
     const ttl = ttlMs ?? this.defaultTtlMs;
+    if (!Number.isFinite(ttl) || ttl < 0) {
+      throw new Error(`MemoryCache.set: ttlMs must be a non-negative finite number, got ${ttl}`);
+    }
     this.store.set(key, {
       data: value,
       expiresAt: Date.now() + ttl,

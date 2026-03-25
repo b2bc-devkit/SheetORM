@@ -6,7 +6,7 @@ import { RuntimeParity } from "../src/testing/RuntimeParity";
 
 function extractJestCaseIdsFromFile(filePath: string, fileName: string): string[] {
   const content = fs.readFileSync(filePath, "utf8");
-  const re = /\bit\(\s*['"`]([^'"`]+)['"`]/g;
+  const re = /\b(?:it|test)(?:\.(?:each|skip|only|concurrent|failing))?\(\s*['"`]([^'"`]+)['"`]/g;
   const ids: string[] = [];
 
   let match: RegExpExecArray | null;

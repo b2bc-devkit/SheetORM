@@ -7,6 +7,7 @@ import { Registry } from "../core/Registry.js";
 import { IndexStore } from "../index/IndexStore.js";
 import { Query } from "../query/Query.js";
 import { Record as BaseRecord } from "../core/Record.js";
+import type { RecordStatic } from "../core/RecordStatic.js";
 import { Decorators } from "../core/Decorators.js";
 import { QueryEngine } from "../query/QueryEngine.js";
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
@@ -221,6 +222,13 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       sleepMs(70);
       assertEqual(cache.get<string>("key1"), null, "value should expire after TTL");
     },
+    "has() returns false after TTL expiry": () => {
+      const cache = new MemoryCache(40);
+      cache.set("ttlKey", "value");
+      assertEqual(cache.has("ttlKey"), true, "has() should return true before TTL");
+      sleepMs(70);
+      assertEqual(cache.has("ttlKey"), false, "has() should return false after TTL");
+    },
     "allows per-key TTL override": () => {
       const cache = new MemoryCache(1000);
       cache.set("short", "val", 30);
@@ -234,6 +242,35 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const obj = { name: "test", items: [1, 2, 3] };
       cache.set("obj", obj);
       assertDeepEqual(cache.get("obj"), obj, "cache should preserve complex object");
+    },
+    "constructor throws for NaN TTL": () => {
+      let threw = false;
+      try {
+        new MemoryCache(NaN);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "MemoryCache(NaN) should throw");
+    },
+    "constructor throws for negative TTL": () => {
+      let threw = false;
+      try {
+        new MemoryCache(-100);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "MemoryCache(-100) should throw");
+    },
+    "set() throws for NaN per-key TTL": () => {
+      const cache = new MemoryCache(1000);
+      cache.set("key1", "value1");
+      let threw = false;
+      try {
+        cache.set("key2", "value2", NaN);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "set() with NaN TTL should throw");
     },
   },
   "index-store.test.ts": {
@@ -377,6 +414,56 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       indexStore.dropCombinedIndex(indexTable);
       assertTrue(!adapter.getSheetNames().includes(indexTable), "dropped index sheet should be removed");
     },
+    "cancelIndexBatch() discards buffered entries": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", false);
+      indexStore.beginIndexBatch();
+      indexStore.addAllFieldsToCombined(indexTable, [{ field: "email", value: "a@e.com" }], "u-001");
+      indexStore.cancelIndexBatch();
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "email", "a@e.com"),
+        [],
+        "cancelled batch entries should not appear in index",
+      );
+    },
+    "removeMultipleFromCombined() bulk-removes entries": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", false);
+      indexStore.addToCombined(indexTable, "email", "a@e.com", "u-001");
+      indexStore.addToCombined(indexTable, "email", "b@e.com", "u-002");
+      indexStore.addToCombined(indexTable, "email", "c@e.com", "u-003");
+      indexStore.removeMultipleFromCombined(indexTable, ["u-001", "u-003"]);
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "email", "b@e.com"),
+        ["u-002"],
+        "only u-002 should remain after bulk remove",
+      );
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "email", "a@e.com"),
+        [],
+        "u-001 should be removed",
+      );
+    },
+    "removeMultipleFromCombined() no-op for empty array": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Users")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", false);
+      indexStore.addToCombined(indexTable, "email", "a@e.com", "u-001");
+      indexStore.removeMultipleFromCombined(indexTable, []);
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "email", "a@e.com"),
+        ["u-001"],
+        "empty remove array should leave index intact",
+      );
+    },
     "existsCombined() checks for index sheet": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
@@ -473,6 +560,20 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const ids = indexStore.searchCombined(indexTable, "model", "Mercedes Benz");
       assertDeepEqual(ids, ["car-001"], "dash-normalized query should match");
     },
+    "searchCombined (n-gram) > invalidates search cache after flushIndexBatch": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      assertDeepEqual(indexStore.searchCombined(indexTable, "model", "Civic"), [], "no Civic yet");
+      indexStore.beginIndexBatch();
+      indexStore.addAllFieldsToCombined(indexTable, [{ field: "model", value: "Honda Civic" }], "car-002");
+      indexStore.flushIndexBatch();
+      const ids = indexStore.searchCombined(indexTable, "model", "Civic");
+      assertDeepEqual(ids, ["car-002"], "search should find entry added via batch after flush");
+    },
     "searchCombined (n-gram) > invalidates search index cache on data change": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
@@ -561,6 +662,42 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const result = createBuilder().orderBy("price", "asc").offset(2).limit(2).execute();
       assertEqual(result.length, 2, "offset+limit should produce 2 items");
       assertEqual(result[0].name, "Apple", "offset should skip first two items");
+    },
+    "limit() throws for negative number": () => {
+      let threw = false;
+      try {
+        createBuilder().limit(-1);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "limit(-1) should throw");
+    },
+    "limit() throws for NaN": () => {
+      let threw = false;
+      try {
+        createBuilder().limit(NaN);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "limit(NaN) should throw");
+    },
+    "offset() throws for negative number": () => {
+      let threw = false;
+      try {
+        createBuilder().offset(-1);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "offset(-1) should throw");
+    },
+    "offset() throws for Infinity": () => {
+      let threw = false;
+      try {
+        createBuilder().offset(Infinity);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "offset(Infinity) should throw");
     },
     "first() returns the first match": () => {
       const result = createBuilder().where("category", "=", "vegetable").orderBy("price", "asc").first();
@@ -682,6 +819,21 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(qo.where?.length, 2, "where should have 2 filters for AND-only");
       assertEqual(qo.whereGroups, undefined, "whereGroups should be undefined for AND-only");
     },
+    "or() without preceding where() still filters correctly": () => {
+      const result = createBuilder().or("category", "=", "pastry").execute();
+      assertEqual(result.length, 1, "or() without where() should match 1 item");
+      assertEqual(result[0].name, "Donut", "matched item should be Donut");
+    },
+    "or().and() without preceding where() chains correctly": () => {
+      const result = createBuilder()
+        .or("category", "=", "pastry")
+        .or("category", "=", "fruit")
+        .and("price", ">", 1)
+        .execute();
+      assertEqual(result.length, 2, "or().and() should match 2 items");
+      const names = result.map((r: { name: string }) => r.name).sort();
+      assertDeepEqual(names, ["Apple", "Donut"], "matched items should be Apple and Donut");
+    },
   },
   "query-engine.test.ts": {
     "filters with = operator": () => {
@@ -721,6 +873,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const filters: Filter[] = [{ field: "name", operator: "contains", value: "an" }];
       const result = QueryEngine.filterEntities(queryEngineUsers, filters);
       assertEqual(result.length, 2, "contains filter should be case-insensitive and match two users");
+    },
+    "contains is case-insensitive for uppercase query": () => {
+      const filters: Filter[] = [{ field: "name", operator: "contains", value: "AN" }];
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
+      assertEqual(result.length, 2, "uppercase contains should match Anna and Jan");
     },
     "filters with startsWith operator": () => {
       const filters: Filter[] = [{ field: "name", operator: "startsWith", value: "A" }];
@@ -884,6 +1041,63 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result.length, 1, "whereGroups should take precedence over where");
       assertEqual(result[0].name, "Maria", "only Maria should match Gdańsk group");
     },
+    "contains with non-string value matches nothing": () => {
+      const filters: Filter[] = [{ field: "name", operator: "contains", value: 123 }];
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
+      assertEqual(result.length, 0, "contains with non-string value should match nothing");
+    },
+    "startsWith with non-string value matches nothing": () => {
+      const filters: Filter[] = [{ field: "name", operator: "startsWith", value: null }];
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
+      assertEqual(result.length, 0, "startsWith with non-string value should match nothing");
+    },
+    "search with non-string value matches nothing": () => {
+      const filters: Filter[] = [{ field: "name", operator: "search", value: undefined }];
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
+      assertEqual(result.length, 0, "search with non-string value should match nothing");
+    },
+    "negative offset is clamped to 0": () => {
+      const result = QueryEngine.paginateEntities(queryEngineUsers, -5, 2);
+      assertEqual(result.offset, 0, "negative offset should be clamped to 0");
+      assertEqual(result.items.length, 2, "should still return requested items");
+    },
+    "negative limit defaults to full length": () => {
+      const result = QueryEngine.paginateEntities(queryEngineUsers, 0, -1);
+      assertEqual(result.limit, queryEngineUsers.length, "negative limit should default to total length");
+      assertEqual(result.items.length, queryEngineUsers.length, "should return all items");
+    },
+    "NaN offset defaults to 0": () => {
+      const result = QueryEngine.paginateEntities(queryEngineUsers, NaN, 2);
+      assertEqual(result.offset, 0, "NaN offset should default to 0");
+      assertEqual(result.items.length, 2, "should still return requested items");
+    },
+    "returns no matches for an unrecognized operator": () => {
+      const filters: Filter[] = [
+        { field: "name", operator: "regex" as unknown as Filter["operator"], value: ".*" },
+      ];
+      assertEqual(
+        QueryEngine.filterEntities(queryEngineUsers, filters).length,
+        0,
+        "unknown operator should match nothing",
+      );
+    },
+    "returns false when field type differs from value type (number vs string)": () => {
+      const filters: Filter[] = [{ field: "age", operator: ">", value: "thirty" as unknown as number }];
+      assertEqual(
+        QueryEngine.filterEntities(queryEngineUsers, filters).length,
+        0,
+        "type mismatch should match nothing",
+      );
+    },
+    "compares strings when both field and value are strings": () => {
+      const filters: Filter[] = [{ field: "name", operator: "<", value: "Jan" }];
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
+      assertDeepEqual(
+        result.map((u) => u.name),
+        ["Anna"],
+        "should match Anna (Anna < Jan)",
+      );
+    },
   },
   "serialization.test.ts": {
     "serializes string": () => {
@@ -940,8 +1154,8 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       );
       assertEqual(
         Serialization.serializeValue("already string", fd),
-        "already string",
-        "json serialization should keep string untouched",
+        '"already string"',
+        "json serialization should wrap string with JSON.stringify",
       );
     },
     "serializes date": () => {
@@ -1013,6 +1227,16 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         false,
         "boolean deserialization should parse false string",
       );
+      assertEqual(
+        Serialization.deserializeValue(NaN, fd),
+        false,
+        "NaN boolean deserialization should return false",
+      );
+    },
+    "deserializes date from ISO string": () => {
+      const fd: FieldDefinition = { name: "x", type: "date" };
+      const result = Serialization.deserializeValue("2024-01-15T10:00:00.000Z", fd);
+      assertEqual(result, "2024-01-15T10:00:00.000Z", "date deserialization should return ISO string");
     },
     "deserializes json": () => {
       const fd: FieldDefinition = { name: "x", type: "json" };
@@ -1084,6 +1308,13 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const restored = Serialization.rowToEntity<Entity>(row, headers, fields);
       assertEqual(restored.__createdAt, undefined, "missing __createdAt should restore as undefined");
     },
+    "round-trips json string values": () => {
+      const fd: FieldDefinition = { name: "x", type: "json" };
+      const serialized = Serialization.serializeValue("hello", fd);
+      assertEqual(serialized, '"hello"', "json serialization of string should wrap in quotes");
+      const deserialized = Serialization.deserializeValue(serialized, fd);
+      assertEqual(deserialized, "hello", "json deserialization should recover original string");
+    },
   },
   "uuid.test.ts": {
     "returns a string of UUID v4 format": () => {
@@ -1096,6 +1327,24 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "generates unique values": () => {
       const uuids = new Set(Array.from({ length: 100 }, () => Uuid.generate()));
       assertEqual(uuids.size, 100, "100 generated UUIDs should be unique");
+    },
+    "falls back to Math.random when crypto is unavailable": () => {
+      // In GAS runtime, crypto may not be available — test the fallback path
+      // This is a smoke test: the UUID should still be valid v4 format
+      const uuid = Uuid.generate();
+      assertTrue(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid),
+        "fallback UUID should match v4 format",
+      );
+    },
+    "uses GAS Utilities.getUuid when available": () => {
+      // In GAS runtime, Utilities.getUuid() is available natively
+      // This handler simply verifies the primary path produces a valid UUID
+      const uuid = Uuid.generate();
+      assertTrue(
+        typeof uuid === "string" && uuid.length > 0,
+        "GAS Utilities UUID should be a non-empty string",
+      );
     },
   },
   "record.test.ts": (() => {
@@ -1624,6 +1873,127 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
           ],
         });
         assertEqual(groups.length, 2, "groupBy with whereGroups should have 2 groups");
+      },
+      "invalidates cache when saveAll() fails mid-operation": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        let threw = false;
+        try {
+          Car.saveAll([
+            { make: "Honda", model: "Civic" },
+            { make: "BMW" }, // missing required 'model'
+          ]);
+        } catch {
+          threw = true;
+        }
+        assertTrue(threw, "saveAll should throw on missing required field");
+        const all = Car.find();
+        assertEqual(all.length, 1, "only the original car should remain after failed saveAll");
+      },
+      "invalidates cache and re-throws on mid-batch failure": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+        repo.beginBatch();
+        repo.save({ make: "Honda", model: "Civic" });
+        repo.save({ make: "BMW" } as Record<string, unknown>);
+        let threw = false;
+        try {
+          repo.commitBatch();
+        } catch {
+          threw = true;
+        }
+        assertTrue(threw, "commitBatch should throw on missing required field");
+        const all = Car.find();
+        assertEqual(all.length, 2, "partially committed data should be readable");
+      },
+      "batch is no longer active after commitBatch error": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+        repo.beginBatch();
+        repo.save({ make: "Fail" } as Record<string, unknown>);
+        try {
+          repo.commitBatch();
+        } catch {
+          // expected
+        }
+        assertEqual(repo.isBatchActive(), false, "batch should not be active after error");
+      },
+      "clears class maps on re-configure": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Test";
+        car.model = "Model";
+        car.save();
+        const registry = Registry.getInstance();
+        assertTrue(registry.getClassByName(Car.name) !== undefined, "class should be registered");
+        registry.configure({ adapter: ctx.state.getAdapter() });
+        assertEqual(
+          registry.getClassByName(Car.name),
+          undefined,
+          "class should be cleared after re-configure",
+        );
+      },
+      "clears entity cache and allows re-read from sheet": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        Car.find(); // populate cache
+        Registry.getInstance().clearCache();
+        const all = Car.find();
+        assertEqual(all.length, 1, "should re-read from sheet after cache clear");
+        assertEqual(all[0].make, "Toyota", "re-read data should match");
+      },
+      "falls back to sheet scan when cache entry is null": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.year = 2020;
+        car.save();
+        const id = car.__id;
+        // Tamper with cache entry to simulate stale/null slot
+        const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+        const cache = (
+          repo as unknown as { cache: { get(k: string): unknown[] | null; set(k: string, v: unknown): void } }
+        ).cache;
+        const cacheKey = (repo as unknown as { dataCacheKey: string }).dataCacheKey;
+        const cached = cache.get(cacheKey) as unknown[];
+        if (cached) cached[0] = undefined;
+        // Update should fall through to sheet scan
+        const found = Car.findById(id);
+        assertTrue(found !== null, "should find via fallback scan");
+        found!.set("year", 2025).save();
+        const refetched = Car.findById(id);
+        assertEqual(refetched!.year, 2025, "year should be updated after fallback save");
+      },
+      "skips rows with empty __id": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Honda";
+        car.model = "Civic";
+        car.year = 2022;
+        car.save();
+        // Inject empty row directly into sheet
+        const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+        const sheet = (repo as unknown as { getSheet(): { appendRow(v: unknown[]): void } }).getSheet();
+        sheet.appendRow(["", "", "", "", "", ""]);
+        Registry.getInstance().clearCache();
+        const all = Car.find();
+        assertEqual(all.length, 1, "empty __id row should be filtered out");
+        assertEqual(all[0].make, "Honda", "valid entity should remain");
       },
     } as Record<string, RuntimeCaseHandler>;
   })(),

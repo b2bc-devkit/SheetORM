@@ -23,7 +23,7 @@ function serializeValue(value: unknown, fieldDef: FieldDefinition): unknown {
       }
       case "boolean": {
         if (typeof value === "boolean") return value;
-        if (typeof value === "number") return value !== 0;
+        if (typeof value === "number") return !isNaN(value) && value !== 0;
         const lower = typeof value === "string" ? value.toLowerCase().trim() : "";
         return lower === "true" || lower === "1" || lower === "yes";
       }
@@ -31,7 +31,7 @@ function serializeValue(value: unknown, fieldDef: FieldDefinition): unknown {
         if (value instanceof Date) return value.toISOString();
         return String(value);
       case "json":
-        return typeof value === "string" ? value : JSON.stringify(value);
+        return JSON.stringify(value);
       default:
         return String(value);
     }
@@ -65,7 +65,7 @@ function deserializeValue(cellValue: unknown, fieldDef: FieldDefinition): unknow
       }
       case "boolean":
         if (typeof cellValue === "boolean") return cellValue;
-        if (typeof cellValue === "number") return cellValue !== 0;
+        if (typeof cellValue === "number") return !isNaN(cellValue) && cellValue !== 0;
         if (typeof cellValue === "string") {
           const lower = cellValue.toLowerCase().trim();
           return lower === "true" || lower === "1" || lower === "yes";
@@ -161,14 +161,14 @@ function rowToEntity<T extends Entity>(
       entity.__createdAt =
         cellValue instanceof Date
           ? (cellValue as Date).toISOString()
-          : cellValue
+          : cellValue !== "" && cellValue !== null && cellValue !== undefined
             ? String(cellValue)
             : undefined;
     } else if (col === SystemColumns.UPDATED_AT) {
       entity.__updatedAt =
         cellValue instanceof Date
           ? (cellValue as Date).toISOString()
-          : cellValue
+          : cellValue !== "" && cellValue !== null && cellValue !== undefined
             ? String(cellValue)
             : undefined;
     } else {

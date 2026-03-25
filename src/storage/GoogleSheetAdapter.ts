@@ -97,14 +97,20 @@ export class GoogleSheetAdapter implements ISheetAdapter {
     const lastRow = this.sheet.getLastRow();
     const lastCol = this.sheet.getLastColumn();
     const oldDataRows = Math.max(0, lastRow - 1);
-    const numCols = lastCol || (rows.length > 0 ? rows[0].length : 0);
+    const newCols = rows.length > 0 ? rows[0].length : 0;
+    const clearCols = Math.max(lastCol, newCols);
 
     if (rows.length > 0) {
-      this.sheet.getRange(2, 1, rows.length, numCols).setValues(rows);
+      this.sheet.getRange(2, 1, rows.length, newCols).setValues(rows);
     }
 
-    if (oldDataRows > rows.length && numCols > 0) {
-      this.sheet.getRange(rows.length + 2, 1, oldDataRows - rows.length, numCols).clearContent();
+    // Clear surplus columns in written rows if new data is narrower than old data
+    if (rows.length > 0 && newCols < lastCol) {
+      this.sheet.getRange(2, newCols + 1, rows.length, lastCol - newCols).clearContent();
+    }
+
+    if (oldDataRows > rows.length && clearCols > 0) {
+      this.sheet.getRange(rows.length + 2, 1, oldDataRows - rows.length, clearCols).clearContent();
     }
   }
 

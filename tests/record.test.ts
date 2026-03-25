@@ -4,6 +4,7 @@ import { Decorators } from "../src/core/Decorators";
 const { Indexed, Required, resetDecoratorCaches } = Decorators;
 import { Query } from "../src/query/Query";
 import { Registry } from "../src/core/Registry";
+import type { RecordStatic } from "../src/core/RecordStatic";
 
 // ─── Test Model Definitions ─────────────────────────
 
@@ -508,6 +509,159 @@ describe("Record ActiveRecord API", () => {
       });
       expect(groups).toHaveLength(2);
       expect(groups.every((g) => g.count === 1)).toBe(true);
+    });
+  });
+
+  describe("saveAll() error-path cache invalidation", () => {
+    it("invalidates cache when saveAll() fails mid-operation", () => {
+      const car = new Car();
+      car.make = "Toyota";
+      car.model = "Corolla";
+      car.year = 2024;
+      car.save();
+
+      expect(Car.count()).toBe(1);
+
+      expect(() => {
+        Car.saveAll([
+          { make: "Honda", model: "Civic" },
+          { make: "BMW" }, // missing required 'model'
+        ]);
+      }).toThrow(/Required field "model"/);
+
+      // Cache invalidated — subsequent read re-loads from sheet (no partial writes)
+      const all = Car.find();
+      expect(all).toHaveLength(1);
+      expect(all[0].make).toBe("Toyota");
+    });
+  });
+
+  describe("commitBatch() error-path cache invalidation", () => {
+    it("invalidates cache and re-throws on mid-batch failure", () => {
+      const car = new Car();
+      car.make = "Toyota";
+      car.model = "Corolla";
+      car.save();
+
+      // Access the underlying repository for batch operations
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+
+      repo.beginBatch();
+      repo.save({ make: "Honda", model: "Civic" }); // valid — will be written
+      repo.save({ make: "BMW" } as unknown as Parameters<typeof repo.save>[0]); // missing required 'model'
+
+      expect(() => repo.commitBatch()).toThrow(/Required field "model"/);
+
+      // Cache invalidated — reads re-load from sheet; first save was committed
+      const all = Car.find();
+      expect(all).toHaveLength(2);
+      expect(all.map((c) => c.make).sort()).toEqual(["Honda", "Toyota"]);
+    });
+
+    it("batch is no longer active after commitBatch error", () => {
+      const car = new Car();
+      car.make = "Toyota";
+      car.model = "Corolla";
+      car.save();
+
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+
+      repo.beginBatch();
+      repo.save({ make: "Fail" } as unknown as Parameters<typeof repo.save>[0]);
+
+      expect(() => repo.commitBatch()).toThrow();
+      expect(repo.isBatchActive()).toBe(false);
+    });
+  });
+
+  describe("Registry.configure() re-configuration", () => {
+    it("clears class maps on re-configure", () => {
+      // Register the Car class by doing a save
+      const car = new Car();
+      car.make = "Test";
+      car.model = "Model";
+      car.save();
+
+      const registry = Registry.getInstance();
+      expect(registry.getClassByName("Car")).toBeDefined();
+
+      // Re-configure with same adapter
+      registry.configure({ adapter });
+      expect(registry.getClassByName("Car")).toBeUndefined();
+    });
+  });
+
+  describe("Registry.clearCache() with index store", () => {
+    it("clears entity cache and allows re-read from sheet", () => {
+      const car = new Car();
+      car.make = "Toyota";
+      car.model = "Corolla";
+      car.save();
+
+      // Populate cache via find
+      expect(Car.find()).toHaveLength(1);
+
+      // Clear all caches
+      Registry.getInstance().clearCache();
+
+      // Subsequent find should re-read from sheet (still works)
+      const all = Car.find();
+      expect(all).toHaveLength(1);
+      expect(all[0].make).toBe("Toyota");
+    });
+  });
+
+  describe("doSave null-entity safety", () => {
+    it("falls back to sheet scan when cache entry is null", () => {
+      // Create and save an entity to populate cache
+      const car = new Car();
+      car.make = "Toyota";
+      car.model = "Corolla";
+      car.year = 2020;
+      car.save();
+
+      const id = car.__id;
+
+      // Tamper with cache: set entity slot to undefined while keeping idToRowIndex
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      const cache = (
+        repo as unknown as { cache: { get(k: string): unknown[] | null; set(k: string, v: unknown): void } }
+      ).cache;
+      const cacheKey = (repo as unknown as { dataCacheKey: string }).dataCacheKey;
+      const cached = cache.get(cacheKey) as unknown[];
+      if (cached) cached[0] = undefined;
+
+      // Update should not throw — should fall through to sheet scan
+      const updated = Car.findById(id);
+      expect(updated).not.toBeNull();
+      updated!.set("year", 2025).save();
+
+      const refetched = Car.findById(id);
+      expect(refetched!.year).toBe(2025);
+    });
+  });
+
+  describe("loadAllEntities empty-row filtering", () => {
+    it("skips rows with empty __id", () => {
+      // Create a valid entity
+      const car = new Car();
+      car.make = "Honda";
+      car.model = "Civic";
+      car.year = 2022;
+      car.save();
+
+      // Inject an empty row directly into the sheet (simulating garbage/blank row)
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      const sheet = (repo as unknown as { getSheet(): { appendRow(v: unknown[]): void } }).getSheet();
+      sheet.appendRow(["", "", "", "", "", ""]);
+
+      // Clear cache so next read re-loads from sheet
+      Registry.getInstance().clearCache();
+
+      // Find should not include the empty-__id row
+      const all = Car.find();
+      expect(all).toHaveLength(1);
+      expect(all[0].make).toBe("Honda");
     });
   });
 });

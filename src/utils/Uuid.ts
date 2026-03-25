@@ -16,8 +16,10 @@ function generateUUID(): string {
   // RFC 4122 v4 UUID — direct array approach, avoids per-char regex replace
   const r = new Uint8Array(16);
   // Use Web Crypto API when available (Node.js, browsers); fall back to Math.random
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const g = typeof globalThis !== "undefined" ? (globalThis as any).crypto : undefined;
+  const g =
+    typeof globalThis !== "undefined" && "crypto" in globalThis
+      ? (globalThis.crypto as { getRandomValues?: (buf: Uint8Array) => Uint8Array })
+      : undefined;
   if (g && typeof g.getRandomValues === "function") {
     g.getRandomValues(r);
   } else {

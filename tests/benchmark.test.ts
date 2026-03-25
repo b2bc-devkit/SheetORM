@@ -13,6 +13,9 @@ type DataFactory = (i: number) => { [key: string]: unknown };
 
 const RECORD_COUNT = 1_000;
 
+// Module-scoped timing storage (avoids globalThis pollution)
+let carsBenchmarkMs: number | undefined;
+
 // ─── Model definitions ───────────────────────────────────────────────────────
 
 class Car extends OrmRecord {
@@ -190,11 +193,11 @@ describe("Benchmark: tbl_Cars (1,000 records, @Indexed on all fields)", () => {
     log(`Index sheet "${Car.indexTableName}" exists: ${indexSheetExists}`);
     log(`${"─".repeat(60)}`);
 
-    // Store timing for cross-suite comparison (global)
-    (globalThis as { [key: string]: unknown }).__carsBenchmarkMs = elapsed;
+    // Store timing for cross-suite comparison (module-scoped)
+    carsBenchmarkMs = elapsed;
   });
 
-  afterEach(() => {
+  afterAll(() => {
     Registry.reset();
     resetDecoratorCaches();
   });
@@ -257,28 +260,23 @@ describe("Benchmark: tbl_Workers (1,000 records, no @Indexed)", () => {
     log(`${"─".repeat(60)}`);
 
     // Timing comparison
-    const carsMs = (globalThis as { [key: string]: unknown }).__carsBenchmarkMs as number | undefined;
-    if (carsMs !== undefined) {
-      const diff = elapsed - carsMs;
+    if (carsBenchmarkMs !== undefined) {
+      const diff = elapsed - carsBenchmarkMs;
       const faster = diff > 0 ? "tbl_Cars" : "tbl_Workers";
       log(`\n${"═".repeat(60)}`);
       log(`BENCHMARK SUMMARY`);
       log(`${"═".repeat(60)}`);
-      log(`tbl_Cars  (with @Indexed):    ${carsMs} ms`);
+      log(`tbl_Cars  (with @Indexed):    ${carsBenchmarkMs} ms`);
       log(`tbl_Workers (no @Indexed):   ${elapsed} ms`);
       log(`Difference:                  ${Math.abs(diff)} ms`);
       log(`Faster suite: ${faster} (by ${Math.abs(diff)} ms)`);
-      log(
-        `Note: in mock environment @Indexed adds write overhead (index sheet writes).`,
-      );
-      log(
-        `      In real Google Sheets, @Indexed enables faster lookups (fewer API reads).`,
-      );
+      log(`Note: in mock environment @Indexed adds write overhead (index sheet writes).`);
+      log(`      In real Google Sheets, @Indexed enables faster lookups (fewer API reads).`);
       log(`${"═".repeat(60)}`);
     }
   });
 
-  afterEach(() => {
+  afterAll(() => {
     Registry.reset();
     resetDecoratorCaches();
   });
@@ -335,7 +333,7 @@ describe("Benchmark: @Indexed search vs full-scan (n-gram narrowing)", () => {
     log(`${"═".repeat(60)}`);
   });
 
-  afterEach(() => {
+  afterAll(() => {
     Registry.reset();
     resetDecoratorCaches();
   });
@@ -375,7 +373,9 @@ describe("Benchmark: @Indexed search vs full-scan (n-gram narrowing)", () => {
 
     const expectedCandidates = Math.round(SEARCH_RECORDS / 5); // "Toyota" ≈ 20%
     log(`  @Indexed search "toy" × ${SEARCH_ITERS}: ${indexedSearchMs} ms`);
-    log(`  → n-gram narrows ${SEARCH_RECORDS} records → ~${expectedCandidates} candidates, then 2-field sort + limit 10`);
+    log(
+      `  → n-gram narrows ${SEARCH_RECORDS} records → ~${expectedCandidates} candidates, then 2-field sort + limit 10`,
+    );
 
     // Correctness check: all returned records must have make containing "toy"
     const results = Car.find({
@@ -429,20 +429,27 @@ describe("Benchmark: @Indexed search vs full-scan (n-gram narrowing)", () => {
       limit: 5,
     });
     expect(results.length).toBeGreaterThan(0);
+    expect(results.every((r) => (r as unknown as { department: string }).department.includes("Eng"))).toBe(
+      true,
+    );
     log(`  ✓ Full-scan returned ${results.length} matching records`);
 
     // Summary
     log(`\n${"─".repeat(60)}`);
     log(`  SEARCH BENCHMARK SUMMARY`);
     log(`${"─".repeat(60)}`);
-    log(`  @Indexed "search" (Cars)   : ${indexedSearchMs} ms (n-gram → ~${Math.round(SEARCH_RECORDS / 5)} candidates → sort)`);
+    log(
+      `  @Indexed "search" (Cars)   : ${indexedSearchMs} ms (n-gram → ~${Math.round(SEARCH_RECORDS / 5)} candidates → sort)`,
+    );
     log(`  Full-scan "contains" (Workers): ${fullScanMs} ms (scan ${SEARCH_RECORDS} → filter → sort)`);
     if (indexedSearchMs > 0) {
       const ratio = (fullScanMs / indexedSearchMs).toFixed(2);
       log(`  Ratio: ${ratio}x  (indexed / full-scan over ${SEARCH_ITERS} iterations)`);
     }
     log(`  Note: @Indexed "search" uses the n-gram posting index to pre-filter candidates.`);
-    log(`        Sort+pagination then runs on the narrowed set (${Math.round(SEARCH_RECORDS / 5)} vs ${SEARCH_RECORDS} entities).`);
+    log(
+      `        Sort+pagination then runs on the narrowed set (${Math.round(SEARCH_RECORDS / 5)} vs ${SEARCH_RECORDS} entities).`,
+    );
     log(`        In real GAS the n-gram index is cached after the first query in each`);
     log(`        execution — subsequent searches cost 0 additional API calls.`);
     log(`        The advantage is most dramatic when selectivity is high (few matches)`);

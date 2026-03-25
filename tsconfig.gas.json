@@ -3,7 +3,9 @@
   "compilerOptions": {
     "target": "ESNext",
     "lib": ["ESNext"],
-    "outDir": "build"
+    "outDir": "build",
+    "declaration": false
   },
+  "include": ["src"],
   "exclude": ["tests"]
 }

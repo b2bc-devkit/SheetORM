@@ -41,10 +41,7 @@ function upsertFieldMetadata(
  * Mark a field as indexed for faster lookups.
  * Optionally specify `unique` or index storage `type`.
  */
-function Indexed(options?: {
-  unique?: boolean;
-  type?: "string" | "number" | "date";
-}): PropertyDecorator {
+function Indexed(options?: { unique?: boolean; type?: "string" | "number" | "date" }): PropertyDecorator {
   return (target: object, propertyKey: string | symbol) => {
     const ctor = (target as DecoratorTarget).constructor;
     if (!indexedMeta.has(ctor)) indexedMeta.set(ctor, []);
@@ -132,7 +129,9 @@ function getIndexes(ctor: DecoratedModelCtor): IndexDefinition[] {
 }
 
 /**
- * Reset all decorator caches. Called by SheetORM.reset() for testing.
+ * Reset derived decorator caches. Called by SheetORM.reset() for testing.
+ * Note: fieldMeta and indexedMeta are primary metadata set at class-definition
+ * time by decorators and must NOT be cleared here.
  */
 function resetDecoratorCaches(): void {
   fieldsCache.clear();

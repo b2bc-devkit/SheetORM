@@ -31,18 +31,21 @@ describe("filterEntities", () => {
     const filters: Filter[] = [{ field: "active", operator: "!=", value: false }];
     const result = QueryEngine.filterEntities(users, filters);
     expect(result).toHaveLength(3);
+    expect(result.map((u) => u.__id).sort()).toEqual(["1", "2", "4"]);
   });
 
   it("filters with > operator", () => {
     const filters: Filter[] = [{ field: "age", operator: ">", value: 40 }];
     const result = QueryEngine.filterEntities(users, filters);
     expect(result).toHaveLength(2);
+    expect(result.map((u) => u.name).sort()).toEqual(["Piotr", "Zofia"]);
   });
 
   it("filters with < operator", () => {
     const filters: Filter[] = [{ field: "age", operator: "<", value: 30 }];
     const result = QueryEngine.filterEntities(users, filters);
     expect(result).toHaveLength(2);
+    expect(result.map((u) => u.name).sort()).toEqual(["Anna", "Maria"]);
   });
 
   it("filters with >= and <= operators", () => {
@@ -52,12 +55,21 @@ describe("filterEntities", () => {
     ];
     const result = QueryEngine.filterEntities(users, filters);
     expect(result).toHaveLength(3);
+    expect(result.map((u) => u.name).sort()).toEqual(["Anna", "Jan", "Piotr"]);
   });
 
   it("filters with contains operator", () => {
     const filters: Filter[] = [{ field: "name", operator: "contains", value: "an" }];
     const result = QueryEngine.filterEntities(users, filters);
-    expect(result).toHaveLength(2); // Anna (case-insensitive "An") and Jan
+    expect(result).toHaveLength(2);
+    expect(result.map((u) => u.name).sort()).toEqual(["Anna", "Jan"]);
+  });
+
+  it("contains is case-insensitive for uppercase query", () => {
+    const filters: Filter[] = [{ field: "name", operator: "contains", value: "AN" }];
+    const result = QueryEngine.filterEntities(users, filters);
+    expect(result).toHaveLength(2);
+    expect(result.map((u) => u.name).sort()).toEqual(["Anna", "Jan"]);
   });
 
   it("filters with startsWith operator", () => {
@@ -70,6 +82,7 @@ describe("filterEntities", () => {
     const filters: Filter[] = [{ field: "city", operator: "in", value: ["Gdańsk", "Kraków"] }];
     const result = QueryEngine.filterEntities(users, filters);
     expect(result).toHaveLength(3);
+    expect(result.map((u) => u.__id).sort()).toEqual(["2", "4", "5"]);
   });
 
   it("filters with search operator (substring match)", () => {
@@ -237,5 +250,65 @@ describe("executeQuery with whereGroups", () => {
     const result = QueryEngine.executeQuery(users, options);
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe("Maria");
+  });
+});
+
+describe("string operators with non-string values", () => {
+  it("contains with non-string value matches nothing", () => {
+    const filters: Filter[] = [{ field: "name", operator: "contains", value: 123 }];
+    expect(QueryEngine.filterEntities(users, filters)).toHaveLength(0);
+  });
+
+  it("startsWith with non-string value matches nothing", () => {
+    const filters: Filter[] = [{ field: "name", operator: "startsWith", value: null }];
+    expect(QueryEngine.filterEntities(users, filters)).toHaveLength(0);
+  });
+
+  it("search with non-string value matches nothing", () => {
+    const filters: Filter[] = [{ field: "name", operator: "search", value: undefined }];
+    expect(QueryEngine.filterEntities(users, filters)).toHaveLength(0);
+  });
+});
+
+describe("pagination edge cases", () => {
+  it("negative offset is clamped to 0", () => {
+    const result = QueryEngine.paginateEntities(users, -5, 2);
+    expect(result.offset).toBe(0);
+    expect(result.items).toHaveLength(2);
+  });
+
+  it("negative limit defaults to full length", () => {
+    const result = QueryEngine.paginateEntities(users, 0, -1);
+    expect(result.limit).toBe(users.length);
+    expect(result.items).toHaveLength(users.length);
+  });
+
+  it("NaN offset defaults to 0", () => {
+    const result = QueryEngine.paginateEntities(users, NaN, 2);
+    expect(result.offset).toBe(0);
+    expect(result.items).toHaveLength(2);
+  });
+});
+
+describe("unknown filter operator", () => {
+  it("returns no matches for an unrecognized operator", () => {
+    const filters: Filter[] = [
+      { field: "name", operator: "regex" as unknown as Filter["operator"], value: ".*" },
+    ];
+    expect(QueryEngine.filterEntities(users, filters)).toHaveLength(0);
+  });
+});
+
+describe("relational operator type guards", () => {
+  it("returns false when field type differs from value type (number vs string)", () => {
+    const filters: Filter[] = [{ field: "age", operator: ">", value: "thirty" as unknown as number }];
+    expect(QueryEngine.filterEntities(users, filters)).toHaveLength(0);
+  });
+
+  it("compares strings when both field and value are strings", () => {
+    const filters: Filter[] = [{ field: "name", operator: "<", value: "Jan" }];
+    const result = QueryEngine.filterEntities(users, filters);
+    // Anna < Jan (lexicographic)
+    expect(result.map((u) => u.name)).toEqual(["Anna"]);
   });
 });

@@ -40,6 +40,11 @@ export class MockSheetAdapter implements ISheetAdapter {
   }
 
   writeRowsAt(startRowIndex: number, rows: unknown[][]): void {
+    // Fill any gap between current data length and startRowIndex with empty rows
+    const headerLen = this.headers.length;
+    while (this.data.length < startRowIndex) {
+      this.data.push(new Array(headerLen).fill(""));
+    }
     for (let i = 0; i < rows.length; i++) {
       const idx = startRowIndex + i;
       if (idx >= this.data.length) {
@@ -51,11 +56,13 @@ export class MockSheetAdapter implements ISheetAdapter {
   }
 
   updateRow(rowIndex: number, values: unknown[]): void {
-    if (rowIndex === this.data.length) {
-      this.data.push([...values]);
-    } else if (rowIndex >= 0 && rowIndex < this.data.length) {
-      this.data[rowIndex] = [...values];
+    if (rowIndex < 0) return;
+    // Fill any gap between current data length and rowIndex with empty rows
+    const headerLen = this.headers.length;
+    while (this.data.length <= rowIndex) {
+      this.data.push(new Array(headerLen).fill(""));
     }
+    this.data[rowIndex] = [...values];
   }
 
   updateRows(updates: Array<{ rowIndex: number; values: unknown[] }>): void {
@@ -81,7 +88,8 @@ export class MockSheetAdapter implements ISheetAdapter {
     if (rowIndex >= 0 && rowIndex < this.data.length) {
       return [...this.data[rowIndex]];
     }
-    return [];
+    // Out of range: return array of empty strings matching header width (mirrors real adapter)
+    return this.headers.length > 0 ? new Array(this.headers.length).fill("") : [];
   }
 
   replaceAllData(rows: unknown[][]): void {

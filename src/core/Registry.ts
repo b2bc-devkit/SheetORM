@@ -38,6 +38,8 @@ export class Registry {
     this.cache = options.cache ?? null;
     this.indexStore = null;
     this.repos.clear();
+    this.classesByTable.clear();
+    this.classesByName.clear();
   }
 
   private getAdapter(): ISpreadsheetAdapter {
@@ -128,5 +130,6 @@ export class Registry {
 
   clearCache(): void {
     if (this.cache) this.cache.clear();
+    if (this.indexStore) this.indexStore.clearAllCaches();
   }
 }

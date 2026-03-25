@@ -1,7 +1,7 @@
 // SheetORM — Query: fluent API for building and executing queries
 // Inspired by common ORM query builder patterns
 
-import { Entity } from "../core/types/Entity.js";
+import type { Entity } from "../core/types/Entity.js";
 import type { Filter } from "../core/types/Filter.js";
 import type { FilterOperator } from "../core/types/FilterOperator.js";
 import type { SortClause } from "../core/types/SortClause.js";
@@ -90,7 +90,7 @@ export class Query<T extends Entity> {
   }
 
   private get flatFilters(): Filter[] {
-    return this.filterGroups[0];
+    return this.filterGroups.find((g) => g.length > 0) ?? [];
   }
 
   private applyFilters(entities: T[]): T[] {

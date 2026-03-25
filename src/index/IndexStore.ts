@@ -88,9 +88,10 @@ export class IndexStore {
         const data = this.getCombinedData(indexTableName);
         sheet.writeRowsAt(data.length, rows);
         for (const row of rows) data.push(row);
-        this.searchIndexCache.delete(indexTableName);
+        this.invalidateSearchCacheForTable(indexTableName);
       } else {
         sheet.appendRows(rows);
+        this.invalidateSearchCacheForTable(indexTableName);
       }
     }
   }
@@ -159,6 +160,7 @@ export class IndexStore {
       this.searchIndexCache.delete(`${this.registryKey(indexTableName, field)}`);
     } else {
       sheet.appendRow(newRow);
+      this.invalidateSearchCacheForTable(indexTableName);
     }
   }
 
@@ -195,6 +197,23 @@ export class IndexStore {
             break;
           }
         }
+        // Also check pending batch entries (not yet flushed to sheet)
+        if (!alreadyIndexed && this.indexBatch !== null) {
+          const pending = this.indexBatch.get(indexTableName);
+          if (pending) {
+            for (let i = 0; i < pending.length; i++) {
+              if (String(pending[i][0]) === field && String(pending[i][1]) === valueStr) {
+                if (String(pending[i][2]) !== entityId) {
+                  throw new Error(
+                    `Unique index violation: ${indexTableName}.${field} already has value "${valueStr}" for entity ${String(pending[i][2])}`,
+                  );
+                }
+                alreadyIndexed = true;
+                break;
+              }
+            }
+          }
+        }
         if (alreadyIndexed) continue;
       }
 
@@ -220,6 +239,7 @@ export class IndexStore {
         this.searchIndexCache.clear();
       } else {
         sheet.appendRows(rows);
+        this.searchIndexCache.clear();
       }
     }
   }
@@ -388,12 +408,14 @@ export class IndexStore {
    */
   dropCombinedIndex(indexTableName: string): void {
     this.adapter.deleteSheet(indexTableName);
+    // Clear cache BEFORE removing registry entries, since clearCache()
+    // iterates indexRegistry to find cache keys to invalidate.
+    this.clearCache();
     for (const [key, meta] of this.indexRegistry.entries()) {
       if (meta.tableName === indexTableName) {
         this.indexRegistry.delete(key);
       }
     }
-    this.clearCache();
   }
 
   // ─── N-gram search (Solr-like approach) ──────────────────────────────────
@@ -589,7 +611,8 @@ export class IndexStore {
     }
 
     // Verify candidates with substring match on normalized text
-    const maxResults = limit ?? candidates.length;
+    const maxResults =
+      limit !== undefined && Number.isFinite(limit) && limit >= 0 ? Math.floor(limit) : candidates.length;
     const out: string[] = [];
     for (const pos of candidates) {
       if (idx.normalized[pos].includes(pat)) {
@@ -619,6 +642,13 @@ export class IndexStore {
     return sheet ? sheet.getAllData() : [];
   }
 
+  private invalidateSearchCacheForTable(indexTableName: string): void {
+    const prefix = `${indexTableName}::`;
+    for (const key of this.searchIndexCache.keys()) {
+      if (key.startsWith(prefix)) this.searchIndexCache.delete(key);
+    }
+  }
+
   private clearCache(): void {
     this.searchIndexCache.clear();
     if (!this.cache) return;
@@ -631,5 +661,13 @@ export class IndexStore {
         this.cache.delete(`cidx:${tableName}`);
       }
     }
+  }
+
+  /**
+   * Public entry point for clearing all index caches (search + data).
+   * Called by Registry.clearCache() to ensure full cache coherence.
+   */
+  clearAllCaches(): void {
+    this.clearCache();
   }
 }

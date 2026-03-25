@@ -50,25 +50,43 @@ function compileFilter(f: Filter): (entity: Entity) => boolean {
     case "!=":
       return (e) => accessor(e) !== fv;
     case "<":
-      return (e) => (accessor(e) as number) < (fv as number);
-    case ">":
-      return (e) => (accessor(e) as number) > (fv as number);
-    case "<=":
-      return (e) => (accessor(e) as number) <= (fv as number);
-    case ">=":
-      return (e) => (accessor(e) as number) >= (fv as number);
-    case "contains": {
-      const lower = typeof fv === "string" ? fv.toLowerCase() : "";
       return (e) => {
         const v = accessor(e);
-        return typeof v === "string" && v.toLowerCase().includes(lower);
+        if (typeof v !== typeof fv) return false;
+        return (v as number) < (fv as number);
+      };
+    case ">":
+      return (e) => {
+        const v = accessor(e);
+        if (typeof v !== typeof fv) return false;
+        return (v as number) > (fv as number);
+      };
+    case "<=":
+      return (e) => {
+        const v = accessor(e);
+        if (typeof v !== typeof fv) return false;
+        return (v as number) <= (fv as number);
+      };
+    case ">=":
+      return (e) => {
+        const v = accessor(e);
+        if (typeof v !== typeof fv) return false;
+        return (v as number) >= (fv as number);
+      };
+    case "contains": {
+      if (typeof fv !== "string") return () => false;
+      const lowerC = fv.toLowerCase();
+      return (e) => {
+        const v = accessor(e);
+        return typeof v === "string" && v.toLowerCase().includes(lowerC);
       };
     }
     case "startsWith": {
-      const lower = typeof fv === "string" ? fv.toLowerCase() : "";
+      if (typeof fv !== "string") return () => false;
+      const lowerS = fv.toLowerCase();
       return (e) => {
         const v = accessor(e);
-        return typeof v === "string" && v.toLowerCase().startsWith(lower);
+        return typeof v === "string" && v.toLowerCase().startsWith(lowerS);
       };
     }
     case "in": {
@@ -80,10 +98,11 @@ function compileFilter(f: Filter): (entity: Entity) => boolean {
       return (e) => fv.includes(accessor(e));
     }
     case "search": {
-      const lower = typeof fv === "string" ? fv.toLowerCase() : "";
+      if (typeof fv !== "string") return () => false;
+      const lowerSr = fv.toLowerCase();
       return (e) => {
         const v = accessor(e);
-        return typeof v === "string" && v.toLowerCase().includes(lower);
+        return typeof v === "string" && v.toLowerCase().includes(lowerSr);
       };
     }
     default:
@@ -235,14 +254,16 @@ function sortEntities<T extends Entity>(entities: T[], sorts: SortClause[]): T[]
  * Apply pagination (offset + limit) to an array.
  */
 function paginateEntities<T>(entities: T[], offset: number, limit: number): PaginatedResult<T> {
+  const safeOffset = Number.isFinite(offset) && offset >= 0 ? Math.floor(offset) : 0;
+  const safeLimit = Number.isFinite(limit) && limit >= 0 ? Math.floor(limit) : entities.length;
   const total = entities.length;
-  const sliced = entities.slice(offset, offset + limit);
+  const sliced = entities.slice(safeOffset, safeOffset + safeLimit);
   return {
     items: sliced,
     total,
-    offset,
-    limit,
-    hasNext: offset + limit < total,
+    offset: safeOffset,
+    limit: safeLimit,
+    hasNext: safeOffset + safeLimit < total,
   };
 }
 
@@ -290,8 +311,14 @@ function executeQuery<T extends Entity>(entities: T[], options: QueryOptions): T
   }
 
   if (options.offset !== undefined || options.limit !== undefined) {
-    const offset = options.offset ?? 0;
-    const limit = options.limit ?? result.length;
+    const rawOffset = options.offset ?? 0;
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
+    const limit =
+      options.limit !== undefined
+        ? Number.isFinite(options.limit) && options.limit >= 0
+          ? Math.floor(options.limit)
+          : result.length
+        : result.length;
     result = result.slice(offset, offset + limit);
   }
 

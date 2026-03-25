@@ -23,6 +23,7 @@ describe("Query", () => {
   it("filters with where()", () => {
     const result = createBuilder().where("category", "=", "fruit").execute();
     expect(result).toHaveLength(2);
+    expect(result.map((r) => r.name).sort()).toEqual(["Apple", "Banana"]);
   });
 
   it("chains multiple where() as AND", () => {
@@ -49,6 +50,22 @@ describe("Query", () => {
     // Sorted: Banana(0.8), Carrot(1.2), Apple(1.5), Donut(2.5), Eggplant(3.0)
     // offset 2 → Apple, Donut
     expect(result[0].name).toBe("Apple");
+  });
+
+  it("limit() throws for negative number", () => {
+    expect(() => createBuilder().limit(-1)).toThrow();
+  });
+
+  it("limit() throws for NaN", () => {
+    expect(() => createBuilder().limit(NaN)).toThrow();
+  });
+
+  it("offset() throws for negative number", () => {
+    expect(() => createBuilder().offset(-1)).toThrow();
+  });
+
+  it("offset() throws for Infinity", () => {
+    expect(() => createBuilder().offset(Infinity)).toThrow();
   });
 
   it("first() returns the first match", () => {
@@ -124,6 +141,7 @@ describe("Query", () => {
         .or("name", "=", "Donut")
         .execute();
       expect(result).toHaveLength(3);
+      expect(result.map((r) => r.name).sort()).toEqual(["Apple", "Banana", "Donut"]);
     });
 
     it("works with orderBy", () => {
@@ -193,6 +211,24 @@ describe("Query", () => {
       const qo = createBuilder().where("category", "=", "fruit").and("price", ">", 1).build();
       expect(qo.where).toHaveLength(2);
       expect(qo.whereGroups).toBeUndefined();
+    });
+
+    it("or() without preceding where() still filters correctly", () => {
+      const result = createBuilder().or("category", "=", "pastry").execute();
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("Donut");
+    });
+
+    it("or().and() without preceding where() chains correctly", () => {
+      // First OR group: category=pastry, second OR group: category=fruit AND price>1
+      const result = createBuilder()
+        .or("category", "=", "pastry")
+        .or("category", "=", "fruit")
+        .and("price", ">", 1)
+        .execute();
+      // pastry → Donut; fruit AND price>1 → Apple
+      expect(result).toHaveLength(2);
+      expect(result.map((r) => r.name).sort()).toEqual(["Apple", "Donut"]);
     });
   });
 });

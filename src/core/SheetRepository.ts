@@ -1,7 +1,7 @@
 // SheetORM — SheetRepository: main CRUD + query interface for a single entity type
 // Inspired by the Repository pattern from common ORM architectures
 
-import { Entity } from "../core/types/Entity.js";
+import type { Entity } from "../core/types/Entity.js";
 import type { FieldDefinition } from "../core/types/FieldDefinition.js";
 import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter.js";
 import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
@@ -66,13 +66,14 @@ export class SheetRepository<T extends Entity> {
    */
   save(partial: Partial<T> & { __id?: string }): T {
     if (this.batchBuffer) {
-      this.batchBuffer.push({ type: "save", data: partial });
-      // Return a placeholder (will be committed in batch)
       const now = new Date().toISOString();
+      const id = partial.__id ?? Uuid.generate();
+      const isUpdate = Boolean(partial.__id);
+      const buffered = { ...partial, __id: id };
+      this.batchBuffer.push({ type: "save", data: buffered });
       return {
-        ...partial,
-        __id: partial.__id ?? Uuid.generate(),
-        __createdAt: now,
+        ...buffered,
+        ...(!isUpdate ? { __createdAt: now } : {}),
         __updatedAt: now,
       } as T;
     }
@@ -94,12 +95,10 @@ export class SheetRepository<T extends Entity> {
       if (cachedIdx !== undefined && this.cache) {
         const cached = this.cache.get<T[]>(this.dataCacheKey);
         if (cached) {
-          existingIdx = cachedIdx;
-          for (let i = 0; i < cached.length; i++) {
-            if (cached[i].__id === partial.__id) {
-              existingEntity = cached[i];
-              break;
-            }
+          const cachedEntity = cached[cachedIdx];
+          if (cachedEntity) {
+            existingIdx = cachedIdx;
+            existingEntity = cachedEntity;
           }
         }
       }
@@ -260,6 +259,8 @@ export class SheetRepository<T extends Entity> {
       if (this.schema.indexTableName) {
         this.indexStore.cancelIndexBatch();
       }
+      if (this.cache) this.cache.delete(this.dataCacheKey);
+      this.idToRowIndex = null;
       throw err;
     }
   }
@@ -339,6 +340,8 @@ export class SheetRepository<T extends Entity> {
 
   /**
    * Delete an entity by ID. Returns true if found and deleted.
+   * In batch mode, returns true to indicate the delete was queued
+   * (actual removal happens on commitBatch).
    */
   delete(id: string): boolean {
     if (this.batchBuffer) {
@@ -517,12 +520,18 @@ export class SheetRepository<T extends Entity> {
     const buffer = this.batchBuffer;
     this.batchBuffer = null;
 
-    for (const op of buffer) {
-      if (op.type === "save") {
-        this.doSave(op.data as Partial<T> & { __id?: string });
-      } else if (op.type === "delete") {
-        this.doDelete(op.data as string);
+    try {
+      for (const op of buffer) {
+        if (op.type === "save") {
+          this.doSave(op.data as Partial<T> & { __id?: string });
+        } else if (op.type === "delete") {
+          this.doDelete(op.data as string);
+        }
       }
+    } catch (err) {
+      if (this.cache) this.cache.delete(this.dataCacheKey);
+      this.idToRowIndex = null;
+      throw err;
     }
   }
 
@@ -545,7 +554,9 @@ export class SheetRepository<T extends Entity> {
   private getSheet(): ISheetAdapter {
     const sheet = this.adapter.getSheetByName(this.schema.tableName);
     if (!sheet) {
-      throw new Error(`Sheet "${this.schema.tableName}" not found. Did you call initialize()?`);
+      throw new Error(
+        `Sheet "${this.schema.tableName}" not found. Ensure Registry is configured and the table has been initialized.`,
+      );
     }
     return sheet;
   }
@@ -565,11 +576,13 @@ export class SheetRepository<T extends Entity> {
     const headers = this.headers;
     const fields = this.schema.fields;
     const fMap = this.fieldMap;
-    const entities: T[] = new Array(len);
+    const entities: T[] = [];
     const rowIndex = new Map<string, number>();
     for (let i = 0; i < len; i++) {
-      entities[i] = Serialization.rowToEntity<T>(data[i], headers, fields, fMap);
-      rowIndex.set(entities[i].__id, i);
+      const entity = Serialization.rowToEntity<T>(data[i], headers, fields, fMap);
+      if (!entity.__id || entity.__id === "undefined") continue;
+      rowIndex.set(entity.__id, i);
+      entities.push(entity);
     }
     this.idToRowIndex = rowIndex;
 

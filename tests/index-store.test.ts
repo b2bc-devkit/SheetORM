@@ -105,6 +105,44 @@ describe("IndexStore", () => {
     expect(adapter.getSheetNames()).not.toContain("idx_Users");
   });
 
+  it("cancelIndexBatch() discards buffered entries", () => {
+    indexStore.createCombinedIndex("idx_Users");
+    indexStore.registerIndex("idx_Users", "email", false);
+
+    indexStore.beginIndexBatch();
+    indexStore.addAllFieldsToCombined(
+      "idx_Users",
+      [{ field: "email", value: "buffered@example.com" }],
+      "user-010",
+    );
+    indexStore.cancelIndexBatch();
+
+    expect(indexStore.lookupCombined("idx_Users", "email", "buffered@example.com")).toEqual([]);
+  });
+
+  it("removeMultipleFromCombined() bulk-removes entries", () => {
+    indexStore.createCombinedIndex("idx_Users");
+    indexStore.registerIndex("idx_Users", "email", false);
+    indexStore.addToCombined("idx_Users", "email", "a@example.com", "user-001");
+    indexStore.addToCombined("idx_Users", "email", "b@example.com", "user-002");
+    indexStore.addToCombined("idx_Users", "email", "c@example.com", "user-003");
+
+    indexStore.removeMultipleFromCombined("idx_Users", ["user-001", "user-003"]);
+
+    expect(indexStore.lookupCombined("idx_Users", "email", "a@example.com")).toEqual([]);
+    expect(indexStore.lookupCombined("idx_Users", "email", "b@example.com")).toEqual(["user-002"]);
+    expect(indexStore.lookupCombined("idx_Users", "email", "c@example.com")).toEqual([]);
+  });
+
+  it("removeMultipleFromCombined() no-op for empty array", () => {
+    indexStore.createCombinedIndex("idx_Users");
+    indexStore.registerIndex("idx_Users", "email", false);
+    indexStore.addToCombined("idx_Users", "email", "a@example.com", "user-001");
+
+    indexStore.removeMultipleFromCombined("idx_Users", []);
+    expect(indexStore.lookupCombined("idx_Users", "email", "a@example.com")).toEqual(["user-001"]);
+  });
+
   it("existsCombined() checks for index sheet", () => {
     expect(indexStore.existsCombined("idx_Users")).toBe(false);
     indexStore.createCombinedIndex("idx_Users");
@@ -185,6 +223,20 @@ describe("IndexStore", () => {
       // "Corolla" contains trigrams: cor, oro, rol, oll, lla
       const ids = indexStore.searchCombined("idx_Cars", "model", "Corol");
       expect(ids).toEqual(["car-005"]);
+    });
+
+    it("searchCombined (n-gram) > invalidates search cache after flushIndexBatch", () => {
+      // Warm up cached search index for the field
+      expect(indexStore.searchCombined("idx_Cars", "model", "Volvo")).toEqual([]);
+
+      // Start batch, add entry, flush
+      indexStore.beginIndexBatch();
+      indexStore.addAllFieldsToCombined("idx_Cars", [{ field: "model", value: "Volvo XC90" }], "car-007");
+      indexStore.flushIndexBatch();
+
+      // Cache should be invalidated — new entry must be found
+      const ids = indexStore.searchCombined("idx_Cars", "model", "Volvo");
+      expect(ids).toEqual(["car-007"]);
     });
   });
 
