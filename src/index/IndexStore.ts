@@ -599,6 +599,9 @@ export class IndexStore {
         const p = idx.tokenIndex.get(t);
         if (p) {
           postings.push(p);
+        } else if (t.length < IndexStore.NGRAM_SIZE) {
+          // Token shorter than n-gram size — include all candidates; substring verification will filter
+          postings.push(Array.from({ length: idx.entries.length }, (_, i) => i));
         } else {
           const p2 = IndexStore.postingsForTokenViaNgrams(t, idx.ngramIndex);
           if (p2.length === 0) return [];
@@ -613,6 +616,7 @@ export class IndexStore {
     // Verify candidates with substring match on normalized text
     const maxResults =
       limit !== undefined && Number.isFinite(limit) && limit >= 0 ? Math.floor(limit) : candidates.length;
+    if (maxResults === 0) return [];
     const out: string[] = [];
     for (const pos of candidates) {
       if (idx.normalized[pos].includes(pat)) {

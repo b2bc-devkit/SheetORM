@@ -95,6 +95,7 @@ export class Record implements Entity {
     return this[field];
   }
 
+  // Only includes declared class fields; dynamic properties set via index signature are excluded.
   toJSON(): { [key: string]: unknown } {
     const Ctor = this.constructor as unknown as RecordStatic;
     const fields = Decorators.getFields(Ctor);

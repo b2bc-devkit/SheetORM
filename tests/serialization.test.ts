@@ -128,6 +128,25 @@ describe("entityToRow / rowToEntity", () => {
     expect(restored.active).toBe(true);
   });
 
+  it("round-trips an entity with explicit fieldMap", () => {
+    const entity = {
+      __id: "id-fm",
+      __createdAt: "2024-06-01T00:00:00.000Z",
+      __updatedAt: "2024-06-02T00:00:00.000Z",
+      name: "Piotr",
+      age: 40,
+      active: false,
+    };
+
+    const fieldMap = new Map(fields.map((f) => [f.name, f]));
+    const row = Serialization.entityToRow(entity, fields, headers, fieldMap);
+    const restored = Serialization.rowToEntity(row, headers, fields, fieldMap);
+    expect(restored.__id).toBe("id-fm");
+    expect(restored.name).toBe("Piotr");
+    expect(restored.age).toBe(40);
+    expect(restored.active).toBe(false);
+  });
+
   it("handles missing optional fields", () => {
     const entity = {
       __id: "id-2",
@@ -142,5 +161,12 @@ describe("entityToRow / rowToEntity", () => {
 
     const restored = Serialization.rowToEntity(row, headers, fields);
     expect(restored.__createdAt).toBeUndefined();
+  });
+
+  it("deserializes native Date objects in date fields to ISO strings", () => {
+    const dateFd: FieldDefinition = { name: "birthday", type: "date" };
+    const nativeDate = new Date("2024-03-15T10:30:00.000Z");
+    const result = Serialization.deserializeValue(nativeDate, dateFd);
+    expect(result).toBe("2024-03-15T10:30:00.000Z");
   });
 });

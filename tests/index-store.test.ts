@@ -273,4 +273,23 @@ describe("IndexStore", () => {
       expect(ngs).toEqual(new Set(["abc", "bcd", "cde"]));
     });
   });
+
+  describe("searchCombined edge cases", () => {
+    beforeEach(() => {
+      indexStore.createCombinedIndex("idx_Cars");
+      indexStore.registerIndex("idx_Cars", "model", false);
+      indexStore.addToCombined("idx_Cars", "model", "BMW 320i", "car-001");
+    });
+
+    it("searchCombined (n-gram) > returns empty array for limit=0", () => {
+      const ids = indexStore.searchCombined("idx_Cars", "model", "BMW", 0);
+      expect(ids).toEqual([]);
+    });
+
+    it("searchCombined (n-gram) > finds match for query shorter than trigram size", () => {
+      // "bm" is 2 chars (< NGRAM_SIZE=3), should still find "BMW 320i" via substring fallback
+      const ids = indexStore.searchCombined("idx_Cars", "model", "bm");
+      expect(ids).toContain("car-001");
+    });
+  });
 });

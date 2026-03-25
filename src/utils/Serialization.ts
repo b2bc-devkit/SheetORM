@@ -72,7 +72,7 @@ function deserializeValue(cellValue: unknown, fieldDef: FieldDefinition): unknow
         }
         return Boolean(cellValue);
       case "date":
-        return String(cellValue);
+        return cellValue instanceof Date ? cellValue.toISOString() : String(cellValue);
       case "json":
         if (typeof cellValue === "string" && cellValue.length > 0) {
           try {

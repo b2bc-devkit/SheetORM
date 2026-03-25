@@ -112,6 +112,11 @@ describe("Query", () => {
     expect(qo.offset).toBe(0);
   });
 
+  it("build() includes offset when set alone", () => {
+    const qo = createBuilder().offset(5).build();
+    expect(qo.offset).toBe(5);
+  });
+
   describe("or()", () => {
     it("returns entities matching either condition", () => {
       const result = createBuilder()

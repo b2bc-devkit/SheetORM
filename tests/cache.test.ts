@@ -88,4 +88,10 @@ describe("MemoryCache", () => {
   it("set() throws for NaN per-key TTL", () => {
     expect(() => cache.set("key", "value", NaN)).toThrow();
   });
+
+  it("TTL of 0 expires immediately", () => {
+    cache.set("instant", "gone", 0);
+    expect(cache.get<string>("instant")).toBeNull();
+    expect(cache.has("instant")).toBe(false);
+  });
 });

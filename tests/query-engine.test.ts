@@ -312,3 +312,47 @@ describe("relational operator type guards", () => {
     expect(result.map((u) => u.name)).toEqual(["Anna"]);
   });
 });
+
+describe("nested field paths", () => {
+  interface NestedUser extends Entity {
+    name: string;
+    profile: { city: string; score: number };
+  }
+
+  const nestedUsers: NestedUser[] = [
+    { __id: "1", name: "Anna", profile: { city: "Warszawa", score: 80 } },
+    { __id: "2", name: "Jan", profile: { city: "Kraków", score: 95 } },
+    { __id: "3", name: "Piotr", profile: { city: "Warszawa", score: 60 } },
+  ];
+
+  it("filters by nested dot-path field", () => {
+    const filters: Filter[] = [{ field: "profile.city", operator: "=", value: "Warszawa" }];
+    const result = QueryEngine.filterEntities(nestedUsers, filters);
+    expect(result).toHaveLength(2);
+    expect(result.map((u) => u.name).sort()).toEqual(["Anna", "Piotr"]);
+  });
+
+  it("filters by nested slash-path field", () => {
+    const filters: Filter[] = [{ field: "profile/city", operator: "=", value: "Kraków" }];
+    const result = QueryEngine.filterEntities(nestedUsers, filters);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("Jan");
+  });
+
+  it("sorts by nested field", () => {
+    const sorts: SortClause[] = [{ field: "profile.score", direction: "asc" }];
+    const result = QueryEngine.sortEntities(nestedUsers, sorts);
+    expect(result.map((u) => u.name)).toEqual(["Piotr", "Anna", "Jan"]);
+  });
+
+  it("returns undefined for missing nested segment", () => {
+    const usersWithMissing: Entity[] = [
+      { __id: "1", name: "A" },
+      { __id: "2", name: "B", profile: { city: "X" } },
+    ];
+    const filters: Filter[] = [{ field: "profile.city", operator: "=", value: "X" }];
+    const result = QueryEngine.filterEntities(usersWithMissing, filters);
+    expect(result).toHaveLength(1);
+    expect(result[0].__id).toBe("2");
+  });
+});

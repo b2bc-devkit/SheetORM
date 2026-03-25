@@ -96,7 +96,8 @@ export class SheetRepository<T extends Entity> {
         const cached = this.cache.get<T[]>(this.dataCacheKey);
         if (cached) {
           const cachedEntity = cached[cachedIdx];
-          if (cachedEntity) {
+          // Validate ID — gap rows may cause cache index drift
+          if (cachedEntity?.__id === partial.__id) {
             existingIdx = cachedIdx;
             existingEntity = cachedEntity;
           }
@@ -173,11 +174,9 @@ export class SheetRepository<T extends Entity> {
       const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
 
       // Write at computed position — single setValues call, no flush needed
-      let dataIndex: number;
-      if (this.idToRowIndex) {
-        dataIndex = this.idToRowIndex.size;
-      } else {
-        dataIndex = sheet.getRowCount();
+      // In batch mode, account for already-buffered entities that haven't been flushed yet
+      const dataIndex = sheet.getRowCount() + (this.entityBatch ? this.entityBatch.length : 0);
+      if (!this.idToRowIndex) {
         if (dataIndex === 0) {
           this.idToRowIndex = new Map();
           // Bootstrap empty cache so subsequent finds are cache hits
@@ -274,7 +273,11 @@ export class SheetRepository<T extends Entity> {
       const rowIdx = this.idToRowIndex.get(id);
       if (rowIdx === undefined) return null;
       const cached = this.cache.get<T[]>(this.dataCacheKey);
-      if (cached) return cached[rowIdx] ?? null;
+      if (cached) {
+        const hit = cached[rowIdx];
+        // Validate ID — gap rows may cause cache index drift
+        if (hit?.__id === id) return hit;
+      }
     }
     const all = this.loadAllEntities();
     return all.find((e) => e.__id === id) ?? null;
@@ -365,7 +368,16 @@ export class SheetRepository<T extends Entity> {
     let rowIdx: number | null = null;
     if (this.idToRowIndex) {
       const idx = this.idToRowIndex.get(id);
-      if (idx !== undefined) rowIdx = idx;
+      if (idx !== undefined) {
+        // Verify the row actually contains the expected ID (guard against stale index)
+        const row = sheet.getRow(idx);
+        if (row && String(row[this.idColIdx]) === id) {
+          rowIdx = idx;
+        } else {
+          // Stale index — fall back to full scan
+          rowIdx = this.rowIndexById(sheet, id);
+        }
+      }
     }
     if (rowIdx === null) {
       rowIdx = this.rowIndexById(sheet, id);
@@ -565,6 +577,12 @@ export class SheetRepository<T extends Entity> {
    * Load all entities from the sheet, with caching.
    */
   private loadAllEntities(): T[] {
+    if (this.entityBatch) {
+      throw new Error(
+        "Cannot reload entities during active entity batch — lifecycle hooks must not trigger find/count during saveAll()",
+      );
+    }
+
     if (this.cache) {
       const cached = this.cache.get<T[]>(this.dataCacheKey);
       if (cached !== null) return cached;
@@ -580,7 +598,7 @@ export class SheetRepository<T extends Entity> {
     const rowIndex = new Map<string, number>();
     for (let i = 0; i < len; i++) {
       const entity = Serialization.rowToEntity<T>(data[i], headers, fields, fMap);
-      if (!entity.__id || entity.__id === "undefined") continue;
+      if (!entity.__id || entity.__id === "undefined" || entity.__id === "null") continue;
       rowIndex.set(entity.__id, i);
       entities.push(entity);
     }
@@ -662,6 +680,7 @@ export class SheetRepository<T extends Entity> {
     }
   }
 
+  // Note: idToRowIndex is updated separately in doDelete(). This method only handles the entity array cache.
   private updateCacheAfterDelete(id: string): void {
     if (!this.cache) return;
     const cached = this.cache.get<T[]>(this.dataCacheKey);

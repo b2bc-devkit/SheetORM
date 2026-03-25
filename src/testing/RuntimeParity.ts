@@ -272,6 +272,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       }
       assertTrue(threw, "set() with NaN TTL should throw");
     },
+    "TTL of 0 expires immediately": () => {
+      const cache = new MemoryCache(1000);
+      cache.set("instant", "gone", 0);
+      assertEqual(cache.get("instant"), null, "TTL=0 entry should be expired immediately");
+      assertTrue(!cache.has("instant"), "has() should return false for TTL=0 entry");
+    },
   },
   "index-store.test.ts": {
     "creates a combined index sheet": (ctx) => {
@@ -637,6 +643,27 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertTrue(ngs.size === 3, "whitespace should be stripped first");
       assertTrue(ngs.has("abc"), "should contain abc after stripping spaces");
     },
+    "searchCombined (n-gram) > returns empty array for limit=0": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      const ids = indexStore.searchCombined(indexTable, "model", "BMW", 0);
+      assertEqual(ids.length, 0, "searchCombined with limit=0 should return empty array");
+    },
+    "searchCombined (n-gram) > finds match for query shorter than trigram size": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "model", false);
+      indexStore.addToCombined(indexTable, "model", "BMW 320i", "car-001");
+      const ids = indexStore.searchCombined(indexTable, "model", "bm");
+      assertTrue(ids.length > 0, "2-char query should find match via substring fallback");
+      assertTrue(ids.includes("car-001"), "should contain car-001");
+    },
   },
   "query.test.ts": {
     "filters with where()": () => {
@@ -736,6 +763,10 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(query.orderBy?.length, 1, "build should include one orderBy clause");
       assertEqual(query.limit, 5, "build should preserve limit");
       assertEqual(query.offset, 0, "build should preserve offset");
+    },
+    "build() includes offset when set alone": () => {
+      const query = createBuilder().offset(5).build();
+      assertEqual(query.offset, 5, "build should include offset when set alone");
     },
     "returns entities matching either condition": () => {
       const result = createBuilder()
@@ -1098,6 +1129,46 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         "should match Anna (Anna < Jan)",
       );
     },
+    "filters by nested dot-path field": () => {
+      const nested = [
+        { __id: "1", name: "Anna", profile: { city: "Warszawa", score: 80 } },
+        { __id: "2", name: "Jan", profile: { city: "Kraków", score: 95 } },
+        { __id: "3", name: "Piotr", profile: { city: "Warszawa", score: 60 } },
+      ];
+      const filters: Filter[] = [{ field: "profile.city", operator: "=", value: "Warszawa" }];
+      const result = QueryEngine.filterEntities(nested, filters);
+      assertEqual(result.length, 2, "should match 2 users in Warszawa via dot path");
+    },
+    "filters by nested slash-path field": () => {
+      const nested = [
+        { __id: "1", name: "Anna", profile: { city: "Warszawa" } },
+        { __id: "2", name: "Jan", profile: { city: "Kraków" } },
+      ];
+      const filters: Filter[] = [{ field: "profile/city", operator: "=", value: "Kraków" }];
+      const result = QueryEngine.filterEntities(nested, filters);
+      assertEqual(result.length, 1, "should match via slash path");
+      assertEqual(result[0].name, "Jan", "should find Jan via slash path");
+    },
+    "sorts by nested field": () => {
+      const nested = [
+        { __id: "1", name: "Anna", profile: { city: "W", score: 80 } },
+        { __id: "2", name: "Jan", profile: { city: "K", score: 95 } },
+        { __id: "3", name: "Piotr", profile: { city: "W", score: 60 } },
+      ];
+      const sorts: SortClause[] = [{ field: "profile.score", direction: "asc" }];
+      const result = QueryEngine.sortEntities(nested, sorts);
+      assertDeepEqual(result.map((u) => u.name), ["Piotr", "Anna", "Jan"], "should sort by nested score asc");
+    },
+    "returns undefined for missing nested segment": () => {
+      const mixed = [
+        { __id: "1", name: "A" },
+        { __id: "2", name: "B", profile: { city: "X" } },
+      ];
+      const filters: Filter[] = [{ field: "profile.city", operator: "=", value: "X" }];
+      const result = QueryEngine.filterEntities(mixed, filters);
+      assertEqual(result.length, 1, "should match only entity with nested field");
+      assertEqual(result[0].__id, "2", "should find entity with profile.city = X");
+    },
   },
   "serialization.test.ts": {
     "serializes string": () => {
@@ -1289,6 +1360,29 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(restored.age, 30, "rowToEntity should restore number field");
       assertEqual(restored.active, true, "rowToEntity should restore boolean field");
     },
+    "round-trips an entity with explicit fieldMap": () => {
+      const fields: FieldDefinition[] = [
+        { name: "name", type: "string" },
+        { name: "age", type: "number" },
+        { name: "active", type: "boolean" },
+      ];
+      const headers = Serialization.buildHeaders(fields);
+      const fieldMap = new Map(fields.map((f) => [f.name, f]));
+      const entity: Entity = {
+        __id: "id-fm",
+        __createdAt: "2024-06-01T00:00:00.000Z",
+        __updatedAt: "2024-06-02T00:00:00.000Z",
+        name: "Piotr",
+        age: 40,
+        active: false,
+      };
+      const row = Serialization.entityToRow(entity, fields, headers, fieldMap);
+      const restored = Serialization.rowToEntity<Entity>(row, headers, fields, fieldMap);
+      assertEqual(restored.__id, "id-fm", "fieldMap round-trip should restore __id");
+      assertEqual(restored.name, "Piotr", "fieldMap round-trip should restore string field");
+      assertEqual(restored.age, 40, "fieldMap round-trip should restore number field");
+      assertEqual(restored.active, false, "fieldMap round-trip should restore boolean field");
+    },
     "handles missing optional fields": () => {
       const fields: FieldDefinition[] = [
         { name: "name", type: "string" },
@@ -1314,6 +1408,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(serialized, '"hello"', "json serialization of string should wrap in quotes");
       const deserialized = Serialization.deserializeValue(serialized, fd);
       assertEqual(deserialized, "hello", "json deserialization should recover original string");
+    },
+    "deserializes native Date objects in date fields to ISO strings": () => {
+      const dateFd: FieldDefinition = { name: "birthday", type: "date" };
+      const nativeDate = new Date("2024-03-15T10:30:00.000Z");
+      const result = Serialization.deserializeValue(nativeDate, dateFd);
+      assertEqual(result, "2024-03-15T10:30:00.000Z", "native Date should be deserialized to ISO string");
     },
   },
   "uuid.test.ts": {
@@ -1999,6 +2099,133 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         const all = Car.find();
         assertEqual(all.length, 1, "empty __id row should be filtered out");
         assertEqual(all[0].make, "Honda", "valid entity should remain");
+      },
+      "persists both new and updated entities in a single batch": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Honda";
+        car.model = "Civic";
+        car.year = 2020;
+        car.color = "Red";
+        car.save();
+        const existingId = car.__id;
+
+        Car.saveAll([
+          { __id: existingId, make: "Honda", model: "Accord", year: 2021, color: "Blue" },
+          { make: "Toyota", model: "Camry", year: 2022, color: "White" },
+          { make: "Ford", model: "Focus", year: 2023, color: "Black" },
+        ]);
+
+        assertEqual(Car.count(), 3, "saveAll mixed batch should result in 3 entities");
+        const updated = Car.findById(existingId);
+        assertTrue(updated !== null, "updated entity should be found");
+        assertEqual(updated!.model, "Accord", "existing entity model should be updated");
+        assertEqual(updated!.color, "Blue", "existing entity color should be updated");
+      },
+      "returns an entity when called with no filter": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Honda";
+        c1.model = "Civic";
+        c1.year = 2020;
+        c1.save();
+
+        const c2 = new Car();
+        c2.make = "Toyota";
+        c2.model = "Camry";
+        c2.year = 2021;
+        c2.save();
+
+        const result = Car.findOne();
+        assertTrue(result !== null, "findOne() without args should return an entity");
+        assertTrue(!!result!.__id, "returned entity should have an __id");
+      },
+      "deletes all entities and returns the count": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        for (let i = 0; i < 3; i++) {
+          const c = new Car();
+          c.make = "Brand";
+          c.model = "Model" + i;
+          c.year = 2020 + i;
+          c.save();
+        }
+        assertEqual(Car.count(), 3, "should have 3 entities before deleteAll");
+
+        const deleted = Car.deleteAll();
+        assertEqual(deleted, 3, "deleteAll without args should return 3");
+        assertEqual(Car.count(), 0, "count should be 0 after deleteAll");
+      },
+      "does not overwrite an existing entity when a gap row is present": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car1 = new Car();
+        car1.make = "Honda";
+        car1.model = "Civic";
+        car1.year = 2020;
+        car1.save();
+        const id1 = car1.__id;
+
+        // Inject a gap row directly into the sheet
+        const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+        const sheet = (repo as unknown as { getSheet(): { appendRow(v: unknown[]): void } }).getSheet();
+        sheet.appendRow(["", "", "", "", "", ""]);
+
+        const car2 = new Car();
+        car2.make = "Toyota";
+        car2.model = "Camry";
+        car2.year = 2021;
+        car2.save();
+
+        Registry.getInstance().clearCache();
+        assertEqual(Car.count(), 2, "both valid entities should exist after gap-row save");
+        const found1 = Car.findById(id1);
+        assertTrue(found1 !== null, "first entity should not be overwritten");
+        assertEqual(found1!.make, "Honda", "first entity make should remain Honda");
+      },
+      "findById returns correct entity after gap row": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car1 = new Car();
+        car1.make = "Honda";
+        car1.model = "Civic";
+        car1.year = 2020;
+        car1.save();
+
+        const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+        const sheet = (repo as unknown as { getSheet(): { appendRow(v: unknown[]): void } }).getSheet();
+        sheet.appendRow(["", "", "", "", "", ""]);
+
+        const car2 = new Car();
+        car2.make = "Toyota";
+        car2.model = "Camry";
+        car2.year = 2021;
+        car2.save();
+
+        Registry.getInstance().clearCache();
+
+        const found2 = Car.findById(car2.__id);
+        assertTrue(found2 !== null, "findById should return the correct entity after gap row");
+        assertEqual(found2!.make, "Toyota", "entity should have correct make after gap row");
+        assertEqual(found2!.__id, car2.__id, "entity should have correct __id after gap row");
+      },
+      "assigns correct row indices so delete targets the right entity": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        Car.saveAll([
+          { make: "Alpha", model: "A1", year: 2020, color: "Red" },
+          { make: "Beta", model: "B1", year: 2021, color: "Blue" },
+        ]);
+        assertEqual(Car.count(), 2, "saveAll should create two entities");
+
+        const alpha = Car.findOne({ where: [{ field: "make", operator: "=", value: "Alpha" }] });
+        const beta = Car.findOne({ where: [{ field: "make", operator: "=", value: "Beta" }] });
+        assertTrue(alpha !== null, "Alpha should exist");
+        assertTrue(beta !== null, "Beta should exist");
+
+        beta!.delete();
+        assertEqual(Car.count(), 1, "count should be 1 after deleting Beta");
+
+        const remaining = Car.findById(alpha!.__id);
+        assertTrue(remaining !== null, "Alpha should still exist after deleting Beta");
+        assertEqual(remaining!.make, "Alpha", "remaining entity should be Alpha");
+        assertEqual(Car.findById(beta!.__id), null, "Beta should be deleted");
       },
     } as Record<string, RuntimeCaseHandler>;
   })(),

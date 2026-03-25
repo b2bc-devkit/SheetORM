@@ -670,4 +670,150 @@ describe("Record ActiveRecord API", () => {
       expect(all[0].make).toBe("Honda");
     });
   });
+
+  describe("saveAll() mixed create and update", () => {
+    it("persists both new and updated entities in a single batch", () => {
+      const car = new Car();
+      car.make = "Honda";
+      car.model = "Civic";
+      car.year = 2020;
+      car.color = "Red";
+      car.save();
+      const existingId = car.__id;
+
+      Car.saveAll([
+        { __id: existingId, make: "Honda", model: "Accord", year: 2021, color: "Blue" },
+        { make: "Toyota", model: "Camry", year: 2022, color: "White" },
+        { make: "Ford", model: "Focus", year: 2023, color: "Black" },
+      ]);
+
+      expect(Car.count()).toBe(3);
+      const updated = Car.findById(existingId);
+      expect(updated).not.toBeNull();
+      expect(updated!.model).toBe("Accord");
+      expect(updated!.color).toBe("Blue");
+    });
+  });
+
+  describe("findOne() without arguments", () => {
+    it("returns an entity when called with no filter", () => {
+      const c1 = new Car();
+      c1.make = "Honda";
+      c1.model = "Civic";
+      c1.year = 2020;
+      c1.save();
+
+      const c2 = new Car();
+      c2.make = "Toyota";
+      c2.model = "Camry";
+      c2.year = 2021;
+      c2.save();
+
+      const result = Car.findOne();
+      expect(result).not.toBeNull();
+      expect(result!.__id).toBeDefined();
+    });
+  });
+
+  describe("deleteAll() without arguments", () => {
+    it("deletes all entities and returns the count", () => {
+      for (let i = 0; i < 3; i++) {
+        const c = new Car();
+        c.make = "Brand";
+        c.model = `Model${i}`;
+        c.year = 2020 + i;
+        c.save();
+      }
+      expect(Car.count()).toBe(3);
+
+      const deleted = Car.deleteAll();
+      expect(deleted).toBe(3);
+      expect(Car.count()).toBe(0);
+    });
+  });
+
+  describe("save after gap row", () => {
+    it("does not overwrite an existing entity when a gap row is present", () => {
+      const car1 = new Car();
+      car1.make = "Honda";
+      car1.model = "Civic";
+      car1.year = 2020;
+      car1.save();
+
+      // Inject a gap row (empty __id) directly into the sheet
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      const sheet = (repo as unknown as { getSheet(): { appendRow(v: unknown[]): void } }).getSheet();
+      sheet.appendRow(["", "", "", "", "", ""]);
+
+      const car2 = new Car();
+      car2.make = "Toyota";
+      car2.model = "Camry";
+      car2.year = 2021;
+      car2.save();
+
+      // Clear cache to force re-read from sheet
+      Registry.getInstance().clearCache();
+
+      // Both valid entities must still exist
+      expect(Car.count()).toBe(2);
+      const found1 = Car.findById(car1.__id);
+      expect(found1).not.toBeNull();
+      expect(found1!.make).toBe("Honda");
+    });
+
+    it("findById returns correct entity after gap row", () => {
+      const car1 = new Car();
+      car1.make = "Honda";
+      car1.model = "Civic";
+      car1.year = 2020;
+      car1.save();
+
+      // Inject empty gap row directly into the sheet
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      const sheet = (repo as unknown as { getSheet(): { appendRow(v: unknown[]): void } }).getSheet();
+      sheet.appendRow(["", "", "", "", "", ""]);
+
+      const car2 = new Car();
+      car2.make = "Toyota";
+      car2.model = "Camry";
+      car2.year = 2021;
+      car2.save();
+
+      // Clear cache to force full reload (rebuilds idToRowIndex)
+      Registry.getInstance().clearCache();
+
+      // findById must return the correct entity despite gap row shifting cache indices
+      const found2 = Car.findById(car2.__id);
+      expect(found2).not.toBeNull();
+      expect(found2!.make).toBe("Toyota");
+      expect(found2!.__id).toBe(car2.__id);
+    });
+  });
+
+  describe("saveAll() batch idToRowIndex integrity", () => {
+    it("assigns correct row indices so delete targets the right entity", () => {
+      // Create two entities in a single saveAll batch
+      Car.saveAll([
+        { make: "Alpha", model: "A1", year: 2020, color: "Red" },
+        { make: "Beta", model: "B1", year: 2021, color: "Blue" },
+      ]);
+      expect(Car.count()).toBe(2);
+
+      const alpha = Car.findOne({ where: [{ field: "make", operator: "=", value: "Alpha" }] });
+      const beta = Car.findOne({ where: [{ field: "make", operator: "=", value: "Beta" }] });
+      expect(alpha).not.toBeNull();
+      expect(beta).not.toBeNull();
+
+      // Delete Beta — must NOT affect Alpha
+      beta!.delete();
+      expect(Car.count()).toBe(1);
+
+      const remaining = Car.findById(alpha!.__id);
+      expect(remaining).not.toBeNull();
+      expect(remaining!.make).toBe("Alpha");
+
+      // Beta should be gone
+      expect(Car.findById(beta!.__id)).toBeNull();
+    });
+  });
 });
