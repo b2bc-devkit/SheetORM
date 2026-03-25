@@ -255,4 +255,35 @@ describe("Query", () => {
       expect(opts.limit).toBe(0);
     });
   });
+
+  describe("edge cases", () => {
+    it("build() with no filters returns all undefined options", () => {
+      const opts = createBuilder().build();
+      expect(opts.where).toBeUndefined();
+      expect(opts.whereGroups).toBeUndefined();
+      expect(opts.orderBy).toBeUndefined();
+      expect(opts.limit).toBeUndefined();
+      expect(opts.offset).toBeUndefined();
+    });
+
+    it("first() returns null when offset exceeds result count", () => {
+      const result = createBuilder().where("category", "=", "fruit").offset(100).first();
+      expect(result).toBeNull();
+    });
+  });
+
+  it("groupBy() respects orderBy before grouping", () => {
+    const groups = createBuilder().orderBy("price", "desc").groupBy("category");
+    expect(groups.length).toBeGreaterThanOrEqual(2);
+    const fruitGroup = groups.find((g) => g.key === "fruit");
+    expect(fruitGroup).toBeDefined();
+    expect(fruitGroup!.items.length).toBe(2);
+  });
+
+  it("execute() with orderBy and offset combined returns correct slice", () => {
+    const result = createBuilder().orderBy("price", "asc").offset(2).limit(2).execute();
+    expect(result).toHaveLength(2);
+    expect(result[0].name).toBe("Apple");  // price 1.5 (3rd after sort)
+    expect(result[1].name).toBe("Donut");  // price 2.5 (4th after sort)
+  });
 });

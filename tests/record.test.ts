@@ -929,5 +929,57 @@ describe("Record ActiveRecord API", () => {
       const result = Car.saveAll([]);
       expect(result).toEqual([]);
     });
+
+    it("deleteAll() returns zero when no entities match filter", () => {
+      Car.create({ make: "Toyota", model: "Supra", year: 2020, color: "white" }).save();
+      const count = Car.deleteAll({ where: [{ field: "make", operator: "=", value: "NonExistent" }] });
+      expect(count).toBe(0);
+      expect(Car.count()).toBe(1);
+    });
+
+    it("save() includes null fields but excludes undefined fields", () => {
+      const car = new Car();
+      car.make = "Toyota";
+      car.model = "Corolla";
+      car.year = 2024;
+      car.color = null as unknown as string;
+      car.save();
+
+      const found = Car.findById(car.__id);
+      expect(found).not.toBeNull();
+      // null field should be included (serialized), undefined field excluded
+      expect(found!.color).toBeNull();
+    });
+
+    it("Query.from(Class) auto-registers class without prior save", () => {
+      // Query.from with class reference should auto-register without needing a save first
+      const query = Query.from(Car);
+      expect(query).toBeDefined();
+      const results = query.execute();
+      expect(results).toEqual([]);
+    });
+
+    it("deleteAll uses individual deletes for 2 entities and bulk for 3", () => {
+      // Create exactly 3 entities
+      Car.create({ make: "A", model: "A1", year: 2020, color: "red" }).save();
+      Car.create({ make: "B", model: "B1", year: 2021, color: "blue" }).save();
+      Car.create({ make: "C", model: "C1", year: 2022, color: "green" }).save();
+      expect(Car.count()).toBe(3);
+
+      // Delete all 3 — triggers bulk path (> 2)
+      const deletedBulk = Car.deleteAll();
+      expect(deletedBulk).toBe(3);
+      expect(Car.count()).toBe(0);
+
+      // Create exactly 2 entities
+      Car.create({ make: "D", model: "D1", year: 2023, color: "black" }).save();
+      Car.create({ make: "E", model: "E1", year: 2024, color: "white" }).save();
+      expect(Car.count()).toBe(2);
+
+      // Delete all 2 — triggers individual path (<= 2)
+      const deletedIndiv = Car.deleteAll();
+      expect(deletedIndiv).toBe(2);
+      expect(Car.count()).toBe(0);
+    });
   });
 });

@@ -466,5 +466,17 @@ describe("empty input edge cases", () => {
     expect(result.limit).toBe(users.length);
     expect(result.hasNext).toBe(false);
   });
-});
+
+  it("sortEntities treats both-null values as equal", () => {
+    const data: Entity[] = [
+      { __id: "1", name: null, age: 10 },
+      { __id: "2", name: null, age: 20 },
+      { __id: "3", name: "Alice", age: 15 },
+    ];
+    const sorted = QueryEngine.sortEntities(data, [{ field: "name", direction: "asc" }]);
+    // Both nulls should appear before "Alice" and maintain relative order
+    expect(sorted[0].__id).toBe("1");
+    expect(sorted[1].__id).toBe("2");
+    expect(sorted[2].__id).toBe("3");
+  });
 });

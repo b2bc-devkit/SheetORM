@@ -1,3 +1,4 @@
+import type { Entity } from "../src/core/types/Entity";
 import type { FieldDefinition } from "../src/core/types/FieldDefinition";
 import { Serialization } from "../src/utils/Serialization";
 
@@ -254,5 +255,52 @@ describe("deserializeValue edge cases", () => {
     const fd: FieldDefinition = { name: "x", type: "boolean" };
     expect(Serialization.serializeValue("yes", fd)).toBe(true);
     expect(Serialization.serializeValue("no", fd)).toBe(false);
+  });
+
+  it("serializes unrecognized field type as string", () => {
+    const fd = { name: "x", type: "custom" } as unknown as FieldDefinition;
+    expect(Serialization.serializeValue(42, fd)).toBe("42");
+    expect(Serialization.serializeValue(true, fd)).toBe("true");
+  });
+
+  it("deserializes unrecognized field type as raw value", () => {
+    const fd = { name: "x", type: "custom" } as unknown as FieldDefinition;
+    expect(Serialization.deserializeValue(42, fd)).toBe(42);
+    expect(Serialization.deserializeValue("hello", fd)).toBe("hello");
+  });
+
+  it("rowToEntity handles row shorter than headers", () => {
+    const fields: FieldDefinition[] = [
+      { name: "name", type: "string" },
+      { name: "age", type: "number" },
+    ];
+    const headers = Serialization.buildHeaders(fields);
+    // Row has only __id and __createdAt, missing __updatedAt, name, age
+    const shortRow = ["id-1", "2024-01-01T00:00:00.000Z"];
+    const entity = Serialization.rowToEntity(shortRow, headers, fields);
+    expect(entity.__id).toBe("id-1");
+    expect(entity.name).toBeNull(); // deserialized from "" → defaultValue → null
+    expect(entity.age).toBeNull();
+  });
+
+  it("entityToRow uses raw value for column without field definition", () => {
+    const fields: FieldDefinition[] = [{ name: "name", type: "string" }];
+    // Headers include an extra column "extra" not in fields
+    const headers = ["__id", "__createdAt", "__updatedAt", "name", "extra"];
+    const entity = { __id: "id-1", name: "Alice", extra: "bonus" } as Entity;
+    const row = Serialization.entityToRow(entity, fields, headers);
+    expect(row[3]).toBe("Alice");
+    expect(row[4]).toBe("bonus");
+  });
+
+  it("rowToEntity converts Date objects in system columns to ISO strings", () => {
+    const fields: FieldDefinition[] = [{ name: "name", type: "string" }];
+    const headers = Serialization.buildHeaders(fields);
+    const now = new Date("2024-06-15T12:00:00.000Z");
+    const row = ["id-1", now, now, "Alice"];
+    const entity = Serialization.rowToEntity(row, headers, fields);
+    expect(entity.__id).toBe("id-1");
+    expect(entity.__createdAt).toBe("2024-06-15T12:00:00.000Z");
+    expect(entity.__updatedAt).toBe("2024-06-15T12:00:00.000Z");
   });
 });

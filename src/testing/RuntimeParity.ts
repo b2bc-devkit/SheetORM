@@ -670,6 +670,140 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const ids = indexStore.lookupCombined("idx_NonExistent", "field", "value");
       assertDeepEqual(ids, [], "lookupCombined should return empty for non-existent table");
     },
+    "updateInCombined throws unique violation when value conflicts with another entity": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = ctx.state.nextTableName("idx_upd_uniq");
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", true);
+      indexStore.addToCombined(indexTable, "email", "jan@example.com", "user-001");
+      indexStore.addToCombined(indexTable, "email", "anna@example.com", "user-002");
+
+      assertThrows(
+        () => indexStore.updateInCombined(
+          indexTable,
+          "user-002",
+          { email: "anna@example.com" },
+          { email: "jan@example.com" },
+        ),
+        /Unique index violation/,
+        "updateInCombined should throw unique violation",
+      );
+    },
+    "addAllFieldsToCombined detects unique violation in pending batch entries": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = ctx.state.nextTableName("idx_batch_uniq");
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", true);
+
+      indexStore.beginIndexBatch();
+      indexStore.addAllFieldsToCombined(
+        indexTable,
+        [{ field: "email", value: "dup@example.com" }],
+        "user-001",
+      );
+      assertThrows(
+        () => indexStore.addAllFieldsToCombined(
+          indexTable,
+          [{ field: "email", value: "dup@example.com" }],
+          "user-002",
+        ),
+        /Unique index violation/,
+        "addAllFieldsToCombined should detect unique violation in pending batch",
+      );
+      indexStore.cancelIndexBatch();
+    },
+    "operates correctly without cache provider": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter);
+      const indexTable = ctx.state.nextTableName("idx_nocache");
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "name", false);
+      indexStore.addToCombined(indexTable, "name", "Alice", "e-001");
+      indexStore.addToCombined(indexTable, "name", "Bob", "e-002");
+
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "name", "Alice"),
+        ["e-001"],
+        "lookup should work without cache",
+      );
+
+      indexStore.updateInCombined(
+        indexTable,
+        "e-001",
+        { name: "Alice" },
+        { name: "Alicia" },
+      );
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "name", "Alicia"),
+        ["e-001"],
+        "update should work without cache",
+      );
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "name", "Alice"),
+        [],
+        "old value should be gone after update without cache",
+      );
+
+      indexStore.removeAllFromCombined(indexTable, "e-002");
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "name", "Bob"),
+        [],
+        "remove should work without cache",
+      );
+    },
+    "removeMultipleFromCombined is no-op for non-existent entity IDs": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = ctx.state.nextTableName("idx_rm_noexist");
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", false);
+      indexStore.addToCombined(indexTable, "email", "a@example.com", "user-001");
+
+      indexStore.removeMultipleFromCombined(indexTable, ["user-999", "user-888"]);
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "email", "a@example.com"),
+        ["user-001"],
+        "existing entry should remain after removing non-existent IDs",
+      );
+    },
+    "updateInCombined creates entry when field goes from empty to populated": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const indexTable = ctx.state.nextTableName("idx_upd_empty");
+      indexStore.createCombinedIndex(indexTable);
+      indexStore.registerIndex(indexTable, "email", false);
+
+      indexStore.updateInCombined(
+        indexTable,
+        "user-001",
+        { email: "" },
+        { email: "new@example.com" },
+      );
+      assertDeepEqual(
+        indexStore.lookupCombined(indexTable, "email", "new@example.com"),
+        ["user-001"],
+        "entry should be created when going from empty to populated",
+      );
+    },
+    "normalizeForSearch > normalizes em-dashes and underscores to spaces": () => {
+      assertEqual(
+        IndexStore.normalizeForSearch("hello\u2014world"),
+        "hello world",
+        "em-dash should be normalized to space",
+      );
+      assertEqual(
+        IndexStore.normalizeForSearch("snake_case"),
+        "snake case",
+        "underscore should be normalized to space",
+      );
+      assertEqual(
+        IndexStore.normalizeForSearch("a\u2013b"),
+        "a b",
+        "en-dash should be normalized to space",
+      );
+    },
   },
   "query.test.ts": {
     "filters with where()": () => {
@@ -884,6 +1018,31 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "build() with limit(0) includes limit 0": () => {
       const opts = createBuilder().limit(0).build();
       assertEqual(opts.limit, 0, "build should include limit 0");
+    },
+    "build() with no filters returns all undefined options": () => {
+      const opts = createBuilder().build();
+      assertEqual(opts.where, undefined, "where should be undefined");
+      assertEqual(opts.whereGroups, undefined, "whereGroups should be undefined");
+      assertEqual(opts.orderBy, undefined, "orderBy should be undefined");
+      assertEqual(opts.limit, undefined, "limit should be undefined");
+      assertEqual(opts.offset, undefined, "offset should be undefined");
+    },
+    "first() returns null when offset exceeds result count": () => {
+      const result = createBuilder().where("category", "=", "fruit").offset(100).first();
+      assertEqual(result, null, "first() should return null when offset exceeds result count");
+    },
+    "groupBy() respects orderBy before grouping": () => {
+      const groups = createBuilder().orderBy("price", "desc").groupBy("category");
+      assertTrue(groups.length >= 2, "groupBy with orderBy should return at least 2 groups");
+      const fruitGroup = groups.find((g: { key: unknown }) => g.key === "fruit");
+      assertTrue(fruitGroup !== undefined, "fruit group should exist");
+      assertEqual(fruitGroup!.items.length, 2, "fruit group should have 2 items");
+    },
+    "execute() with orderBy and offset combined returns correct slice": () => {
+      const result = createBuilder().orderBy("price", "asc").offset(2).limit(2).execute();
+      assertEqual(result.length, 2, "should return 2 items with offset 2 limit 2");
+      assertEqual(result[0].name, "Apple", "3rd item by price asc should be Apple");
+      assertEqual(result[1].name, "Donut", "4th item by price asc should be Donut");
     },
   },
   "query-engine.test.ts": {
@@ -1240,6 +1399,17 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(sorted[1].__id, "3", "60 should be second");
       assertEqual(sorted[2].__id, "1", "80 should be third");
     },
+    "places null values last in descending sort": () => {
+      const data: Entity[] = [
+        { __id: "1", name: "Anna", score: 80 },
+        { __id: "2", name: "Jan", score: null as unknown as number },
+        { __id: "3", name: "Piotr", score: 60 },
+      ];
+      const sorted = QueryEngine.sortEntities(data, [{ field: "score", direction: "desc" }]);
+      assertEqual(sorted[0].__id, "1", "80 should sort first in descending order");
+      assertEqual(sorted[1].__id, "3", "60 should be second");
+      assertEqual(sorted[2].__id, "2", "null should sort last in descending order");
+    },
     "groups entities including those with undefined keys": () => {
       const data: Entity[] = [
         { __id: "1", name: "Anna", city: "Warszawa" },
@@ -1252,6 +1422,37 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const undefinedGroup = groups.find((g) => g.key === undefined);
       assertEqual(warszawaGroup!.count, 2, "Warszawa group should have 2 members");
       assertEqual(undefinedGroup!.count, 1, "undefined group should have 1 member");
+    },
+    "sortEntities returns empty array for empty input": () => {
+      const result = QueryEngine.sortEntities([], [{ field: "name", direction: "asc" }]);
+      assertEqual(result.length, 0, "sorting empty array should return empty array");
+    },
+    "groupEntities returns empty array for empty input": () => {
+      const result = QueryEngine.groupEntities([], "name");
+      assertEqual(result.length, 0, "grouping empty array should return empty array");
+    },
+    "filterEntities with empty entity list returns empty": () => {
+      const filters: Filter[] = [{ field: "name", operator: "=", value: "Anna" }];
+      const result = QueryEngine.filterEntities([], filters);
+      assertEqual(result.length, 0, "filtering empty array should return empty array");
+    },
+    "paginateEntities with Infinity limit defaults to full length": () => {
+      const result = QueryEngine.paginateEntities(queryEngineUsers, 0, Infinity);
+      assertEqual(result.items.length, queryEngineUsers.length, "Infinity limit should return all items");
+      assertEqual(result.total, queryEngineUsers.length, "total should equal full collection size");
+      assertEqual(result.limit, queryEngineUsers.length, "limit should default to full length");
+      assertTrue(!result.hasNext, "hasNext should be false when all items returned");
+    },
+    "sortEntities treats both-null values as equal": () => {
+      const data: Entity[] = [
+        { __id: "1", name: null, age: 10 },
+        { __id: "2", name: null, age: 20 },
+        { __id: "3", name: "Alice", age: 15 },
+      ];
+      const sorted = QueryEngine.sortEntities(data, [{ field: "name", direction: "asc" }]);
+      assertEqual(sorted[0].__id, "1", "first null should maintain position");
+      assertEqual(sorted[1].__id, "2", "second null should maintain position");
+      assertEqual(sorted[2].__id, "3", "Alice should come after nulls");
     },
   },
   "serialization.test.ts": {
@@ -1589,6 +1790,46 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const fd: FieldDefinition = { name: "x", type: "boolean" };
       assertEqual(Serialization.serializeValue("yes", fd), true, "'yes' should serialize to true");
       assertEqual(Serialization.serializeValue("no", fd), false, "'no' should serialize to false");
+    },
+    "serializes unrecognized field type as string": () => {
+      const fd = { name: "x", type: "custom" } as unknown as FieldDefinition;
+      assertEqual(Serialization.serializeValue(42, fd), "42", "unrecognized type should serialize number as string");
+      assertEqual(Serialization.serializeValue(true, fd), "true", "unrecognized type should serialize boolean as string");
+    },
+    "deserializes unrecognized field type as raw value": () => {
+      const fd = { name: "x", type: "custom" } as unknown as FieldDefinition;
+      assertEqual(Serialization.deserializeValue(42, fd), 42, "unrecognized type should pass through number");
+      assertEqual(Serialization.deserializeValue("hello", fd), "hello", "unrecognized type should pass through string");
+    },
+    "rowToEntity handles row shorter than headers": () => {
+      const fields: FieldDefinition[] = [
+        { name: "name", type: "string" },
+        { name: "age", type: "number" },
+      ];
+      const headers = Serialization.buildHeaders(fields);
+      const shortRow = ["id-1", "2024-01-01T00:00:00.000Z"];
+      const entity = Serialization.rowToEntity(shortRow, headers, fields);
+      assertEqual(entity.__id, "id-1", "should parse __id from short row");
+      assertEqual(entity.name, null, "missing name should deserialize to null");
+      assertEqual(entity.age, null, "missing age should deserialize to null");
+    },
+    "entityToRow uses raw value for column without field definition": () => {
+      const fields: FieldDefinition[] = [{ name: "name", type: "string" }];
+      const headers = ["__id", "__createdAt", "__updatedAt", "name", "extra"];
+      const entity = { __id: "id-1", name: "Alice", extra: "bonus" } as Entity;
+      const row = Serialization.entityToRow(entity, fields, headers);
+      assertEqual(row[3], "Alice", "name should be serialized via field definition");
+      assertEqual(row[4], "bonus", "extra column without field definition should use raw value");
+    },
+    "rowToEntity converts Date objects in system columns to ISO strings": () => {
+      const fields: FieldDefinition[] = [{ name: "name", type: "string" }];
+      const headers = Serialization.buildHeaders(fields);
+      const now = new Date("2024-06-15T12:00:00.000Z");
+      const row = ["id-1", now, now, "Alice"];
+      const entity = Serialization.rowToEntity(row, headers, fields);
+      assertEqual(entity.__id, "id-1", "should parse __id");
+      assertEqual(entity.__createdAt, "2024-06-15T12:00:00.000Z", "Date in __createdAt should become ISO string");
+      assertEqual(entity.__updatedAt, "2024-06-15T12:00:00.000Z", "Date in __updatedAt should become ISO string");
     },
   },
   "uuid.test.ts": {
@@ -2482,6 +2723,52 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         const { Car } = setup(ctx);
         const result = Car.saveAll([]);
         assertDeepEqual(result, [], "saveAll with empty array should return empty array");
+      },
+      "deleteAll() returns zero when no entities match filter": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        Car.create({ make: "Toyota", model: "Supra", year: 2020, color: "white" }).save();
+        const count = Car.deleteAll({ where: [{ field: "make", operator: "=", value: "NonExistent" }] });
+        assertEqual(count, 0, "deleteAll with non-matching filter should return 0");
+        assertEqual(Car.count(), 1, "original entity should still exist");
+      },
+      "save() includes null fields but excludes undefined fields": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.year = 2024;
+        car.color = null as unknown as string;
+        car.save();
+
+        const found = Car.findById(car.__id);
+        assertTrue(found !== null, "saved entity should be found");
+        assertEqual(found!.color, null, "null field should be preserved as null");
+      },
+      "Query.from(Class) auto-registers class without prior save": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const query = Query.from(Car);
+        assertTrue(query !== undefined && query !== null, "Query.from should return a query");
+        const results = query.execute();
+        assertDeepEqual(results, [], "query on empty table should return empty array");
+      },
+      "deleteAll uses individual deletes for 2 entities and bulk for 3": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        // Create exactly 3 entities — triggers bulk path (> 2)
+        Car.create({ make: "A", model: "A1", year: 2020, color: "red" }).save();
+        Car.create({ make: "B", model: "B1", year: 2021, color: "blue" }).save();
+        Car.create({ make: "C", model: "C1", year: 2022, color: "green" }).save();
+        assertEqual(Car.count(), 3, "should have 3 entities before bulk delete");
+        const deletedBulk = Car.deleteAll();
+        assertEqual(deletedBulk, 3, "deleteAll should return 3 for bulk path");
+        assertEqual(Car.count(), 0, "count should be 0 after bulk delete");
+
+        // Create exactly 2 entities — triggers individual path (<= 2)
+        Car.create({ make: "D", model: "D1", year: 2023, color: "black" }).save();
+        Car.create({ make: "E", model: "E1", year: 2024, color: "white" }).save();
+        assertEqual(Car.count(), 2, "should have 2 entities before individual delete");
+        const deletedIndiv = Car.deleteAll();
+        assertEqual(deletedIndiv, 2, "deleteAll should return 2 for individual path");
+        assertEqual(Car.count(), 0, "count should be 0 after individual delete");
       },
     } as Record<string, RuntimeCaseHandler>;
   })(),

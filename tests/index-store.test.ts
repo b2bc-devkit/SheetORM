@@ -297,4 +297,92 @@ describe("IndexStore", () => {
       expect(ids).toEqual([]);
     });
   });
+
+  it("updateInCombined throws unique violation when value conflicts with another entity", () => {
+    indexStore.createCombinedIndex("idx_Users");
+    indexStore.registerIndex("idx_Users", "email", true);
+    indexStore.addToCombined("idx_Users", "email", "jan@example.com", "user-001");
+    indexStore.addToCombined("idx_Users", "email", "anna@example.com", "user-002");
+
+    expect(() => {
+      indexStore.updateInCombined(
+        "idx_Users",
+        "user-002",
+        { email: "anna@example.com" },
+        { email: "jan@example.com" },
+      );
+    }).toThrow(/Unique index violation/);
+  });
+
+  it("addAllFieldsToCombined detects unique violation in pending batch entries", () => {
+    indexStore.createCombinedIndex("idx_Users");
+    indexStore.registerIndex("idx_Users", "email", true);
+
+    indexStore.beginIndexBatch();
+    indexStore.addAllFieldsToCombined(
+      "idx_Users",
+      [{ field: "email", value: "dup@example.com" }],
+      "user-001",
+    );
+    expect(() => {
+      indexStore.addAllFieldsToCombined(
+        "idx_Users",
+        [{ field: "email", value: "dup@example.com" }],
+        "user-002",
+      );
+    }).toThrow(/Unique index violation/);
+    indexStore.cancelIndexBatch();
+  });
+
+  it("operates correctly without cache provider", () => {
+    const noCacheStore = new IndexStore(adapter);
+    noCacheStore.createCombinedIndex("idx_NoCache");
+    noCacheStore.registerIndex("idx_NoCache", "name", false);
+    noCacheStore.addToCombined("idx_NoCache", "name", "Alice", "e-001");
+    noCacheStore.addToCombined("idx_NoCache", "name", "Bob", "e-002");
+
+    expect(noCacheStore.lookupCombined("idx_NoCache", "name", "Alice")).toEqual(["e-001"]);
+
+    noCacheStore.updateInCombined(
+      "idx_NoCache",
+      "e-001",
+      { name: "Alice" },
+      { name: "Alicia" },
+    );
+    expect(noCacheStore.lookupCombined("idx_NoCache", "name", "Alicia")).toEqual(["e-001"]);
+    expect(noCacheStore.lookupCombined("idx_NoCache", "name", "Alice")).toEqual([]);
+
+    noCacheStore.removeAllFromCombined("idx_NoCache", "e-002");
+    expect(noCacheStore.lookupCombined("idx_NoCache", "name", "Bob")).toEqual([]);
+  });
+
+  it("removeMultipleFromCombined is no-op for non-existent entity IDs", () => {
+    indexStore.createCombinedIndex("idx_Users");
+    indexStore.registerIndex("idx_Users", "email", false);
+    indexStore.addToCombined("idx_Users", "email", "a@example.com", "user-001");
+
+    indexStore.removeMultipleFromCombined("idx_Users", ["user-999", "user-888"]);
+    expect(indexStore.lookupCombined("idx_Users", "email", "a@example.com")).toEqual(["user-001"]);
+  });
+
+  it("updateInCombined creates entry when field goes from empty to populated", () => {
+    indexStore.createCombinedIndex("idx_Users");
+    indexStore.registerIndex("idx_Users", "email", false);
+
+    indexStore.updateInCombined(
+      "idx_Users",
+      "user-001",
+      { email: "" },
+      { email: "new@example.com" },
+    );
+    expect(indexStore.lookupCombined("idx_Users", "email", "new@example.com")).toEqual(["user-001"]);
+  });
+
+  describe("normalizeForSearch", () => {
+    it("normalizeForSearch > normalizes em-dashes and underscores to spaces", () => {
+      expect(IndexStore.normalizeForSearch("hello\u2014world")).toBe("hello world");
+      expect(IndexStore.normalizeForSearch("snake_case")).toBe("snake case");
+      expect(IndexStore.normalizeForSearch("a\u2013b")).toBe("a b");
+    });
+  });
 });
