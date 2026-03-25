@@ -20,6 +20,8 @@ const PARITY_SUITES: ParitySuite[] = [
       "constructor throws for negative TTL",
       "set() throws for NaN per-key TTL",
       "TTL of 0 expires immediately",
+      "set() throws for negative per-key TTL",
+      "set() throws for Infinity per-key TTL",
     ],
   },
   {
@@ -107,6 +109,8 @@ const PARITY_SUITES: ParitySuite[] = [
       "first() returns null when offset exceeds result count",
       "groupBy() respects orderBy before grouping",
       "execute() with orderBy and offset combined returns correct slice",
+      "limit() and offset() floor fractional values",
+      "Query.from() without resolver throws descriptive error",
     ],
   },
   {
@@ -165,6 +169,9 @@ const PARITY_SUITES: ParitySuite[] = [
       "filterEntities with empty entity list returns empty",
       "paginateEntities with Infinity limit defaults to full length",
       "sortEntities treats both-null values as equal",
+      "in operator with non-array value returns empty result",
+      "in operator with >8 elements uses Set-based path",
+      "contains operator with non-string entity value returns false",
     ],
   },
   {
@@ -284,6 +291,19 @@ const PARITY_SUITES: ParitySuite[] = [
       "save() includes null fields but excludes undefined fields",
       "Query.from(Class) auto-registers class without prior save",
       "deleteAll uses individual deletes for 2 entities and bulk for 3",
+    ],
+  },
+  {
+    file: "sheet-repository.test.ts",
+    tests: [
+      "onValidate rejects save when validation errors returned",
+      "beforeSave mutates entity payload",
+      "afterSave receives saved entity and isNew flag",
+      "beforeDelete returning false blocks deletion",
+      "beforeDelete veto on deleteAll returns zero and preserves data",
+      "afterDelete is called with deleted entity ID",
+      "getSheet throws when sheet does not exist",
+      "loadAllEntities throws during active saveAll entity batch",
     ],
   },
 ];

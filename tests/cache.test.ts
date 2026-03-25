@@ -94,4 +94,12 @@ describe("MemoryCache", () => {
     expect(cache.get<string>("instant")).toBeNull();
     expect(cache.has("instant")).toBe(false);
   });
+
+  it("set() throws for negative per-key TTL", () => {
+    expect(() => cache.set("key", "value", -1)).toThrow("non-negative finite number");
+  });
+
+  it("set() throws for Infinity per-key TTL", () => {
+    expect(() => cache.set("key", "value", Infinity)).toThrow("non-negative finite number");
+  });
 });

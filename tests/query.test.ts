@@ -286,4 +286,23 @@ describe("Query", () => {
     expect(result[0].name).toBe("Apple");  // price 1.5 (3rd after sort)
     expect(result[1].name).toBe("Donut");  // price 2.5 (4th after sort)
   });
+
+  it("limit() and offset() floor fractional values", () => {
+    const result = createBuilder().orderBy("price", "asc").limit(2.9).offset(1.7).execute();
+    // floor(2.9) = 2, floor(1.7) = 1  →  skip 1, take 2
+    expect(result).toHaveLength(2);
+    expect(result[0].name).toBe("Carrot"); // price 1.2 (2nd in asc)
+    expect(result[1].name).toBe("Apple");  // price 1.5 (3rd in asc)
+  });
+
+  it("Query.from() without resolver throws descriptive error", () => {
+    // Temporarily remove the resolver
+    const origResolver = (Query as unknown as Record<string, unknown>)._fromResolverFn;
+    (Query as unknown as Record<string, unknown>)._fromResolverFn = null;
+    try {
+      expect(() => Query.from("Anything")).toThrow("Query.from() is not available");
+    } finally {
+      (Query as unknown as Record<string, unknown>)._fromResolverFn = origResolver;
+    }
+  });
 });

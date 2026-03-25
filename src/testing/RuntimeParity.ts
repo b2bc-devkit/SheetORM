@@ -12,6 +12,8 @@ import { Decorators } from "../core/Decorators.js";
 import { QueryEngine } from "../query/QueryEngine.js";
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
 import { MemoryCache } from "../core/cache/MemoryCache.js";
+import { SheetRepository } from "../core/SheetRepository.js";
+import type { LifecycleHooks } from "../core/types/LifecycleHooks.js";
 import { Serialization } from "../utils/Serialization.js";
 import { Uuid } from "../utils/Uuid.js";
 import { ParityCatalog } from "./ParityCatalog.js";
@@ -277,6 +279,26 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       cache.set("instant", "gone", 0);
       assertEqual(cache.get("instant"), null, "TTL=0 entry should be expired immediately");
       assertTrue(!cache.has("instant"), "has() should return false for TTL=0 entry");
+    },
+    "set() throws for negative per-key TTL": () => {
+      const cache = new MemoryCache(1000);
+      let threw = false;
+      try {
+        cache.set("k", "v", -1);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "set() with negative TTL should throw");
+    },
+    "set() throws for Infinity per-key TTL": () => {
+      const cache = new MemoryCache(1000);
+      let threw = false;
+      try {
+        cache.set("k", "v", Infinity);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "set() with Infinity TTL should throw");
     },
   },
   "index-store.test.ts": {
@@ -1044,6 +1066,30 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result[0].name, "Apple", "3rd item by price asc should be Apple");
       assertEqual(result[1].name, "Donut", "4th item by price asc should be Donut");
     },
+    "limit() and offset() floor fractional values": () => {
+      const result = createBuilder().orderBy("price", "asc").limit(2.9).offset(1.7).execute();
+      assertEqual(result.length, 2, "limit(2.9) should floor to 2");
+      assertEqual(result[0].name, "Carrot", "offset(1.7) should floor to 1, so 2nd cheapest");
+    },
+    "Query.from() without resolver throws descriptive error": () => {
+      const original = (Query as unknown as { _fromResolverFn: unknown })._fromResolverFn;
+      try {
+        (Query as unknown as { _fromResolverFn: unknown })._fromResolverFn = null;
+        let threw = false;
+        try {
+          Query.from("NonExistent");
+        } catch (e: unknown) {
+          threw = true;
+          assertTrue(
+            (e as Error).message.includes("not available"),
+            "error message should mention 'not available'",
+          );
+        }
+        assertTrue(threw, "Query.from() without resolver should throw");
+      } finally {
+        (Query as unknown as { _fromResolverFn: unknown })._fromResolverFn = original;
+      }
+    },
   },
   "query-engine.test.ts": {
     "filters with = operator": () => {
@@ -1453,6 +1499,34 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(sorted[0].__id, "1", "first null should maintain position");
       assertEqual(sorted[1].__id, "2", "second null should maintain position");
       assertEqual(sorted[2].__id, "3", "Alice should come after nulls");
+    },
+    "in operator with non-array value returns empty result": () => {
+      const filters: Filter[] = [{ field: "city", operator: "in", value: "Warszawa" as unknown }];
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
+      assertEqual(result.length, 0, "in with non-array value should return empty");
+    },
+    "in operator with >8 elements uses Set-based path": () => {
+      const targetCities = [
+        "Warszawa", "Kraków", "Gdańsk", "Łódź", "Lublin",
+        "Białystok", "Katowice", "Bydgoszcz", "Szczecin",
+      ];
+      const filters: Filter[] = [{ field: "city", operator: "in", value: targetCities }];
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
+      assertEqual(result.length, 5, "in with >8 elements should match all 5 users");
+      assertDeepEqual(
+        result.map((u) => u.name).sort(),
+        ["Anna", "Jan", "Maria", "Piotr", "Zofia"],
+        "should match all users whose cities are in the set",
+      );
+    },
+    "contains operator with non-string entity value returns false": () => {
+      const data: Entity[] = [
+        { __id: "1", name: 12345 },
+        { __id: "2", name: "hello world" },
+      ];
+      const filters: Filter[] = [{ field: "name", operator: "contains", value: "123" }];
+      const result = QueryEngine.filterEntities(data, filters);
+      assertEqual(result.length, 0, "contains on numeric entity value should not match");
     },
   },
   "serialization.test.ts": {
@@ -2772,6 +2846,153 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       },
     } as Record<string, RuntimeCaseHandler>;
   })(),
+  "sheet-repository.test.ts": {
+    "onValidate rejects save when validation errors returned": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_ValItems");
+      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const hooks: LifecycleHooks<Entity> = {
+        onValidate: (entity) => {
+          const errors: string[] = [];
+          if (!entity.name) errors.push("name is required");
+          return errors;
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      let threw = false;
+      try {
+        repo.save({ name: "", price: 1, category: "x" });
+      } catch (e: unknown) {
+        threw = true;
+        assertTrue((e as Error).message.includes("Validation failed"), "should mention Validation failed");
+      }
+      assertTrue(threw, "onValidate should reject save");
+    },
+    "beforeSave mutates entity payload": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_MutItems");
+      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const hooks: LifecycleHooks<Entity> = {
+        beforeSave: (entity) => ({ ...entity, name: String(entity.name ?? "").toUpperCase() }),
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      const saved = repo.save({ name: "widget", price: 10, category: "tools" });
+      assertEqual(saved.name, "WIDGET", "beforeSave should mutate name to uppercase");
+    },
+    "afterSave receives saved entity and isNew flag": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_AfterItems");
+      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const calls: Array<{ isNew: boolean }> = [];
+      const hooks: LifecycleHooks<Entity> = {
+        afterSave: (_entity, isNew) => { calls.push({ isNew }); },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      const saved = repo.save({ name: "A", price: 1, category: "x" });
+      assertEqual(calls.length, 1, "afterSave should be called once");
+      assertTrue(calls[0].isNew, "first save should be isNew=true");
+      repo.save({ ...saved, price: 2 });
+      assertEqual(calls.length, 2, "afterSave should be called twice");
+      assertTrue(!calls[1].isNew, "update should be isNew=false");
+    },
+    "beforeDelete returning false blocks deletion": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_NoDelItems");
+      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const hooks: LifecycleHooks<Entity> = { beforeDelete: () => false };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      const saved = repo.save({ name: "keep", price: 5, category: "x" });
+      const deleted = repo.delete(saved.__id);
+      assertEqual(deleted, false, "beforeDelete returning false should block deletion");
+      assertEqual(repo.count(), 1, "entity should still exist");
+    },
+    "beforeDelete veto on deleteAll returns zero and preserves data": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_VetoDelItems");
+      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const hooks: LifecycleHooks<Entity> = { beforeDelete: () => false };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      repo.save({ name: "A", price: 1, category: "x" });
+      repo.save({ name: "B", price: 2, category: "x" });
+      repo.save({ name: "C", price: 3, category: "x" });
+      const count = repo.deleteAll();
+      assertEqual(count, 0, "deleteAll should return 0 when beforeDelete vetoes");
+      assertEqual(repo.count(), 3, "all entities should be preserved");
+    },
+    "afterDelete is called with deleted entity ID": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_AfterDelItems");
+      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const deletedIds: string[] = [];
+      const hooks: LifecycleHooks<Entity> = { afterDelete: (id) => { deletedIds.push(id); } };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      const saved = repo.save({ name: "gone", price: 0, category: "x" });
+      repo.delete(saved.__id);
+      assertDeepEqual(deletedIds, [saved.__id], "afterDelete should receive deleted ID");
+    },
+    "getSheet throws when sheet does not exist": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const schema = { tableName: "tbl_NonExistent_" + Date.now(), fields: [{ name: "name" }], indexes: [] };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore);
+      let threw = false;
+      try {
+        repo.find();
+      } catch (e: unknown) {
+        threw = true;
+        assertTrue((e as Error).message.includes("not found"), "error should mention not found");
+      }
+      assertTrue(threw, "find() on non-existent sheet should throw");
+    },
+    "loadAllEntities throws during active saveAll entity batch": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchItems");
+      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      let repoRef: SheetRepository<Entity> | null = null;
+      const hooks: LifecycleHooks<Entity> = {
+        beforeSave: () => {
+          try { repoRef!.count(); } catch { throw new Error("re-entrant read blocked"); }
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      repoRef = repo;
+      let threw = false;
+      try {
+        repo.saveAll([{ name: "A", price: 1, category: "x" }, { name: "B", price: 2, category: "y" }]);
+      } catch {
+        threw = true;
+      }
+      assertTrue(threw, "saveAll with re-entrant read should throw");
+    },
+  },
 };
 
 function getRuntimeCaseHandler(id: string): RuntimeCaseHandler {

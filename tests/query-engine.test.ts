@@ -479,4 +479,31 @@ describe("empty input edge cases", () => {
     expect(sorted[1].__id).toBe("2");
     expect(sorted[2].__id).toBe("3");
   });
+
+  it("in operator with non-array value returns empty result", () => {
+    const filters: Filter[] = [{ field: "city", operator: "in", value: "Gdańsk" }];
+    const result = QueryEngine.filterEntities(users, filters);
+    expect(result).toHaveLength(0);
+  });
+
+  it("in operator with >8 elements uses Set-based path", () => {
+    const targetCities = [
+      "Gdańsk", "Kraków", "Warszawa", "Wrocław", "Poznań",
+      "Łódź", "Katowice", "Szczecin", "Lublin",
+    ];
+    const filters: Filter[] = [{ field: "city", operator: "in", value: targetCities }];
+    const result = QueryEngine.filterEntities(users, filters);
+    // All 5 users have cities in the list, verifying >8-element Set path works
+    expect(result).toHaveLength(5);
+  });
+
+  it("contains operator with non-string entity value returns false", () => {
+    const data: Entity[] = [
+      { __id: "1", name: "Anna", score: 100 },
+      { __id: "2", name: "Jan", score: null },
+    ];
+    const filters: Filter[] = [{ field: "score", operator: "contains", value: "10" }];
+    const result = QueryEngine.filterEntities(data, filters);
+    expect(result).toHaveLength(0);
+  });
 });
