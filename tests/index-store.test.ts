@@ -291,5 +291,10 @@ describe("IndexStore", () => {
       const ids = indexStore.searchCombined("idx_Cars", "model", "bm");
       expect(ids).toContain("car-001");
     });
+
+    it("lookupCombined returns empty for non-existent index table", () => {
+      const ids = indexStore.lookupCombined("idx_NonExistent", "field", "value");
+      expect(ids).toEqual([]);
+    });
   });
 });

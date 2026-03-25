@@ -7,6 +7,12 @@ for (let i = 0; i < 256; i++) {
   HEX[i] = (i + 0x100).toString(16).substring(1);
 }
 
+interface CryptoHost {
+  crypto?: {
+    getRandomValues?: (buf: Uint8Array) => Uint8Array;
+  };
+}
+
 function generateUUID(): string {
   // GAS V8 runtime supports Utilities.getUuid() but we provide a fallback
   // for testing environments and npm usage
@@ -16,10 +22,8 @@ function generateUUID(): string {
   // RFC 4122 v4 UUID — direct array approach, avoids per-char regex replace
   const r = new Uint8Array(16);
   // Use Web Crypto API when available (Node.js, browsers); fall back to Math.random
-  const g =
-    typeof globalThis !== "undefined" && "crypto" in globalThis
-      ? (globalThis.crypto as { getRandomValues?: (buf: Uint8Array) => Uint8Array })
-      : undefined;
+  const globalHost = globalThis as typeof globalThis & CryptoHost;
+  const g = typeof globalThis !== "undefined" ? globalHost.crypto : undefined;
   if (g && typeof g.getRandomValues === "function") {
     g.getRandomValues(r);
   } else {

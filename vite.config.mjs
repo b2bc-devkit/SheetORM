@@ -6,8 +6,20 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const REAL_ENTRY = path.resolve(__dirname, "build/src/index.js");
 const VIRTUAL_ID = "\0gas-entry";
+
+function resolveRealEntry() {
+  const candidates = [
+    path.resolve(__dirname, "build/index.js"),
+    path.resolve(__dirname, "build/src/index.js"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return candidates[0];
+}
 
 /**
  * Vite/Rollup plugin that replicates gas-webpack-plugin behaviour for GAS:
@@ -64,10 +76,11 @@ function gasPlugin() {
 
     load(id) {
       if (id === VIRTUAL_ID) {
-        const exportNames = detectExportNames(REAL_ENTRY);
+        const realEntry = resolveRealEntry();
+        const exportNames = detectExportNames(realEntry);
         gasBindings = resolveBindings(exportNames);
         const imports = [...new Set(gasBindings.map((binding) => binding.exportName))].join(", ");
-        const entryUrl = REAL_ENTRY.replace(/\\/g, "/");
+        const entryUrl = realEntry.replace(/\\/g, "/");
         const assignments = gasBindings
           .map((binding) =>
             binding.methodName

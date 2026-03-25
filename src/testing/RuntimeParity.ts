@@ -664,6 +664,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertTrue(ids.length > 0, "2-char query should find match via substring fallback");
       assertTrue(ids.includes("car-001"), "should contain car-001");
     },
+    "lookupCombined returns empty for non-existent index table": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const ids = indexStore.lookupCombined("idx_NonExistent", "field", "value");
+      assertDeepEqual(ids, [], "lookupCombined should return empty for non-existent table");
+    },
   },
   "query.test.ts": {
     "filters with where()": () => {
@@ -734,6 +740,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "first() returns null when no match": () => {
       const result = createBuilder().where("category", "=", "nonexistent").first();
       assertEqual(result, null, "first should return null for empty result");
+    },
+    "first() respects offset": () => {
+      // Sorted by price asc: Banana(0.8), Carrot(1.2), Apple(1.5), Donut(2.5), Eggplant(3.0)
+      const result = createBuilder().orderBy("price", "asc").offset(2).first();
+      assertTrue(result !== null, "first with offset should return an entity");
+      assertEqual(result?.name, "Apple", "third cheapest item should be Apple");
     },
     "count() returns matching count": () => {
       const count = createBuilder().where("category", "=", "fruit").count();
@@ -864,6 +876,14 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result.length, 2, "or().and() should match 2 items");
       const names = result.map((r: { name: string }) => r.name).sort();
       assertDeepEqual(names, ["Apple", "Donut"], "matched items should be Apple and Donut");
+    },
+    "execute() with limit(0) returns an empty array": () => {
+      const result = createBuilder().limit(0).execute();
+      assertEqual(result.length, 0, "limit(0) should return empty array");
+    },
+    "build() with limit(0) includes limit 0": () => {
+      const opts = createBuilder().limit(0).build();
+      assertEqual(opts.limit, 0, "build should include limit 0");
     },
   },
   "query-engine.test.ts": {
@@ -1025,6 +1045,23 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result.length, 1, "combined query should return one entity");
       assertEqual(result[0].name, "Anna", "combined query should return Anna");
     },
+    "applies only sort and limit when no filters are provided": () => {
+      const options: QueryOptions = {
+        orderBy: [{ field: "age", direction: "desc" }],
+        limit: 3,
+      };
+      const result = QueryEngine.executeQuery(queryEngineUsers, options);
+      assertEqual(result.length, 3, "query should return three entities after limit");
+      assertDeepEqual(
+        result.map((u) => u.name),
+        ["Zofia", "Piotr", "Jan"],
+        "query should apply sort and limit without filters",
+      );
+    },
+    "returns all entities for empty options": () => {
+      const result = QueryEngine.executeQuery(queryEngineUsers, {});
+      assertEqual(result.length, queryEngineUsers.length, "empty options should return all entities");
+    },
     "matches entities passing any group": () => {
       const groups: Filter[][] = [
         [{ field: "city", operator: "=", value: "Gdańsk" }],
@@ -1168,6 +1205,53 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const result = QueryEngine.filterEntities(mixed, filters);
       assertEqual(result.length, 1, "should match only entity with nested field");
       assertEqual(result[0].__id, "2", "should find entity with profile.city = X");
+    },
+    "uses Set for arrays with more than 8 elements": () => {
+      const manyValues = [
+        "Warszawa",
+        "Kraków",
+        "Gdańsk",
+        "Wrocław",
+        "Poznań",
+        "Łódź",
+        "Katowice",
+        "Szczecin",
+        "Lublin",
+      ];
+      const filters: Filter[] = [{ field: "city", operator: "in", value: manyValues }];
+      const result = QueryEngine.filterEntities(queryEngineUsers, filters);
+      assertEqual(result.length, 3, "should match 3 users from cities in the large set");
+    },
+    "returns empty items when limit is 0": () => {
+      const result = QueryEngine.paginateEntities(queryEngineUsers, 0, 0);
+      assertEqual(result.items.length, 0, "limit 0 should return empty items");
+      assertEqual(result.total, queryEngineUsers.length, "total should equal full collection size");
+      assertEqual(result.limit, 0, "limit should be 0");
+      assertTrue(result.hasNext, "hasNext should be true when total > 0");
+    },
+    "places null values before non-null in ascending order": () => {
+      const data: Entity[] = [
+        { __id: "1", name: "Anna", score: 80 },
+        { __id: "2", name: "Jan", score: null as unknown as number },
+        { __id: "3", name: "Piotr", score: 60 },
+      ];
+      const sorted = QueryEngine.sortEntities(data, [{ field: "score", direction: "asc" }]);
+      assertEqual(sorted[0].__id, "2", "null should sort first in ascending order");
+      assertEqual(sorted[1].__id, "3", "60 should be second");
+      assertEqual(sorted[2].__id, "1", "80 should be third");
+    },
+    "groups entities including those with undefined keys": () => {
+      const data: Entity[] = [
+        { __id: "1", name: "Anna", city: "Warszawa" },
+        { __id: "2", name: "Jan" },
+        { __id: "3", name: "Piotr", city: "Warszawa" },
+      ];
+      const groups = QueryEngine.groupEntities(data, "city");
+      assertEqual(groups.length, 2, "should produce 2 groups");
+      const warszawaGroup = groups.find((g) => g.key === "Warszawa");
+      const undefinedGroup = groups.find((g) => g.key === undefined);
+      assertEqual(warszawaGroup!.count, 2, "Warszawa group should have 2 members");
+      assertEqual(undefinedGroup!.count, 1, "undefined group should have 1 member");
     },
   },
   "serialization.test.ts": {
@@ -1414,6 +1498,97 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const nativeDate = new Date("2024-03-15T10:30:00.000Z");
       const result = Serialization.deserializeValue(nativeDate, dateFd);
       assertEqual(result, "2024-03-15T10:30:00.000Z", "native Date should be deserialized to ISO string");
+    },
+    "serializes Infinity as empty for number type": () => {
+      const fd: FieldDefinition = { name: "x", type: "number" };
+      assertEqual(Serialization.serializeValue(Infinity, fd), "", "Infinity should serialize to empty string");
+      assertEqual(Serialization.serializeValue(-Infinity, fd), "", "-Infinity should serialize to empty string");
+    },
+    "serializes Infinity string as empty for number type": () => {
+      const fd: FieldDefinition = { name: "x", type: "number" };
+      assertEqual(Serialization.serializeValue("Infinity", fd), "", "Infinity string should serialize to empty string");
+      assertEqual(Serialization.serializeValue("-Infinity", fd), "", "-Infinity string should serialize to empty string");
+    },
+    "serializes invalid Date as empty for date type": () => {
+      const fd: FieldDefinition = { name: "x", type: "date" };
+      assertEqual(
+        Serialization.serializeValue(new Date("invalid"), fd),
+        "",
+        "invalid Date should serialize to empty string",
+      );
+    },
+    "auto-infers number type when fieldDef.type is undefined": () => {
+      const fd: FieldDefinition = { name: "x" };
+      assertEqual(Serialization.serializeValue(42, fd), 42, "number should be preserved when type is inferred");
+    },
+    "auto-infers boolean type when fieldDef.type is undefined": () => {
+      const fd: FieldDefinition = { name: "x" };
+      assertEqual(
+        Serialization.serializeValue(true, fd),
+        true,
+        "boolean should be preserved when type is inferred",
+      );
+    },
+    "auto-infers object as JSON when fieldDef.type is undefined": () => {
+      const fd: FieldDefinition = { name: "x" };
+      assertEqual(
+        Serialization.serializeValue({ a: 1 }, fd),
+        '{"a":1}',
+        "object should serialize as JSON when type is inferred",
+      );
+    },
+    "deserializes Infinity as null for number type": () => {
+      const fd: FieldDefinition = { name: "x", type: "number" };
+      assertEqual(Serialization.deserializeValue(Infinity, fd), null, "Infinity should deserialize to null");
+      assertEqual(Serialization.deserializeValue(-Infinity, fd), null, "-Infinity should deserialize to null");
+    },
+    "deserializes Infinity string as null for number type": () => {
+      const fd: FieldDefinition = { name: "x", type: "number" };
+      assertEqual(
+        Serialization.deserializeValue("Infinity", fd),
+        null,
+        "Infinity string should deserialize to null",
+      );
+    },
+    "deserializes invalid Date object as null for date type": () => {
+      const fd: FieldDefinition = { name: "x", type: "date" };
+      assertEqual(
+        Serialization.deserializeValue(new Date("invalid"), fd),
+        null,
+        "invalid Date should deserialize to null",
+      );
+    },
+    "returns raw value when fieldDef.type is undefined": () => {
+      const fd: FieldDefinition = { name: "x" };
+      assertEqual(Serialization.deserializeValue(42, fd), 42, "number should be returned as-is without explicit type");
+      assertEqual(
+        Serialization.deserializeValue("hello", fd),
+        "hello",
+        "string should be returned as-is without explicit type",
+      );
+    },
+    "auto-infers invalid Date as empty string when fieldDef.type is undefined": () => {
+      const fd: FieldDefinition = { name: "x" };
+      assertEqual(Serialization.serializeValue(new Date("invalid"), fd), "", "invalid Date should auto-infer to empty string");
+    },
+    "serializes NaN as empty for number type": () => {
+      const fd: FieldDefinition = { name: "x", type: "number" };
+      assertEqual(Serialization.serializeValue(NaN, fd), "", "NaN should serialize to empty string for number type");
+    },
+    "deserializes boolean from number 0 and 1": () => {
+      const fd: FieldDefinition = { name: "x", type: "boolean" };
+      assertEqual(Serialization.deserializeValue(0, fd), false, "0 should deserialize to false");
+      assertEqual(Serialization.deserializeValue(1, fd), true, "1 should deserialize to true");
+    },
+    "deserializes boolean string false as false": () => {
+      const fd: FieldDefinition = { name: "x", type: "boolean" };
+      assertEqual(Serialization.deserializeValue("false", fd), false, "'false' should deserialize to false");
+      assertEqual(Serialization.deserializeValue("FALSE", fd), false, "'FALSE' should deserialize to false");
+    },
+    "serializes boolean from string yes/no": () => {
+      const fd: FieldDefinition = { name: "x", type: "boolean" };
+      assertEqual(Serialization.serializeValue("yes", fd), true, "'yes' should serialize to true");
+      assertEqual(Serialization.serializeValue("no", fd), false, "'no' should serialize to false");
     },
   },
   "uuid.test.ts": {
@@ -2226,6 +2401,87 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         assertTrue(remaining !== null, "Alpha should still exist after deleting Beta");
         assertEqual(remaining!.make, "Alpha", "remaining entity should be Alpha");
         assertEqual(Car.findById(beta!.__id), null, "Beta should be deleted");
+      },
+      "discards buffered operations without writing": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+        repo.beginBatch();
+        repo.save({ make: "Ghost", model: "Phantom" });
+        repo.rollbackBatch();
+        assertEqual(Car.count(), 1, "count should still be 1 after rollback");
+        const ghost = Car.findOne({ where: [{ field: "make", operator: "=", value: "Ghost" }] });
+        assertEqual(ghost, null, "rolled back entity should not exist");
+      },
+      "beginBatch \u2192 save \u2192 delete \u2192 commitBatch applies all operations": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        const id = car.__id;
+        const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+        repo.beginBatch();
+        repo.save({ make: "Honda", model: "Civic" });
+        repo.delete(id);
+        repo.commitBatch();
+        assertEqual(Car.count(), 1, "should have 1 entity after commit");
+        const honda = Car.findOne({ where: [{ field: "make", operator: "=", value: "Honda" }] });
+        assertTrue(honda !== null, "Honda should be present");
+        assertEqual(Car.findById(id), null, "Toyota should be deleted");
+      },
+      "count() during batch returns sheet state, not buffered state": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+        const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+        repo.beginBatch();
+        repo.save({ make: "Honda", model: "Civic" });
+        assertEqual(Car.count(), 1, "count during batch should reflect sheet, not buffer");
+        repo.commitBatch();
+        assertEqual(Car.count(), 2, "count after commit should include new entity");
+      },
+      "returns correct entity without re-reading sheet data": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const c1 = new Car();
+        c1.make = "Alpha";
+        c1.model = "A1";
+        c1.save();
+        const c2 = new Car();
+        c2.make = "Beta";
+        c2.model = "B1";
+        c2.save();
+        // Force cache load
+        Car.find();
+        // findById should use cached data
+        const found = Car.findById(c2.__id);
+        assertTrue(found !== null, "findById should return the entity from cache");
+        assertEqual(found!.make, "Beta", "cached entity should have correct make");
+      },
+      "delete() returns false on unsaved record (no __id)": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Ghost";
+        car.model = "Phantom";
+        assertTrue(!car.delete(), "delete() should return false when __id is missing");
+      },
+      "toJSON() returns undefined __id for unsaved entity": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = Car.create({ make: "Ghost", model: "Phantom", year: 2024, color: "black" });
+        const json = car.toJSON();
+        assertEqual(json.__id, undefined, "unsaved entity toJSON should have undefined __id");
+        assertEqual(json.make, "Ghost", "toJSON make should match");
+        assertEqual(json.model, "Phantom", "toJSON model should match");
+      },
+      "saveAll() with empty array returns empty array": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const result = Car.saveAll([]);
+        assertDeepEqual(result, [], "saveAll with empty array should return empty array");
       },
     } as Record<string, RuntimeCaseHandler>;
   })(),

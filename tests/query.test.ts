@@ -79,6 +79,13 @@ describe("Query", () => {
     expect(result).toBeNull();
   });
 
+  it("first() respects offset", () => {
+    // Sorted by price asc: Banana(0.8), Carrot(1.2), Apple(1.5), Donut(2.5), Eggplant(3.0)
+    const result = createBuilder().orderBy("price", "asc").offset(2).first();
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe("Apple");
+  });
+
   it("count() returns matching count", () => {
     const count = createBuilder().where("category", "=", "fruit").count();
     expect(count).toBe(2);
@@ -234,6 +241,18 @@ describe("Query", () => {
       // pastry → Donut; fruit AND price>1 → Apple
       expect(result).toHaveLength(2);
       expect(result.map((r) => r.name).sort()).toEqual(["Apple", "Donut"]);
+    });
+  });
+
+  describe("limit(0) returns empty array", () => {
+    it("execute() with limit(0) returns an empty array", () => {
+      const result = createBuilder().limit(0).execute();
+      expect(result).toHaveLength(0);
+    });
+
+    it("build() with limit(0) includes limit 0", () => {
+      const opts = createBuilder().limit(0).build();
+      expect(opts.limit).toBe(0);
     });
   });
 });

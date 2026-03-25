@@ -192,6 +192,21 @@ describe("executeQuery", () => {
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe("Anna"); // active sorted by age: Maria(22), Anna(28), Jan(35) → offset 1 = Anna
   });
+
+  it("applies only sort and limit when no filters are provided", () => {
+    const options: QueryOptions = {
+      orderBy: [{ field: "age", direction: "desc" }],
+      limit: 3,
+    };
+    const result = QueryEngine.executeQuery(users, options);
+    expect(result).toHaveLength(3);
+    expect(result.map((u) => u.name)).toEqual(["Zofia", "Piotr", "Jan"]);
+  });
+
+  it("returns all entities for empty options", () => {
+    const result = QueryEngine.executeQuery(users, {});
+    expect(result).toHaveLength(5);
+  });
 });
 
 describe("filterEntitiesOr", () => {
@@ -299,6 +314,24 @@ describe("unknown filter operator", () => {
   });
 });
 
+describe("in operator with large array (Set optimization)", () => {
+  it("uses Set for arrays with more than 8 elements", () => {
+    const manyUsers: TestUser[] = Array.from({ length: 20 }, (_, i) => ({
+      __id: `u${i}`,
+      name: `User${i}`,
+      age: 20 + i,
+      active: true,
+      city: `City${i}`,
+    }));
+
+    const targetCities = Array.from({ length: 10 }, (_, i) => `City${i}`);
+    const filters: Filter[] = [{ field: "city", operator: "in", value: targetCities }];
+    const result = QueryEngine.filterEntities(manyUsers, filters);
+    expect(result).toHaveLength(10);
+    expect(result.every((u) => targetCities.includes(u.city))).toBe(true);
+  });
+});
+
 describe("relational operator type guards", () => {
   it("returns false when field type differs from value type (number vs string)", () => {
     const filters: Filter[] = [{ field: "age", operator: ">", value: "thirty" as unknown as number }];
@@ -355,4 +388,83 @@ describe("nested field paths", () => {
     expect(result).toHaveLength(1);
     expect(result[0].__id).toBe("2");
   });
+});
+
+describe("paginateEntities with limit=0", () => {
+  it("returns empty items when limit is 0", () => {
+    const result = QueryEngine.paginateEntities(users, 0, 0);
+    expect(result.items).toHaveLength(0);
+    expect(result.total).toBe(users.length);
+    expect(result.limit).toBe(0);
+    expect(result.hasNext).toBe(true);
+  });
+});
+
+describe("sortEntities with null values", () => {
+  it("places null values before non-null in ascending order", () => {
+    const data: Entity[] = [
+      { __id: "1", name: "Anna", score: 80 },
+      { __id: "2", name: "Jan", score: null as unknown as number },
+      { __id: "3", name: "Piotr", score: 60 },
+    ];
+    const sorted = QueryEngine.sortEntities(data, [{ field: "score", direction: "asc" }]);
+    expect(sorted[0].__id).toBe("2"); // null first
+    expect(sorted[1].__id).toBe("3"); // 60
+    expect(sorted[2].__id).toBe("1"); // 80
+  });
+
+  it("places null values last in descending sort", () => {
+    const data: Entity[] = [
+      { __id: "1", name: "Anna", score: 80 },
+      { __id: "2", name: "Jan", score: null as unknown as number },
+      { __id: "3", name: "Piotr", score: 60 },
+    ];
+    const sorted = QueryEngine.sortEntities(data, [{ field: "score", direction: "desc" }]);
+    expect(sorted[0].__id).toBe("1"); // 80
+    expect(sorted[1].__id).toBe("3"); // 60
+    expect(sorted[2].__id).toBe("2"); // null last
+  });
+});
+
+describe("groupEntities with undefined field value", () => {
+  it("groups entities including those with undefined keys", () => {
+    const data: Entity[] = [
+      { __id: "1", name: "Anna", city: "Warszawa" },
+      { __id: "2", name: "Jan" },
+      { __id: "3", name: "Piotr", city: "Warszawa" },
+    ];
+    const groups = QueryEngine.groupEntities(data, "city");
+    expect(groups).toHaveLength(2);
+    const warszawaGroup = groups.find((g) => g.key === "Warszawa");
+    const undefinedGroup = groups.find((g) => g.key === undefined);
+    expect(warszawaGroup!.count).toBe(2);
+    expect(undefinedGroup!.count).toBe(1);
+  });
+});
+
+describe("empty input edge cases", () => {
+  it("sortEntities returns empty array for empty input", () => {
+    const result = QueryEngine.sortEntities([], [{ field: "name", direction: "asc" }]);
+    expect(result).toEqual([]);
+  });
+
+  it("groupEntities returns empty array for empty input", () => {
+    const result = QueryEngine.groupEntities([], "name");
+    expect(result).toEqual([]);
+  });
+
+  it("filterEntities with empty entity list returns empty", () => {
+    const filters: Filter[] = [{ field: "name", operator: "=", value: "Anna" }];
+    const result = QueryEngine.filterEntities([], filters);
+    expect(result).toEqual([]);
+  });
+
+  it("paginateEntities with Infinity limit defaults to full length", () => {
+    const result = QueryEngine.paginateEntities(users, 0, Infinity);
+    expect(result.items).toHaveLength(users.length);
+    expect(result.total).toBe(users.length);
+    expect(result.limit).toBe(users.length);
+    expect(result.hasNext).toBe(false);
+  });
+});
 });

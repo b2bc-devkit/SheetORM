@@ -17,9 +17,9 @@ function serializeValue(value: unknown, fieldDef: FieldDefinition): unknown {
       case "reference":
         return String(value);
       case "number": {
-        if (typeof value === "number") return isNaN(value) ? "" : value;
+        if (typeof value === "number") return Number.isFinite(value) ? value : "";
         const num = Number(value);
-        return isNaN(num) ? "" : num;
+        return Number.isFinite(num) ? num : "";
       }
       case "boolean": {
         if (typeof value === "boolean") return value;
@@ -28,7 +28,7 @@ function serializeValue(value: unknown, fieldDef: FieldDefinition): unknown {
         return lower === "true" || lower === "1" || lower === "yes";
       }
       case "date":
-        if (value instanceof Date) return value.toISOString();
+        if (value instanceof Date) return isNaN(value.getTime()) ? "" : value.toISOString();
         return String(value);
       case "json":
         return JSON.stringify(value);
@@ -40,7 +40,7 @@ function serializeValue(value: unknown, fieldDef: FieldDefinition): unknown {
   // Auto-infer from JS value (when type is not set)
   if (typeof value === "number") return value;
   if (typeof value === "boolean") return value;
-  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Date) return isNaN(value.getTime()) ? "" : value.toISOString();
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
@@ -61,7 +61,7 @@ function deserializeValue(cellValue: unknown, fieldDef: FieldDefinition): unknow
         return String(cellValue);
       case "number": {
         const num = Number(cellValue);
-        return isNaN(num) ? null : num;
+        return Number.isFinite(num) ? num : null;
       }
       case "boolean":
         if (typeof cellValue === "boolean") return cellValue;
@@ -72,7 +72,8 @@ function deserializeValue(cellValue: unknown, fieldDef: FieldDefinition): unknow
         }
         return Boolean(cellValue);
       case "date":
-        return cellValue instanceof Date ? cellValue.toISOString() : String(cellValue);
+        if (cellValue instanceof Date) return isNaN(cellValue.getTime()) ? null : cellValue.toISOString();
+        return String(cellValue);
       case "json":
         if (typeof cellValue === "string" && cellValue.length > 0) {
           try {

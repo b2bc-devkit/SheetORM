@@ -790,6 +790,100 @@ describe("Record ActiveRecord API", () => {
     });
   });
 
+  describe("rollbackBatch()", () => {
+    it("discards buffered operations without writing", () => {
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
+      expect(Car.count()).toBe(1);
+
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      repo.beginBatch();
+      repo.save({ make: "Honda", model: "Civic" });
+      repo.save({ make: "BMW", model: "X5" });
+      repo.delete(Car.find()[0].__id);
+
+      repo.rollbackBatch();
+
+      expect(repo.isBatchActive()).toBe(false);
+      expect(Car.count()).toBe(1);
+      expect(Car.find()[0].make).toBe("Toyota");
+    });
+  });
+
+  describe("batch happy-path lifecycle", () => {
+    it("beginBatch → save → delete → commitBatch applies all operations", () => {
+      const car1 = Car.create({ make: "Toyota", model: "Corolla" });
+      car1.save();
+      const car2 = Car.create({ make: "Honda", model: "Civic" });
+      car2.save();
+      expect(Car.count()).toBe(2);
+
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      expect(repo.isBatchActive()).toBe(false);
+
+      repo.beginBatch();
+      expect(repo.isBatchActive()).toBe(true);
+
+      repo.save({ make: "BMW", model: "X5" });
+      repo.delete(car1.__id);
+
+      repo.commitBatch();
+
+      expect(repo.isBatchActive()).toBe(false);
+      expect(Car.count()).toBe(2);
+      const remaining = Car.find();
+      expect(remaining.map((c) => c.make).sort()).toEqual(["BMW", "Honda"]);
+    });
+
+    it("count() during batch returns sheet state, not buffered state", () => {
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
+      expect(Car.count()).toBe(1);
+
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      repo.beginBatch();
+      repo.save({ make: "Honda", model: "Civic" });
+
+      // count() reads from sheet/cache — buffered save is not visible
+      expect(Car.count()).toBe(1);
+
+      repo.commitBatch();
+      expect(Car.count()).toBe(2);
+    });
+  });
+
+  describe("findById after gap row uses cached array scan", () => {
+    it("returns correct entity without re-reading sheet data", () => {
+      const car1 = new Car();
+      car1.make = "Honda";
+      car1.model = "Civic";
+      car1.year = 2020;
+      car1.save();
+
+      const car2 = new Car();
+      car2.make = "Toyota";
+      car2.model = "Camry";
+      car2.year = 2021;
+      car2.save();
+
+      // Inject gap row between the two entities
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      const sheet = (repo as unknown as { getSheet(): { appendRow(v: unknown[]): void } }).getSheet();
+      sheet.appendRow(["", "", "", "", "", ""]);
+
+      // Clear cache to rebuild with gap row present
+      Registry.getInstance().clearCache();
+
+      // First find loads entities and builds idToRowIndex with raw row indices
+      const all = Car.find();
+      expect(all).toHaveLength(2);
+
+      // findById for entity after gap row should return correct entity via cached array scan
+      const found = Car.findById(car2.__id);
+      expect(found).not.toBeNull();
+      expect(found!.make).toBe("Toyota");
+      expect(found!.__id).toBe(car2.__id);
+    });
+  });
+
   describe("saveAll() batch idToRowIndex integrity", () => {
     it("assigns correct row indices so delete targets the right entity", () => {
       // Create two entities in a single saveAll batch
@@ -814,6 +908,26 @@ describe("Record ActiveRecord API", () => {
 
       // Beta should be gone
       expect(Car.findById(beta!.__id)).toBeNull();
+    });
+
+    it("delete() returns false on unsaved record (no __id)", () => {
+      const car = new Car();
+      car.make = "Ghost";
+      car.model = "Phantom";
+      expect(car.delete()).toBe(false);
+    });
+
+    it("toJSON() returns undefined __id for unsaved entity", () => {
+      const car = Car.create({ make: "Ghost", model: "Phantom", year: 2024, color: "black" });
+      const json = car.toJSON();
+      expect(json.__id).toBeUndefined();
+      expect(json.make).toBe("Ghost");
+      expect(json.model).toBe("Phantom");
+    });
+
+    it("saveAll() with empty array returns empty array", () => {
+      const result = Car.saveAll([]);
+      expect(result).toEqual([]);
     });
   });
 });

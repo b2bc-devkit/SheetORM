@@ -277,6 +277,9 @@ export class SheetRepository<T extends Entity> {
         const hit = cached[rowIdx];
         // Validate ID — gap rows may cause cache index drift
         if (hit?.__id === id) return hit;
+        // Index/cache divergence (e.g. gap rows): scan cached array directly
+        // to avoid unnecessary sheet re-read via loadAllEntities()
+        return cached.find((e) => e?.__id === id) ?? null;
       }
     }
     const all = this.loadAllEntities();

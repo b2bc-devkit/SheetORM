@@ -170,3 +170,89 @@ describe("entityToRow / rowToEntity", () => {
     expect(result).toBe("2024-03-15T10:30:00.000Z");
   });
 });
+
+describe("serializeValue edge cases", () => {
+  it("serializes Infinity as empty for number type", () => {
+    const fd: FieldDefinition = { name: "x", type: "number" };
+    expect(Serialization.serializeValue(Infinity, fd)).toBe("");
+    expect(Serialization.serializeValue(-Infinity, fd)).toBe("");
+  });
+
+  it("serializes Infinity string as empty for number type", () => {
+    const fd: FieldDefinition = { name: "x", type: "number" };
+    expect(Serialization.serializeValue("Infinity", fd)).toBe("");
+    expect(Serialization.serializeValue("-Infinity", fd)).toBe("");
+  });
+
+  it("serializes invalid Date as empty for date type", () => {
+    const fd: FieldDefinition = { name: "x", type: "date" };
+    expect(Serialization.serializeValue(new Date("invalid"), fd)).toBe("");
+  });
+
+  it("auto-infers number type when fieldDef.type is undefined", () => {
+    const fd: FieldDefinition = { name: "x" };
+    expect(Serialization.serializeValue(42, fd)).toBe(42);
+  });
+
+  it("auto-infers boolean type when fieldDef.type is undefined", () => {
+    const fd: FieldDefinition = { name: "x" };
+    expect(Serialization.serializeValue(true, fd)).toBe(true);
+  });
+
+  it("auto-infers object as JSON when fieldDef.type is undefined", () => {
+    const fd: FieldDefinition = { name: "x" };
+    expect(Serialization.serializeValue({ a: 1 }, fd)).toBe('{"a":1}');
+  });
+});
+
+describe("deserializeValue edge cases", () => {
+  it("deserializes Infinity as null for number type", () => {
+    const fd: FieldDefinition = { name: "x", type: "number" };
+    expect(Serialization.deserializeValue(Infinity, fd)).toBeNull();
+    expect(Serialization.deserializeValue(-Infinity, fd)).toBeNull();
+  });
+
+  it("deserializes Infinity string as null for number type", () => {
+    const fd: FieldDefinition = { name: "x", type: "number" };
+    expect(Serialization.deserializeValue("Infinity", fd)).toBeNull();
+  });
+
+  it("deserializes invalid Date object as null for date type", () => {
+    const fd: FieldDefinition = { name: "x", type: "date" };
+    expect(Serialization.deserializeValue(new Date("invalid"), fd)).toBeNull();
+  });
+
+  it("returns raw value when fieldDef.type is undefined", () => {
+    const fd: FieldDefinition = { name: "x" };
+    expect(Serialization.deserializeValue(42, fd)).toBe(42);
+    expect(Serialization.deserializeValue("hello", fd)).toBe("hello");
+  });
+
+  it("auto-infers invalid Date as empty string when fieldDef.type is undefined", () => {
+    const fd: FieldDefinition = { name: "x" };
+    expect(Serialization.serializeValue(new Date("invalid"), fd)).toBe("");
+  });
+
+  it("serializes NaN as empty for number type", () => {
+    const fd: FieldDefinition = { name: "x", type: "number" };
+    expect(Serialization.serializeValue(NaN, fd)).toBe("");
+  });
+
+  it("deserializes boolean from number 0 and 1", () => {
+    const fd: FieldDefinition = { name: "x", type: "boolean" };
+    expect(Serialization.deserializeValue(0, fd)).toBe(false);
+    expect(Serialization.deserializeValue(1, fd)).toBe(true);
+  });
+
+  it("deserializes boolean string false as false", () => {
+    const fd: FieldDefinition = { name: "x", type: "boolean" };
+    expect(Serialization.deserializeValue("false", fd)).toBe(false);
+    expect(Serialization.deserializeValue("FALSE", fd)).toBe(false);
+  });
+
+  it("serializes boolean from string yes/no", () => {
+    const fd: FieldDefinition = { name: "x", type: "boolean" };
+    expect(Serialization.serializeValue("yes", fd)).toBe(true);
+    expect(Serialization.serializeValue("no", fd)).toBe(false);
+  });
+});
