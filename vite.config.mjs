@@ -31,7 +31,7 @@ function resolveRealEntry() {
  */
 function gasPlugin() {
   const CLASS_ENTRYPOINTS = {
-    GasEntrypoints: ["runTests", "validateTests", "runBenchmark"],
+    GasEntrypoints: ["runTests", "validateTests", "runBenchmark", "demoCreate", "demoRead", "demoUpdate", "demoDelete"],
   };
 
   function detectExportNames(entryPath) {
