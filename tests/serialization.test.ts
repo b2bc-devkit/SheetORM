@@ -37,6 +37,12 @@ describe("serializeValue", () => {
     expect(Serialization.serializeValue(d, fd)).toBe("2024-01-15T10:00:00.000Z");
   });
 
+  it("serializes date type with non-Date string value", () => {
+    const fd: FieldDefinition = { name: "x", type: "date" };
+    expect(Serialization.serializeValue("2024-01-01", fd)).toBe("2024-01-01");
+    expect(Serialization.serializeValue("not-a-date", fd)).toBe("not-a-date");
+  });
+
   it("serializes reference", () => {
     const fd: FieldDefinition = { name: "x", type: "reference" };
     expect(Serialization.serializeValue("user-001", fd)).toBe("user-001");
@@ -78,10 +84,23 @@ describe("deserializeValue", () => {
     expect(result).toBe("2024-01-15T10:00:00.000Z");
   });
 
+  it("deserializes reference type as string", () => {
+    const fd: FieldDefinition = { name: "x", type: "reference" };
+    expect(Serialization.deserializeValue("user-001", fd)).toBe("user-001");
+    expect(Serialization.deserializeValue(42, fd)).toBe("42");
+  });
+
   it("deserializes json", () => {
     const fd: FieldDefinition = { name: "x", type: "json" };
     expect(Serialization.deserializeValue('{"a":1}', fd)).toEqual({ a: 1 });
     expect(Serialization.deserializeValue("invalid json", fd)).toBeNull();
+  });
+
+  it("deserializes json type with non-string value returns it as-is", () => {
+    const fd: FieldDefinition = { name: "x", type: "json" };
+    const obj = { a: 1 };
+    expect(Serialization.deserializeValue(obj, fd)).toBe(obj);
+    expect(Serialization.deserializeValue(42, fd)).toBe(42);
   });
 
   it("round-trips json string values", () => {
@@ -203,6 +222,17 @@ describe("serializeValue edge cases", () => {
   it("auto-infers object as JSON when fieldDef.type is undefined", () => {
     const fd: FieldDefinition = { name: "x" };
     expect(Serialization.serializeValue({ a: 1 }, fd)).toBe('{"a":1}');
+  });
+
+  it("auto-infers valid Date to ISO string when fieldDef.type is undefined", () => {
+    const fd: FieldDefinition = { name: "x" };
+    const d = new Date("2024-01-15T10:00:00.000Z");
+    expect(Serialization.serializeValue(d, fd)).toBe("2024-01-15T10:00:00.000Z");
+  });
+
+  it("auto-infers string type as String() when fieldDef.type is undefined", () => {
+    const fd: FieldDefinition = { name: "x" };
+    expect(Serialization.serializeValue("hello", fd)).toBe("hello");
   });
 });
 

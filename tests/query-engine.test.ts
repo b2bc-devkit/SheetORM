@@ -207,6 +207,13 @@ describe("executeQuery", () => {
     const result = QueryEngine.executeQuery(users, {});
     expect(result).toHaveLength(5);
   });
+
+  it("executeQuery applies offset without limit correctly", () => {
+    const result = QueryEngine.executeQuery(users, { offset: 2 });
+    expect(result).toHaveLength(users.length - 2);
+    expect(result[0].name).toBe("Piotr");
+    expect(result[result.length - 1].name).toBe("Zofia");
+  });
 });
 
 describe("filterEntitiesOr", () => {
@@ -239,6 +246,17 @@ describe("filterEntitiesOr", () => {
   it("returns all entities for empty groups", () => {
     const result = QueryEngine.filterEntitiesOr(users, []);
     expect(result).toHaveLength(5);
+  });
+
+  it("empty group within OR groups matches nothing", () => {
+    // An empty inner group [] has no conditions — it should not match any entity
+    const groups: Filter[][] = [
+      [], // empty group: contributes no matches
+      [{ field: "city", operator: "=", value: "Gdańsk" }],
+    ];
+    const result = QueryEngine.filterEntitiesOr(users, groups);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("Maria");
   });
 });
 
@@ -488,8 +506,15 @@ describe("empty input edge cases", () => {
 
   it("in operator with >8 elements uses Set-based path", () => {
     const targetCities = [
-      "Gdańsk", "Kraków", "Warszawa", "Wrocław", "Poznań",
-      "Łódź", "Katowice", "Szczecin", "Lublin",
+      "Gdańsk",
+      "Kraków",
+      "Warszawa",
+      "Wrocław",
+      "Poznań",
+      "Łódź",
+      "Katowice",
+      "Szczecin",
+      "Lublin",
     ];
     const filters: Filter[] = [{ field: "city", operator: "in", value: targetCities }];
     const result = QueryEngine.filterEntities(users, filters);

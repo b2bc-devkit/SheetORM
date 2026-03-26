@@ -394,10 +394,15 @@ export class IndexStore {
   lookupCombined(indexTableName: string, field: string, value: unknown): string[] {
     const data = this.getCombinedData(indexTableName);
     const valueStr = String(value);
+    const seen = new Set<string>();
     const ids: string[] = [];
     for (let i = 0; i < data.length; i++) {
       if (String(data[i][0]) === field && String(data[i][1]) === valueStr) {
-        ids.push(String(data[i][2]));
+        const id = String(data[i][2]);
+        if (!seen.has(id)) {
+          seen.add(id);
+          ids.push(id);
+        }
       }
     }
     return ids;
@@ -617,10 +622,15 @@ export class IndexStore {
     const maxResults =
       limit !== undefined && Number.isFinite(limit) && limit >= 0 ? Math.floor(limit) : candidates.length;
     if (maxResults === 0) return [];
+    const seen = new Set<string>();
     const out: string[] = [];
     for (const pos of candidates) {
       if (idx.normalized[pos].includes(pat)) {
-        out.push(idx.entries[pos].entityId);
+        const entityId = idx.entries[pos].entityId;
+        if (!seen.has(entityId)) {
+          seen.add(entityId);
+          out.push(entityId);
+        }
         if (out.length >= maxResults) break;
       }
     }

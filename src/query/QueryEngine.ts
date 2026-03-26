@@ -167,7 +167,8 @@ function filterEntitiesOr<T extends Entity>(entities: T[], groups: Filter[][]): 
     for (let g = 0; g < numGroups; g++) {
       const predicates = compiledGroups[g];
       const predLen = predicates.length;
-      let groupMatch = true;
+      // An empty group never matches — it has no conditions to satisfy
+      let groupMatch = predLen > 0;
 
       for (let j = 0; j < predLen; j++) {
         if (!predicates[j](entity)) {

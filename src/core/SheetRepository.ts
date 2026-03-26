@@ -32,7 +32,12 @@ export class SheetRepository<T extends Entity> {
   private fieldMap: Map<string, FieldDefinition>;
   private idToRowIndex: Map<string, number> | null = null;
   private batchBuffer: Array<{ type: "save" | "delete"; data: unknown }> | null = null;
-  private entityBatch: Array<{ entity: T; row: unknown[]; dataIndex: number }> | null = null;
+  private entityBatch: Array<{
+    entity: T;
+    row: unknown[];
+    dataIndex: number;
+    mode: "create" | "update";
+  }> | null = null;
 
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -68,12 +73,14 @@ export class SheetRepository<T extends Entity> {
     if (this.batchBuffer) {
       const now = new Date().toISOString();
       const id = partial.__id ?? Uuid.generate();
-      const isUpdate = Boolean(partial.__id);
+      // Use presence of __createdAt as heuristic: explicit __id with no __createdAt
+      // likely means a new entity with a caller-supplied ID, not an update.
+      const isLikelyUpdate = Boolean(partial.__id && partial.__createdAt);
       const buffered = { ...partial, __id: id };
       this.batchBuffer.push({ type: "save", data: buffered });
       return {
         ...buffered,
-        ...(!isUpdate ? { __createdAt: now } : {}),
+        ...(!isLikelyUpdate ? { __createdAt: now } : {}),
         __updatedAt: now,
       } as T;
     }
@@ -175,7 +182,9 @@ export class SheetRepository<T extends Entity> {
 
       // Write at computed position — single setValues call, no flush needed
       // In batch mode, account for already-buffered entities that haven't been flushed yet
-      const dataIndex = sheet.getRowCount() + (this.entityBatch ? this.entityBatch.length : 0);
+      const dataIndex =
+        sheet.getRowCount() +
+        (this.entityBatch ? this.entityBatch.filter((item) => item.mode === "create").length : 0);
       if (!this.idToRowIndex) {
         if (dataIndex === 0) {
           this.idToRowIndex = new Map();
@@ -187,7 +196,7 @@ export class SheetRepository<T extends Entity> {
       }
       // In entity batch mode: buffer the row; otherwise write immediately
       if (this.entityBatch !== null) {
-        this.entityBatch.push({ entity, row, dataIndex });
+        this.entityBatch.push({ entity, row, dataIndex, mode: "create" });
       } else {
         sheet.updateRow(dataIndex, row);
       }
@@ -210,7 +219,11 @@ export class SheetRepository<T extends Entity> {
       } as T;
 
       const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
-      sheet.updateRow(existingIdx!, row);
+      if (this.entityBatch !== null) {
+        this.entityBatch.push({ entity, row, dataIndex: existingIdx!, mode: "update" });
+      } else {
+        sheet.updateRow(existingIdx!, row);
+      }
 
       // Update indexes
       const oldValues: Record<string, unknown> = {};
@@ -276,14 +289,16 @@ export class SheetRepository<T extends Entity> {
       if (cached) {
         const hit = cached[rowIdx];
         // Validate ID — gap rows may cause cache index drift
-        if (hit?.__id === id) return hit;
+        if (hit?.__id === id) return this.cloneEntity(hit);
         // Index/cache divergence (e.g. gap rows): scan cached array directly
         // to avoid unnecessary sheet re-read via loadAllEntities()
-        return cached.find((e) => e?.__id === id) ?? null;
+        const found = cached.find((e) => e?.__id === id);
+        return found ? this.cloneEntity(found) : null;
       }
     }
     const all = this.loadAllEntities();
-    return all.find((e) => e.__id === id) ?? null;
+    const found = all.find((e) => e.__id === id);
+    return found ? this.cloneEntity(found) : null;
   }
 
   /**
@@ -294,7 +309,7 @@ export class SheetRepository<T extends Entity> {
    */
   find(options?: QueryOptions): T[] {
     const all = this.loadAllEntities();
-    if (!options) return all;
+    if (!options) return this.cloneEntities(all);
 
     if (options.where && !options.whereGroups && this.schema.indexTableName) {
       const searchFilters: { field: string; value: string }[] = [];
@@ -325,14 +340,16 @@ export class SheetRepository<T extends Entity> {
         if (!candidateIds || candidateIds.size === 0) return [];
 
         const narrowed = all.filter((e) => candidateIds!.has(e.__id));
-        return QueryEngine.executeQuery(narrowed, {
-          ...options,
-          where: otherFilters.length > 0 ? otherFilters : undefined,
-        });
+        return this.cloneEntities(
+          QueryEngine.executeQuery(narrowed, {
+            ...options,
+            where: otherFilters.length > 0 ? otherFilters : undefined,
+          }),
+        );
       }
     }
 
-    return QueryEngine.executeQuery(all, options);
+    return this.cloneEntities(QueryEngine.executeQuery(all, options));
   }
 
   /**
@@ -489,7 +506,7 @@ export class SheetRepository<T extends Entity> {
    * Paginated select.
    */
   select(offset: number, limit: number, options?: QueryOptions): PaginatedResult<T> {
-    let entities = this.loadAllEntities();
+    let entities = this.cloneEntities(this.loadAllEntities());
 
     if (options) {
       entities = QueryEngine.executeQuery(entities, { ...options, offset: undefined, limit: undefined });
@@ -502,7 +519,7 @@ export class SheetRepository<T extends Entity> {
    * Group entities by a field.
    */
   groupBy(field: string, options?: QueryOptions): GroupResult<T>[] {
-    let entities = this.loadAllEntities();
+    let entities = this.cloneEntities(this.loadAllEntities());
 
     if (options) {
       entities = QueryEngine.executeQuery(entities, options);
@@ -515,7 +532,7 @@ export class SheetRepository<T extends Entity> {
    * Create a fluent query for this repository.
    */
   query(): Query<T> {
-    return new Query<T>(() => this.loadAllEntities());
+    return new Query<T>(() => this.cloneEntities(this.loadAllEntities()));
   }
 
   // ─── Batch Operations ──────────────────────────────
@@ -660,10 +677,19 @@ export class SheetRepository<T extends Entity> {
     }
     const batch = this.entityBatch;
     this.entityBatch = null;
-    // Rows are in insertion order; write them all at once
-    const startIdx = batch[0].dataIndex;
-    const rows = batch.map((item) => item.row);
-    sheet.writeRowsAt(startIdx, rows);
+    sheet.updateRows(
+      [...batch]
+        .sort((a, b) => a.dataIndex - b.dataIndex)
+        .map((item) => ({ rowIndex: item.dataIndex, values: item.row })),
+    );
+  }
+
+  private cloneEntity(entity: T): T {
+    return { ...entity };
+  }
+
+  private cloneEntities(entities: T[]): T[] {
+    return entities.map((entity) => this.cloneEntity(entity));
   }
 
   private updateCacheAfterSave(entity: T, isNew: boolean): void {

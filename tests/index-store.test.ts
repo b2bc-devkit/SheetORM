@@ -343,12 +343,7 @@ describe("IndexStore", () => {
 
     expect(noCacheStore.lookupCombined("idx_NoCache", "name", "Alice")).toEqual(["e-001"]);
 
-    noCacheStore.updateInCombined(
-      "idx_NoCache",
-      "e-001",
-      { name: "Alice" },
-      { name: "Alicia" },
-    );
+    noCacheStore.updateInCombined("idx_NoCache", "e-001", { name: "Alice" }, { name: "Alicia" });
     expect(noCacheStore.lookupCombined("idx_NoCache", "name", "Alicia")).toEqual(["e-001"]);
     expect(noCacheStore.lookupCombined("idx_NoCache", "name", "Alice")).toEqual([]);
 
@@ -369,12 +364,7 @@ describe("IndexStore", () => {
     indexStore.createCombinedIndex("idx_Users");
     indexStore.registerIndex("idx_Users", "email", false);
 
-    indexStore.updateInCombined(
-      "idx_Users",
-      "user-001",
-      { email: "" },
-      { email: "new@example.com" },
-    );
+    indexStore.updateInCombined("idx_Users", "user-001", { email: "" }, { email: "new@example.com" });
     expect(indexStore.lookupCombined("idx_Users", "email", "new@example.com")).toEqual(["user-001"]);
   });
 
@@ -384,5 +374,27 @@ describe("IndexStore", () => {
       expect(IndexStore.normalizeForSearch("snake_case")).toBe("snake case");
       expect(IndexStore.normalizeForSearch("a\u2013b")).toBe("a b");
     });
+  });
+
+  it("lookupCombined deduplicates entityIds when same entity indexed twice", () => {
+    indexStore.createCombinedIndex("idx_Users");
+    indexStore.registerIndex("idx_Users", "email", false);
+    indexStore.addToCombined("idx_Users", "email", "jan@example.com", "user-001");
+    // Non-unique field: second call adds a duplicate row for the same entity
+    indexStore.addToCombined("idx_Users", "email", "jan@example.com", "user-001");
+
+    const ids = indexStore.lookupCombined("idx_Users", "email", "jan@example.com");
+    expect(ids).toEqual(["user-001"]);
+  });
+
+  it("searchCombined deduplicates entityIds from repeated index entries", () => {
+    indexStore.createCombinedIndex("idx_Cars");
+    indexStore.registerIndex("idx_Cars", "model", false);
+    indexStore.addToCombined("idx_Cars", "model", "BMW 320i", "car-001");
+    // Duplicate row for same entity (non-unique field, no guard)
+    indexStore.addToCombined("idx_Cars", "model", "BMW 320i", "car-001");
+
+    const ids = indexStore.searchCombined("idx_Cars", "model", "BMW");
+    expect(ids).toEqual(["car-001"]);
   });
 });

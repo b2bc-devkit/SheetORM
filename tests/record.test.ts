@@ -534,6 +534,29 @@ describe("Record ActiveRecord API", () => {
       expect(all).toHaveLength(1);
       expect(all[0].make).toBe("Toyota");
     });
+
+    it("does not persist earlier updates when a later saveAll entry fails", () => {
+      const car = new Car();
+      car.make = "Toyota";
+      car.model = "Corolla";
+      car.year = 2024;
+      car.color = "blue";
+      car.save();
+
+      expect(() => {
+        Car.saveAll([
+          { __id: car.__id, make: "Toyota", model: "Camry", year: 2025, color: "black" },
+          { make: "BMW" },
+        ]);
+      }).toThrow(/Required field "model"/);
+
+      Registry.getInstance().clearCache();
+      const reloaded = Car.findById(car.__id);
+      expect(reloaded).not.toBeNull();
+      expect(reloaded!.model).toBe("Corolla");
+      expect(reloaded!.year).toBe(2024);
+      expect(reloaded!.color).toBe("blue");
+    });
   });
 
   describe("commitBatch() error-path cache invalidation", () => {
@@ -980,6 +1003,56 @@ describe("Record ActiveRecord API", () => {
       const deletedIndiv = Car.deleteAll();
       expect(deletedIndiv).toBe(2);
       expect(Car.count()).toBe(0);
+    });
+
+    it("bulk deleteAll removes gap rows from sheet as expected", () => {
+      // Create 3 entities so that deleting them triggers the bulk path (> 2)
+      Car.create({ make: "Ford", model: "Fiesta", year: 2020 }).save();
+      Car.create({ make: "Ford", model: "Focus", year: 2021 }).save();
+      Car.create({ make: "Ford", model: "Mondeo", year: 2022 }).save();
+      Car.create({ make: "Tesla", model: "Model S", year: 2023 }).save();
+
+      // Inject a gap row directly into the underlying sheet
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      const sheet = (repo as unknown as { getSheet(): { appendRow(v: unknown[]): void } }).getSheet();
+      sheet.appendRow(["", "", "", "", "", "", ""]);
+
+      // Sheet now has 5 raw rows: 4 entities + 1 gap
+      const rawSheet = sheet as unknown as { _getRawData(): unknown[][] };
+      expect(rawSheet._getRawData()).toHaveLength(5);
+
+      // Clear cache so loadAllEntities re-reads from sheet (including gap row)
+      Registry.getInstance().clearCache();
+
+      // Delete all 3 Fords (bulk path: 3 > 2), keeping Tesla
+      const count = Car.deleteAll({ where: [{ field: "make", operator: "=", value: "Ford" }] });
+      expect(count).toBe(3);
+      expect(Car.count()).toBe(1);
+
+      // Gap row is gone: replaceAllData wrote back only the remaining entities
+      expect(rawSheet._getRawData()).toHaveLength(1);
+    });
+  });
+
+  describe("indexed search integration", () => {
+    it("indexed search with additional where filter narrows results", () => {
+      // Car.make is @Indexed — the search operator uses the n-gram index
+      Car.create({ make: "Toyota", model: "Corolla", year: 2020 }).save();
+      Car.create({ make: "Toyota", model: "Supra", year: 2024 }).save();
+      Car.create({ make: "Toymaster", model: "X1", year: 2023 }).save();
+      Car.create({ make: "Honda", model: "Civic", year: 2022 }).save();
+
+      // "toy" matches Toyota (x2) and Toymaster (x1)
+      // year >= 2023 keeps Toyota Supra (2024) + Toymaster X1 (2023), drops Toyota Corolla (2020)
+      const results = Car.find({
+        where: [
+          { field: "make", operator: "search", value: "toy" },
+          { field: "year", operator: ">=", value: 2023 },
+        ],
+      });
+
+      expect(results).toHaveLength(2);
+      expect(results.map((c) => c.model).sort()).toEqual(["Supra", "X1"]);
     });
   });
 });

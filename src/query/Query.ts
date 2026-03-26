@@ -148,7 +148,10 @@ export class Query<T extends Entity> {
     }
 
     const offset = this._offset ?? 0;
-    return entities.length > offset ? entities[offset] : null;
+    const limit = this._limit;
+    if (limit === 0) return null;
+    const visible = entities.slice(offset, limit !== undefined ? offset + limit : undefined);
+    return visible.length > 0 ? visible[0] : null;
   }
 
   /**

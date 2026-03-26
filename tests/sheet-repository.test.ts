@@ -160,3 +160,42 @@ describe("SheetRepository error paths", () => {
     ).toThrow();
   });
 });
+
+describe("SheetRepository detached read results", () => {
+  let adapter: MockSpreadsheetAdapter;
+
+  beforeEach(() => {
+    adapter = new MockSpreadsheetAdapter();
+  });
+
+  it("findById returns a detached copy from cache", () => {
+    const repo = createRepo(adapter);
+    const saved = repo.save({ name: "Widget", price: 10, category: "tools" });
+
+    const found = repo.findById(saved.__id)!;
+    found.name = "CHANGED";
+
+    const reread = repo.findById(saved.__id)!;
+    expect(reread.name).toBe("Widget");
+  });
+
+  it("query() returns detached copies from cache-backed reads", () => {
+    const repo = createRepo(adapter);
+    const saved = repo.save({ name: "Widget", price: 10, category: "tools" });
+
+    const first = repo.query().first()!;
+    first.name = "CHANGED";
+
+    const reread = repo.findById(saved.__id)!;
+    expect(reread.name).toBe("Widget");
+  });
+
+  it("save() in batch mode with explicit __id sets __createdAt for new entity", () => {
+    const repo = createRepo(adapter);
+    repo.beginBatch();
+    // Entity has an explicit __id but no __createdAt — it is a new entity with a caller-supplied ID
+    const placeholder = repo.save({ __id: "brand-new-id", name: "X", price: 5, category: "tools" });
+    expect(placeholder.__createdAt).toBeDefined();
+    repo.rollbackBatch();
+  });
+});

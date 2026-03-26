@@ -675,7 +675,9 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const ids = indexStore.searchCombined(indexTable, "model", "BMW", 0);
       assertEqual(ids.length, 0, "searchCombined with limit=0 should return empty array");
     },
-    "searchCombined (n-gram) > finds match for query shorter than trigram size": (ctx: RuntimeCaseContext) => {
+    "searchCombined (n-gram) > finds match for query shorter than trigram size": (
+      ctx: RuntimeCaseContext,
+    ) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const indexTable = `idx_${ctx.state.nextTableName("Cars")}`;
@@ -692,7 +694,9 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const ids = indexStore.lookupCombined("idx_NonExistent", "field", "value");
       assertDeepEqual(ids, [], "lookupCombined should return empty for non-existent table");
     },
-    "updateInCombined throws unique violation when value conflicts with another entity": (ctx: RuntimeCaseContext) => {
+    "updateInCombined throws unique violation when value conflicts with another entity": (
+      ctx: RuntimeCaseContext,
+    ) => {
       const adapter = ctx.state.getAdapter();
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const indexTable = ctx.state.nextTableName("idx_upd_uniq");
@@ -702,12 +706,13 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       indexStore.addToCombined(indexTable, "email", "anna@example.com", "user-002");
 
       assertThrows(
-        () => indexStore.updateInCombined(
-          indexTable,
-          "user-002",
-          { email: "anna@example.com" },
-          { email: "jan@example.com" },
-        ),
+        () =>
+          indexStore.updateInCombined(
+            indexTable,
+            "user-002",
+            { email: "anna@example.com" },
+            { email: "jan@example.com" },
+          ),
         /Unique index violation/,
         "updateInCombined should throw unique violation",
       );
@@ -726,11 +731,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         "user-001",
       );
       assertThrows(
-        () => indexStore.addAllFieldsToCombined(
-          indexTable,
-          [{ field: "email", value: "dup@example.com" }],
-          "user-002",
-        ),
+        () =>
+          indexStore.addAllFieldsToCombined(
+            indexTable,
+            [{ field: "email", value: "dup@example.com" }],
+            "user-002",
+          ),
         /Unique index violation/,
         "addAllFieldsToCombined should detect unique violation in pending batch",
       );
@@ -751,12 +757,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         "lookup should work without cache",
       );
 
-      indexStore.updateInCombined(
-        indexTable,
-        "e-001",
-        { name: "Alice" },
-        { name: "Alicia" },
-      );
+      indexStore.updateInCombined(indexTable, "e-001", { name: "Alice" }, { name: "Alicia" });
       assertDeepEqual(
         indexStore.lookupCombined(indexTable, "name", "Alicia"),
         ["e-001"],
@@ -797,12 +798,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       indexStore.createCombinedIndex(indexTable);
       indexStore.registerIndex(indexTable, "email", false);
 
-      indexStore.updateInCombined(
-        indexTable,
-        "user-001",
-        { email: "" },
-        { email: "new@example.com" },
-      );
+      indexStore.updateInCombined(indexTable, "user-001", { email: "" }, { email: "new@example.com" });
       assertDeepEqual(
         indexStore.lookupCombined(indexTable, "email", "new@example.com"),
         ["user-001"],
@@ -820,11 +816,33 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         "snake case",
         "underscore should be normalized to space",
       );
-      assertEqual(
-        IndexStore.normalizeForSearch("a\u2013b"),
-        "a b",
-        "en-dash should be normalized to space",
-      );
+      assertEqual(IndexStore.normalizeForSearch("a\u2013b"), "a b", "en-dash should be normalized to space");
+    },
+    "lookupCombined deduplicates entityIds when same entity indexed twice": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexTableName = ctx.state.nextTableName("idx_DedupLookup");
+      const store = new IndexStore(adapter, new MemoryCache());
+      store.createCombinedIndex(indexTableName);
+      store.registerIndex(indexTableName, "email", false);
+      store.addToCombined(indexTableName, "email", "dup@example.com", "e-001");
+      // Non-unique: second call creates a duplicate row for the same entity
+      store.addToCombined(indexTableName, "email", "dup@example.com", "e-001");
+      const ids = store.lookupCombined(indexTableName, "email", "dup@example.com");
+      assertEqual(ids.length, 1, "lookupCombined should deduplicate repeated entityIds");
+      assertEqual(ids[0], "e-001", "deduplicated result should be e-001");
+    },
+    "searchCombined deduplicates entityIds from repeated index entries": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexTableName = ctx.state.nextTableName("idx_DedupSearch");
+      const store = new IndexStore(adapter, new MemoryCache());
+      store.createCombinedIndex(indexTableName);
+      store.registerIndex(indexTableName, "model", false);
+      store.addToCombined(indexTableName, "model", "BMW 320i", "car-001");
+      // Duplicate row for same entity
+      store.addToCombined(indexTableName, "model", "BMW 320i", "car-001");
+      const ids = store.searchCombined(indexTableName, "model", "BMW");
+      assertEqual(ids.length, 1, "searchCombined should deduplicate repeated entityIds");
+      assertEqual(ids[0], "car-001", "deduplicated result should be car-001");
     },
   },
   "query.test.ts": {
@@ -1037,6 +1055,10 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const result = createBuilder().limit(0).execute();
       assertEqual(result.length, 0, "limit(0) should return empty array");
     },
+    "first() with limit(0) returns null": () => {
+      const result = createBuilder().orderBy("price", "asc").limit(0).first();
+      assertEqual(result, null, "first() with limit(0) should return null");
+    },
     "build() with limit(0) includes limit 0": () => {
       const opts = createBuilder().limit(0).build();
       assertEqual(opts.limit, 0, "build should include limit 0");
@@ -1065,6 +1087,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result.length, 2, "should return 2 items with offset 2 limit 2");
       assertEqual(result[0].name, "Apple", "3rd item by price asc should be Apple");
       assertEqual(result[1].name, "Donut", "4th item by price asc should be Donut");
+    },
+    "execute() returns items from offset when no limit is set": () => {
+      const result = createBuilder().orderBy("price", "asc").offset(2).execute();
+      assertEqual(result.length, 3, "offset 2 with no limit should return 3 items");
+      assertEqual(result[0].name, "Apple", "first item after offset 2 should be Apple");
+      assertEqual(result[2].name, "Eggplant", "last item should be Eggplant");
     },
     "limit() and offset() floor fractional values": () => {
       const result = createBuilder().orderBy("price", "asc").limit(2.9).offset(1.7).execute();
@@ -1267,6 +1295,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const result = QueryEngine.executeQuery(queryEngineUsers, {});
       assertEqual(result.length, queryEngineUsers.length, "empty options should return all entities");
     },
+    "executeQuery applies offset without limit correctly": () => {
+      const result = QueryEngine.executeQuery(queryEngineUsers, { offset: 2 });
+      assertEqual(result.length, queryEngineUsers.length - 2, "offset-only should skip first 2 items");
+      assertEqual(result[0].name, "Piotr", "first result should be Piotr (3rd in original)");
+      assertEqual(result[result.length - 1].name, "Zofia", "last result should be Zofia");
+    },
     "matches entities passing any group": () => {
       const groups: Filter[][] = [
         [{ field: "city", operator: "=", value: "Gdańsk" }],
@@ -1292,6 +1326,15 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "returns all entities for empty groups": () => {
       const result = QueryEngine.filterEntitiesOr(queryEngineUsers, []);
       assertEqual(result.length, 5, "empty groups should return all entities");
+    },
+    "empty group within OR groups matches nothing": () => {
+      const groups: Filter[][] = [
+        [], // empty group — contributes no matches
+        [{ field: "city", operator: "=", value: "Gdańsk" }],
+      ];
+      const result = QueryEngine.filterEntitiesOr(queryEngineUsers, groups);
+      assertEqual(result.length, 1, "empty group should not pass any entity; only Gdańsk entity matches");
+      assertEqual(result[0].name, "Maria", "only Maria from Gdańsk should match");
     },
     "uses OR groups when whereGroups is provided": () => {
       const options: QueryOptions = {
@@ -1399,7 +1442,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       ];
       const sorts: SortClause[] = [{ field: "profile.score", direction: "asc" }];
       const result = QueryEngine.sortEntities(nested, sorts);
-      assertDeepEqual(result.map((u) => u.name), ["Piotr", "Anna", "Jan"], "should sort by nested score asc");
+      assertDeepEqual(
+        result.map((u) => u.name),
+        ["Piotr", "Anna", "Jan"],
+        "should sort by nested score asc",
+      );
     },
     "returns undefined for missing nested segment": () => {
       const mixed = [
@@ -1507,8 +1554,15 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "in operator with >8 elements uses Set-based path": () => {
       const targetCities = [
-        "Warszawa", "Kraków", "Gdańsk", "Łódź", "Lublin",
-        "Białystok", "Katowice", "Bydgoszcz", "Szczecin",
+        "Warszawa",
+        "Kraków",
+        "Gdańsk",
+        "Łódź",
+        "Lublin",
+        "Białystok",
+        "Katowice",
+        "Bydgoszcz",
+        "Szczecin",
       ];
       const filters: Filter[] = [{ field: "city", operator: "in", value: targetCities }];
       const result = QueryEngine.filterEntities(queryEngineUsers, filters);
@@ -1597,6 +1651,19 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         "date serialization should use ISO format",
       );
     },
+    "serializes date type with non-Date string value": () => {
+      const fd: FieldDefinition = { name: "x", type: "date" };
+      assertEqual(
+        Serialization.serializeValue("2024-01-01", fd),
+        "2024-01-01",
+        "date serialization of string value should return String() pass-through",
+      );
+      assertEqual(
+        Serialization.serializeValue("not-a-date", fd),
+        "not-a-date",
+        "date serialization of non-parseable string should return String() pass-through",
+      );
+    },
     "serializes reference": () => {
       const fd: FieldDefinition = { name: "x", type: "reference" };
       assertEqual(
@@ -1668,6 +1735,19 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const result = Serialization.deserializeValue("2024-01-15T10:00:00.000Z", fd);
       assertEqual(result, "2024-01-15T10:00:00.000Z", "date deserialization should return ISO string");
     },
+    "deserializes reference type as string": () => {
+      const fd: FieldDefinition = { name: "x", type: "reference" };
+      assertEqual(
+        Serialization.deserializeValue("user-001", fd),
+        "user-001",
+        "reference should deserialize as string",
+      );
+      assertEqual(
+        Serialization.deserializeValue(42, fd),
+        "42",
+        "numeric reference should deserialize as string",
+      );
+    },
     "deserializes json": () => {
       const fd: FieldDefinition = { name: "x", type: "json" };
       assertDeepEqual(
@@ -1680,6 +1760,15 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         null,
         "invalid json should deserialize to null",
       );
+    },
+    "deserializes json type with non-string value returns it as-is": () => {
+      const fd: FieldDefinition = { name: "x", type: "json" };
+      const obj = { a: 1 };
+      assertTrue(
+        Serialization.deserializeValue(obj, fd) === obj,
+        "non-string json value should be returned as-is (same reference)",
+      );
+      assertEqual(Serialization.deserializeValue(42, fd), 42, "numeric json value should be returned as-is");
     },
     "prepends system columns": () => {
       const fields: FieldDefinition[] = [
@@ -1776,13 +1865,29 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "serializes Infinity as empty for number type": () => {
       const fd: FieldDefinition = { name: "x", type: "number" };
-      assertEqual(Serialization.serializeValue(Infinity, fd), "", "Infinity should serialize to empty string");
-      assertEqual(Serialization.serializeValue(-Infinity, fd), "", "-Infinity should serialize to empty string");
+      assertEqual(
+        Serialization.serializeValue(Infinity, fd),
+        "",
+        "Infinity should serialize to empty string",
+      );
+      assertEqual(
+        Serialization.serializeValue(-Infinity, fd),
+        "",
+        "-Infinity should serialize to empty string",
+      );
     },
     "serializes Infinity string as empty for number type": () => {
       const fd: FieldDefinition = { name: "x", type: "number" };
-      assertEqual(Serialization.serializeValue("Infinity", fd), "", "Infinity string should serialize to empty string");
-      assertEqual(Serialization.serializeValue("-Infinity", fd), "", "-Infinity string should serialize to empty string");
+      assertEqual(
+        Serialization.serializeValue("Infinity", fd),
+        "",
+        "Infinity string should serialize to empty string",
+      );
+      assertEqual(
+        Serialization.serializeValue("-Infinity", fd),
+        "",
+        "-Infinity string should serialize to empty string",
+      );
     },
     "serializes invalid Date as empty for date type": () => {
       const fd: FieldDefinition = { name: "x", type: "date" };
@@ -1794,7 +1899,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "auto-infers number type when fieldDef.type is undefined": () => {
       const fd: FieldDefinition = { name: "x" };
-      assertEqual(Serialization.serializeValue(42, fd), 42, "number should be preserved when type is inferred");
+      assertEqual(
+        Serialization.serializeValue(42, fd),
+        42,
+        "number should be preserved when type is inferred",
+      );
     },
     "auto-infers boolean type when fieldDef.type is undefined": () => {
       const fd: FieldDefinition = { name: "x" };
@@ -1815,7 +1924,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "deserializes Infinity as null for number type": () => {
       const fd: FieldDefinition = { name: "x", type: "number" };
       assertEqual(Serialization.deserializeValue(Infinity, fd), null, "Infinity should deserialize to null");
-      assertEqual(Serialization.deserializeValue(-Infinity, fd), null, "-Infinity should deserialize to null");
+      assertEqual(
+        Serialization.deserializeValue(-Infinity, fd),
+        null,
+        "-Infinity should deserialize to null",
+      );
     },
     "deserializes Infinity string as null for number type": () => {
       const fd: FieldDefinition = { name: "x", type: "number" };
@@ -1835,7 +1948,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "returns raw value when fieldDef.type is undefined": () => {
       const fd: FieldDefinition = { name: "x" };
-      assertEqual(Serialization.deserializeValue(42, fd), 42, "number should be returned as-is without explicit type");
+      assertEqual(
+        Serialization.deserializeValue(42, fd),
+        42,
+        "number should be returned as-is without explicit type",
+      );
       assertEqual(
         Serialization.deserializeValue("hello", fd),
         "hello",
@@ -1844,11 +1961,36 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "auto-infers invalid Date as empty string when fieldDef.type is undefined": () => {
       const fd: FieldDefinition = { name: "x" };
-      assertEqual(Serialization.serializeValue(new Date("invalid"), fd), "", "invalid Date should auto-infer to empty string");
+      assertEqual(
+        Serialization.serializeValue(new Date("invalid"), fd),
+        "",
+        "invalid Date should auto-infer to empty string",
+      );
+    },
+    "auto-infers valid Date to ISO string when fieldDef.type is undefined": () => {
+      const fd: FieldDefinition = { name: "x" };
+      const d = new Date("2024-01-15T10:00:00.000Z");
+      assertEqual(
+        Serialization.serializeValue(d, fd),
+        "2024-01-15T10:00:00.000Z",
+        "valid Date should auto-infer to ISO string",
+      );
+    },
+    "auto-infers string type as String() when fieldDef.type is undefined": () => {
+      const fd: FieldDefinition = { name: "x" };
+      assertEqual(
+        Serialization.serializeValue("hello", fd),
+        "hello",
+        "string value should fall through to String()",
+      );
     },
     "serializes NaN as empty for number type": () => {
       const fd: FieldDefinition = { name: "x", type: "number" };
-      assertEqual(Serialization.serializeValue(NaN, fd), "", "NaN should serialize to empty string for number type");
+      assertEqual(
+        Serialization.serializeValue(NaN, fd),
+        "",
+        "NaN should serialize to empty string for number type",
+      );
     },
     "deserializes boolean from number 0 and 1": () => {
       const fd: FieldDefinition = { name: "x", type: "boolean" };
@@ -1867,13 +2009,25 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "serializes unrecognized field type as string": () => {
       const fd = { name: "x", type: "custom" } as unknown as FieldDefinition;
-      assertEqual(Serialization.serializeValue(42, fd), "42", "unrecognized type should serialize number as string");
-      assertEqual(Serialization.serializeValue(true, fd), "true", "unrecognized type should serialize boolean as string");
+      assertEqual(
+        Serialization.serializeValue(42, fd),
+        "42",
+        "unrecognized type should serialize number as string",
+      );
+      assertEqual(
+        Serialization.serializeValue(true, fd),
+        "true",
+        "unrecognized type should serialize boolean as string",
+      );
     },
     "deserializes unrecognized field type as raw value": () => {
       const fd = { name: "x", type: "custom" } as unknown as FieldDefinition;
       assertEqual(Serialization.deserializeValue(42, fd), 42, "unrecognized type should pass through number");
-      assertEqual(Serialization.deserializeValue("hello", fd), "hello", "unrecognized type should pass through string");
+      assertEqual(
+        Serialization.deserializeValue("hello", fd),
+        "hello",
+        "unrecognized type should pass through string",
+      );
     },
     "rowToEntity handles row shorter than headers": () => {
       const fields: FieldDefinition[] = [
@@ -1902,8 +2056,16 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const row = ["id-1", now, now, "Alice"];
       const entity = Serialization.rowToEntity(row, headers, fields);
       assertEqual(entity.__id, "id-1", "should parse __id");
-      assertEqual(entity.__createdAt, "2024-06-15T12:00:00.000Z", "Date in __createdAt should become ISO string");
-      assertEqual(entity.__updatedAt, "2024-06-15T12:00:00.000Z", "Date in __updatedAt should become ISO string");
+      assertEqual(
+        entity.__createdAt,
+        "2024-06-15T12:00:00.000Z",
+        "Date in __createdAt should become ISO string",
+      );
+      assertEqual(
+        entity.__updatedAt,
+        "2024-06-15T12:00:00.000Z",
+        "Date in __updatedAt should become ISO string",
+      );
     },
   },
   "uuid.test.ts": {
@@ -2483,6 +2645,33 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         const all = Car.find();
         assertEqual(all.length, 1, "only the original car should remain after failed saveAll");
       },
+      "does not persist earlier updates when a later saveAll entry fails": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.year = 2024;
+        car.color = "blue";
+        car.save();
+
+        let threw = false;
+        try {
+          Car.saveAll([
+            { __id: car.__id, make: "Toyota", model: "Camry", year: 2025, color: "black" },
+            { make: "BMW" } as Record<string, unknown>,
+          ]);
+        } catch {
+          threw = true;
+        }
+        assertTrue(threw, "saveAll should throw when a later entry is invalid");
+
+        Registry.getInstance().clearCache();
+        const reloaded = Car.findById(car.__id);
+        assertTrue(reloaded !== null, "original entity should still exist");
+        assertEqual(reloaded!.model, "Corolla", "earlier update should not persist after failure");
+        assertEqual(reloaded!.year, 2024, "year should remain unchanged after failed saveAll");
+        assertEqual(reloaded!.color, "blue", "color should remain unchanged after failed saveAll");
+      },
       "invalidates cache and re-throws on mid-batch failure": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
         const car = new Car();
@@ -2731,7 +2920,9 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         const ghost = Car.findOne({ where: [{ field: "make", operator: "=", value: "Ghost" }] });
         assertEqual(ghost, null, "rolled back entity should not exist");
       },
-      "beginBatch \u2192 save \u2192 delete \u2192 commitBatch applies all operations": (ctx: RuntimeCaseContext) => {
+      "beginBatch \u2192 save \u2192 delete \u2192 commitBatch applies all operations": (
+        ctx: RuntimeCaseContext,
+      ) => {
         const { Car } = setup(ctx);
         const car = new Car();
         car.make = "Toyota";
@@ -2844,13 +3035,49 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         assertEqual(deletedIndiv, 2, "deleteAll should return 2 for individual path");
         assertEqual(Car.count(), 0, "count should be 0 after individual delete");
       },
+      "bulk deleteAll removes gap rows from sheet as expected": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        Car.create({ make: "Ford", model: "Fiesta", year: 2020 }).save();
+        Car.create({ make: "Ford", model: "Focus", year: 2021 }).save();
+        Car.create({ make: "Ford", model: "Mondeo", year: 2022 }).save();
+        Car.create({ make: "Tesla", model: "Model S", year: 2023 }).save();
+        assertEqual(Car.count(), 4, "should have 4 entities before deletion");
+        const deleted = Car.deleteAll({ where: [{ field: "make", operator: "=", value: "Ford" }] });
+        assertEqual(deleted, 3, "should delete 3 Ford entities via bulk path");
+        assertEqual(Car.count(), 1, "should have 1 Tesla remaining after bulk deleteAll");
+        const remaining = Car.find();
+        assertEqual(remaining[0].make, "Tesla", "remaining entity should be Tesla");
+      },
+      "indexed search with additional where filter narrows results": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        Car.create({ make: "Toyota", model: "Corolla", year: 2020 }).save();
+        Car.create({ make: "Toyota", model: "Supra", year: 2024 }).save();
+        Car.create({ make: "Toymaster", model: "X1", year: 2023 }).save();
+        Car.create({ make: "Honda", model: "Civic", year: 2022 }).save();
+        // "toy" matches Toyota (x2) and Toymaster (x1)
+        // year >= 2023 keeps Toyota Supra (2024) + Toymaster X1 (2023)
+        const results = Car.find({
+          where: [
+            { field: "make", operator: "search", value: "toy" },
+            { field: "year", operator: ">=", value: 2023 },
+          ],
+        });
+        assertEqual(results.length, 2, "indexed search with year >= 2023 should return 2 results");
+        const models = results.map((c: { model: string }) => c.model).sort();
+        assertEqual(models[0], "Supra", "first sorted model should be Supra");
+        assertEqual(models[1], "X1", "second sorted model should be X1");
+      },
     } as Record<string, RuntimeCaseHandler>;
   })(),
   "sheet-repository.test.ts": {
     "onValidate rejects save when validation errors returned": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const tableName = ctx.state.nextTableName("tbl_ValItems");
-      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
       adapter.createSheet(tableName);
       const sheet = adapter.getSheetByName(tableName)!;
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
@@ -2875,7 +3102,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "beforeSave mutates entity payload": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const tableName = ctx.state.nextTableName("tbl_MutItems");
-      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
       adapter.createSheet(tableName);
       const sheet = adapter.getSheetByName(tableName)!;
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
@@ -2890,14 +3121,20 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "afterSave receives saved entity and isNew flag": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const tableName = ctx.state.nextTableName("tbl_AfterItems");
-      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
       adapter.createSheet(tableName);
       const sheet = adapter.getSheetByName(tableName)!;
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const calls: Array<{ isNew: boolean }> = [];
       const hooks: LifecycleHooks<Entity> = {
-        afterSave: (_entity, isNew) => { calls.push({ isNew }); },
+        afterSave: (_entity, isNew) => {
+          calls.push({ isNew });
+        },
       };
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
       const saved = repo.save({ name: "A", price: 1, category: "x" });
@@ -2910,7 +3147,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "beforeDelete returning false blocks deletion": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const tableName = ctx.state.nextTableName("tbl_NoDelItems");
-      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
       adapter.createSheet(tableName);
       const sheet = adapter.getSheetByName(tableName)!;
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
@@ -2925,7 +3166,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "beforeDelete veto on deleteAll returns zero and preserves data": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const tableName = ctx.state.nextTableName("tbl_VetoDelItems");
-      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
       adapter.createSheet(tableName);
       const sheet = adapter.getSheetByName(tableName)!;
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
@@ -2942,13 +3187,21 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "afterDelete is called with deleted entity ID": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const tableName = ctx.state.nextTableName("tbl_AfterDelItems");
-      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
       adapter.createSheet(tableName);
       const sheet = adapter.getSheetByName(tableName)!;
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const deletedIds: string[] = [];
-      const hooks: LifecycleHooks<Entity> = { afterDelete: (id) => { deletedIds.push(id); } };
+      const hooks: LifecycleHooks<Entity> = {
+        afterDelete: (id) => {
+          deletedIds.push(id);
+        },
+      };
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
       const saved = repo.save({ name: "gone", price: 0, category: "x" });
       repo.delete(saved.__id);
@@ -2971,7 +3224,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     "loadAllEntities throws during active saveAll entity batch": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const tableName = ctx.state.nextTableName("tbl_BatchItems");
-      const schema = { tableName, fields: [{ name: "name" }, { name: "price" }, { name: "category" }], indexes: [] };
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
       adapter.createSheet(tableName);
       const sheet = adapter.getSheetByName(tableName)!;
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
@@ -2979,18 +3236,92 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       let repoRef: SheetRepository<Entity> | null = null;
       const hooks: LifecycleHooks<Entity> = {
         beforeSave: () => {
-          try { repoRef!.count(); } catch { throw new Error("re-entrant read blocked"); }
+          try {
+            repoRef!.count();
+          } catch {
+            throw new Error("re-entrant read blocked");
+          }
         },
       };
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
       repoRef = repo;
       let threw = false;
       try {
-        repo.saveAll([{ name: "A", price: 1, category: "x" }, { name: "B", price: 2, category: "y" }]);
+        repo.saveAll([
+          { name: "A", price: 1, category: "x" },
+          { name: "B", price: 2, category: "y" },
+        ]);
       } catch {
         threw = true;
       }
       assertTrue(threw, "saveAll with re-entrant read should throw");
+    },
+    "findById returns a detached copy from cache": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_DetachedByIdItems");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      const saved = repo.save({ name: "Widget", price: 10, category: "tools" });
+
+      const found = repo.findById(saved.__id);
+      assertTrue(found !== null, "findById should return saved entity");
+      found!.name = "CHANGED";
+
+      const reread = repo.findById(saved.__id);
+      assertTrue(reread !== null, "entity should still be found after local mutation");
+      assertEqual(reread!.name, "Widget", "mutating returned entity should not affect cached state");
+    },
+    "query() returns detached copies from cache-backed reads": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_DetachedQueryItems");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      const saved = repo.save({ name: "Widget", price: 10, category: "tools" });
+
+      const first = repo.query().first();
+      assertTrue(first !== null, "query().first() should return saved entity");
+      first!.name = "CHANGED";
+
+      const reread = repo.findById(saved.__id);
+      assertTrue(reread !== null, "entity should still be readable after query() mutation");
+      assertEqual(reread!.name, "Widget", "query() results should be detached from cache-backed state");
+    },
+    "save() in batch mode with explicit __id sets __createdAt for new entity": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchCreatedAt");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      repo.beginBatch();
+      const placeholder = repo.save({ __id: "brand-new-id", name: "X", price: 5, category: "tools" });
+      assertTrue(
+        placeholder.__createdAt !== undefined,
+        "batch save with explicit __id and no __createdAt should include __createdAt",
+      );
+      repo.rollbackBatch();
     },
   },
 };

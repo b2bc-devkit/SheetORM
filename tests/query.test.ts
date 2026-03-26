@@ -250,6 +250,11 @@ describe("Query", () => {
       expect(result).toHaveLength(0);
     });
 
+    it("first() with limit(0) returns null", () => {
+      const result = createBuilder().orderBy("price", "asc").limit(0).first();
+      expect(result).toBeNull();
+    });
+
     it("build() with limit(0) includes limit 0", () => {
       const opts = createBuilder().limit(0).build();
       expect(opts.limit).toBe(0);
@@ -283,8 +288,17 @@ describe("Query", () => {
   it("execute() with orderBy and offset combined returns correct slice", () => {
     const result = createBuilder().orderBy("price", "asc").offset(2).limit(2).execute();
     expect(result).toHaveLength(2);
-    expect(result[0].name).toBe("Apple");  // price 1.5 (3rd after sort)
-    expect(result[1].name).toBe("Donut");  // price 2.5 (4th after sort)
+    expect(result[0].name).toBe("Apple"); // price 1.5 (3rd after sort)
+    expect(result[1].name).toBe("Donut"); // price 2.5 (4th after sort)
+  });
+
+  it("execute() returns items from offset when no limit is set", () => {
+    // Sorted by price asc: Banana(0.8), Carrot(1.2), Apple(1.5), Donut(2.5), Eggplant(3.0)
+    // offset 2 with no limit → Apple, Donut, Eggplant
+    const result = createBuilder().orderBy("price", "asc").offset(2).execute();
+    expect(result).toHaveLength(3);
+    expect(result[0].name).toBe("Apple");
+    expect(result[2].name).toBe("Eggplant");
   });
 
   it("limit() and offset() floor fractional values", () => {
@@ -292,7 +306,7 @@ describe("Query", () => {
     // floor(2.9) = 2, floor(1.7) = 1  →  skip 1, take 2
     expect(result).toHaveLength(2);
     expect(result[0].name).toBe("Carrot"); // price 1.2 (2nd in asc)
-    expect(result[1].name).toBe("Apple");  // price 1.5 (3rd in asc)
+    expect(result[1].name).toBe("Apple"); // price 1.5 (3rd in asc)
   });
 
   it("Query.from() without resolver throws descriptive error", () => {
