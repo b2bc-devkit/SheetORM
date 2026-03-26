@@ -11,6 +11,7 @@ import { Serialization } from "../utils/Serialization.js";
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
 import { Decorators } from "./Decorators.js";
 import type { RecordStatic } from "./RecordStatic.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 export class Registry {
   private static instance: Registry | null = null;
@@ -34,6 +35,7 @@ export class Registry {
   }
 
   configure(options: { adapter?: ISpreadsheetAdapter; cache?: ICacheProvider }): void {
+    SheetOrmLogger.log(`[Registry] configure (adapter=${options.adapter?.constructor.name ?? "default"})`);
     this.adapter = options.adapter ?? null;
     this.cache = options.cache ?? null;
     this.indexStore = null;
@@ -62,6 +64,7 @@ export class Registry {
 
   private ensureTable(schema: TableSchema, indexStore: IndexStore): void {
     const adapter = this.getAdapter();
+    SheetOrmLogger.log(`[Registry] ensureTable "${schema.tableName}" (indexes=${schema.indexes.length})`);
 
     let sheet = adapter.getSheetByName(schema.tableName);
     if (!sheet) {
@@ -98,8 +101,11 @@ export class Registry {
     const tableName = ctor.tableName;
 
     if (this.repos.has(tableName)) {
+      SheetOrmLogger.log(`[Registry] ensureRepository "${tableName}" → cache hit`);
       return this.repos.get(tableName) as unknown as SheetRepository<T>;
     }
+
+    SheetOrmLogger.log(`[Registry] ensureRepository "${tableName}" → creating`);
 
     this.registerClass(ctor);
 

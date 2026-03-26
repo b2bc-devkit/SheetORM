@@ -17,6 +17,7 @@ import { Serialization } from "../utils/Serialization.js";
 import { IndexStore } from "../index/IndexStore.js";
 import { Query } from "../query/Query.js";
 import { QueryEngine } from "../query/QueryEngine.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 export class SheetRepository<T extends Entity> {
   private adapter: ISpreadsheetAdapter;
@@ -255,6 +256,7 @@ export class SheetRepository<T extends Entity> {
   saveAll(entities: Array<Partial<T>>): T[] {
     if (entities.length === 0) return [];
     const sheet = this.getSheet();
+    SheetOrmLogger.log(`[Repo:${this.schema.tableName}] saveAll START — ${entities.length} entities`);
     this.entityBatch = [];
     if (this.schema.indexTableName) {
       this.indexStore.beginIndexBatch();
@@ -265,6 +267,7 @@ export class SheetRepository<T extends Entity> {
       if (this.schema.indexTableName) {
         this.indexStore.flushIndexBatch();
       }
+      SheetOrmLogger.log(`[Repo:${this.schema.tableName}] saveAll DONE — ${entities.length} entities`);
       return results;
     } catch (err) {
       this.entityBatch = null;
@@ -677,6 +680,11 @@ export class SheetRepository<T extends Entity> {
     }
     const batch = this.entityBatch;
     this.entityBatch = null;
+    const creates = batch.filter((i) => i.mode === "create").length;
+    const updates = batch.filter((i) => i.mode === "update").length;
+    SheetOrmLogger.log(
+      `[Repo:${this.schema.tableName}] flushEntityBatch ${batch.length} rows (creates=${creates} updates=${updates}); calling sheet.updateRows()`,
+    );
     sheet.updateRows(
       [...batch]
         .sort((a, b) => a.dataIndex - b.dataIndex)

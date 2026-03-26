@@ -17,6 +17,7 @@
 import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter.js";
 import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
 import { SheetsAPIv4SheetAdapter } from "./SheetsAPIv4SheetAdapter.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 // ─── Spreadsheet adapter ──────────────────────────────────────────────────────
 
@@ -38,6 +39,7 @@ export class SheetsAPIv4SpreadsheetAdapter implements ISpreadsheetAdapter {
 
   /** Called by SheetsAPIv4SheetAdapter to register a pending write. */
   addPendingRange(range: string, values: unknown[][]): void {
+    SheetOrmLogger.log(`[V4Spreadsheet] addPendingRange ${range} (${values.length} rows)`);
     this.pending.push({ range, values });
   }
 
@@ -52,6 +54,7 @@ export class SheetsAPIv4SpreadsheetAdapter implements ISpreadsheetAdapter {
    * Throws if the API returns a non-200 status code.
    */
   flushAllPending(): void {
+    SheetOrmLogger.log(`[V4Spreadsheet] flushAllPending — ${this.pending.length} pending ranges`);
     if (this.pending.length === 0) return;
 
     const id = this.ss.getId();
@@ -79,9 +82,7 @@ export class SheetsAPIv4SpreadsheetAdapter implements ISpreadsheetAdapter {
         );
       }
 
-      throw new Error(
-        `Sheets API v4 batchUpdate failed (HTTP ${status}): ${responseText}`,
-      );
+      throw new Error(`Sheets API v4 batchUpdate failed (HTTP ${status}): ${responseText}`);
     }
 
     this.pending = [];

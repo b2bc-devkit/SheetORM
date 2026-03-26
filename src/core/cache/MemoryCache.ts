@@ -1,6 +1,7 @@
 // SheetORM — In-memory cache with TTL support
 
 import type { ICacheProvider } from "../types/ICacheProvider.js";
+import { SheetOrmLogger } from "../../utils/SheetOrmLogger.js";
 
 interface CacheEntry<T> {
   data: T;
@@ -22,11 +23,16 @@ export class MemoryCache implements ICacheProvider {
 
   get<T>(key: string): T | null {
     const entry = this.store.get(key);
-    if (!entry) return null;
-    if (Date.now() >= entry.expiresAt) {
-      this.store.delete(key);
+    if (!entry) {
+      SheetOrmLogger.log(`[Cache] MISS  "${key}"`);
       return null;
     }
+    if (Date.now() >= entry.expiresAt) {
+      this.store.delete(key);
+      SheetOrmLogger.log(`[Cache] EXPIRED "${key}"`);
+      return null;
+    }
+    SheetOrmLogger.log(`[Cache] HIT   "${key}"`);
     return entry.data as T;
   }
 
@@ -35,6 +41,7 @@ export class MemoryCache implements ICacheProvider {
     if (!Number.isFinite(ttl) || ttl < 0) {
       throw new Error(`MemoryCache.set: ttlMs must be a non-negative finite number, got ${ttl}`);
     }
+    SheetOrmLogger.log(`[Cache] SET   "${key}" ttl=${ttl}ms`);
     this.store.set(key, {
       data: value,
       expiresAt: Date.now() + ttl,
@@ -42,10 +49,12 @@ export class MemoryCache implements ICacheProvider {
   }
 
   delete(key: string): void {
+    SheetOrmLogger.log(`[Cache] DELETE "${key}"`);
     this.store.delete(key);
   }
 
   clear(): void {
+    SheetOrmLogger.log(`[Cache] CLEAR  (${this.store.size} entries)`);
     this.store.clear();
   }
 

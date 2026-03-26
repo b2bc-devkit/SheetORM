@@ -10,6 +10,7 @@ import { Registry } from "../core/Registry.js";
 import { Record as BaseRecord } from "../core/Record.js";
 import { Decorators } from "../core/Decorators.js";
 import { Query } from "../query/Query.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 const { Indexed, Required, resetDecoratorCaches } = Decorators;
 
@@ -145,11 +146,15 @@ function runBenchmarkFor<T extends BaseRecord>(
 
   step(`saveAll() × ${RECORD_COUNT}`, () => {
     const allData = Array.from({ length: RECORD_COUNT }, (_, i) => makeData(i));
+
+    const t0 = Date.now();
     // saveAll() batches all index writes into a single setValues() call
     const allSaved = Ctor.saveAll(allData) as T[];
+    const saveAllMs = Date.now() - t0;
+
     for (const s of allSaved) saved.push(s);
     gasAssertEq(saved.length, RECORD_COUNT, "saved.length");
-    log(`[SheetORM]   Created ${saved.length} records in ${tableName}`);
+    log(`[SheetORM]   Created ${saved.length} records in ${tableName} in ${saveAllMs} ms`);
   });
 
   step("count()", () => {
@@ -296,6 +301,8 @@ function runBenchmark(): string {
   if (typeof SpreadsheetApp === "undefined") {
     throw new Error("runBenchmark() must be run in Google Apps Script runtime.");
   }
+
+  SheetOrmLogger.verbose = true;
 
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   const adapter = new GoogleSpreadsheetAdapter(spreadsheet);

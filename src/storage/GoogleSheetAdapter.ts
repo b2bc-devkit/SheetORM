@@ -1,6 +1,7 @@
 // SheetORM — Google Sheet adapter implementing ISheetAdapter
 
 import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 /**
  * Adapter wrapping a real Google Apps Script Sheet object.
@@ -33,13 +34,22 @@ export class GoogleSheetAdapter implements ISheetAdapter {
   getAllData(): unknown[][] {
     const lastRow = this.sheet.getLastRow();
     const lastCol = this.sheet.getLastColumn();
-    if (lastRow <= 1 || lastCol === 0) return []; // row 1 = headers
-    return this.sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    if (lastRow <= 1 || lastCol === 0) {
+      SheetOrmLogger.log(`[Sheet:${this.sheet.getName()}] getAllData → 0 rows (empty)`);
+      return []; // row 1 = headers
+    }
+    const result = this.sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    SheetOrmLogger.log(
+      `[Sheet:${this.sheet.getName()}] getAllData → ${result.length} rows × ${lastCol} cols`,
+    );
+    return result;
   }
 
   getRowCount(): number {
     const lastRow = this.sheet.getLastRow();
-    return Math.max(0, lastRow - 1); // exclude header
+    const count = Math.max(0, lastRow - 1); // exclude header
+    SheetOrmLogger.log(`[Sheet:${this.sheet.getName()}] getRowCount → ${count}`);
+    return count;
   }
 
   appendRow(values: unknown[]): void {
@@ -50,6 +60,9 @@ export class GoogleSheetAdapter implements ISheetAdapter {
     if (rows.length === 0) return;
     const startRow = this.sheet.getLastRow() + 1;
     const numCols = rows[0].length;
+    SheetOrmLogger.log(
+      `[Sheet:${this.sheet.getName()}] appendRows ${rows.length} rows × ${numCols} cols at sheetRow=${startRow}`,
+    );
     this.sheet.getRange(startRow, 1, rows.length, numCols).setValues(rows);
   }
 
@@ -58,12 +71,16 @@ export class GoogleSheetAdapter implements ISheetAdapter {
     // startRowIndex is 0-based data index; sheet row = startRowIndex + 2 (row 1 = header)
     const sheetRow = startRowIndex + 2;
     const numCols = rows[0].length;
+    SheetOrmLogger.log(
+      `[Sheet:${this.sheet.getName()}] writeRowsAt dataIdx=${startRowIndex} sheetRow=${sheetRow} rows=${rows.length} cols=${numCols}`,
+    );
     this.sheet.getRange(sheetRow, 1, rows.length, numCols).setValues(rows);
   }
 
   updateRow(rowIndex: number, values: unknown[]): void {
     // rowIndex is 0-based data index → sheet row = rowIndex + 2 (row 1 = header)
     const sheetRow = rowIndex + 2;
+    SheetOrmLogger.log(`[Sheet:${this.sheet.getName()}] updateRow dataIdx=${rowIndex} sheetRow=${sheetRow}`);
     this.sheet.getRange(sheetRow, 1, 1, values.length).setValues([values]);
   }
 
@@ -73,15 +90,23 @@ export class GoogleSheetAdapter implements ISheetAdapter {
     const sorted = [...updates].sort((a, b) => a.rowIndex - b.rowIndex);
     let groupStart = sorted[0].rowIndex;
     let groupRows: unknown[][] = [sorted[0].values];
+    let groupCount = 0;
     for (let i = 1; i < sorted.length; i++) {
       if (sorted[i].rowIndex === sorted[i - 1].rowIndex + 1) {
         groupRows.push(sorted[i].values);
       } else {
+        SheetOrmLogger.log(
+          `[Sheet:${this.sheet.getName()}] updateRows group#${groupCount} dataIdx=${groupStart} rows=${groupRows.length}`,
+        );
         this.sheet.getRange(groupStart + 2, 1, groupRows.length, groupRows[0].length).setValues(groupRows);
         groupStart = sorted[i].rowIndex;
         groupRows = [sorted[i].values];
+        groupCount++;
       }
     }
+    SheetOrmLogger.log(
+      `[Sheet:${this.sheet.getName()}] updateRows group#${groupCount} dataIdx=${groupStart} rows=${groupRows.length} (final); total updates=${updates.length}`,
+    );
     this.sheet.getRange(groupStart + 2, 1, groupRows.length, groupRows[0].length).setValues(groupRows);
   }
 

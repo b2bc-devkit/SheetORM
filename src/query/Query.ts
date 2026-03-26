@@ -9,6 +9,7 @@ import type { QueryOptions } from "../core/types/QueryOptions.js";
 import type { PaginatedResult } from "../core/types/PaginatedResult.js";
 import type { GroupResult } from "../core/types/GroupResult.js";
 import { QueryEngine } from "./QueryEngine.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 type FromResolver = (
   classOrName:
@@ -124,6 +125,7 @@ export class Query<T extends Entity> {
    */
   execute(): T[] {
     let entities = this.dataProvider();
+    const inputCount = entities.length;
     entities = this.applyFilters(entities);
 
     if (this.sorts.length > 0) {
@@ -132,8 +134,13 @@ export class Query<T extends Entity> {
 
     const offset = this._offset ?? 0;
     const limit = this._limit;
-    if (offset === 0 && limit === undefined) return entities;
-    return entities.slice(offset, limit !== undefined ? offset + limit : undefined);
+    if (offset !== 0 || limit !== undefined) {
+      entities = entities.slice(offset, limit !== undefined ? offset + limit : undefined);
+    }
+    SheetOrmLogger.log(
+      `[Query] execute input=${inputCount} filters=${this.filterGroups.flat().length} sort=${this.sorts.length} limit=${this._limit ?? "-"} offset=${this._offset ?? 0} → ${entities.length}`,
+    );
+    return entities;
   }
 
   /**
@@ -141,6 +148,7 @@ export class Query<T extends Entity> {
    */
   first(): T | null {
     let entities = this.dataProvider();
+    const inputCount = entities.length;
     entities = this.applyFilters(entities);
 
     if (this.sorts.length > 0) {
@@ -149,9 +157,18 @@ export class Query<T extends Entity> {
 
     const offset = this._offset ?? 0;
     const limit = this._limit;
-    if (limit === 0) return null;
+    if (limit === 0) {
+      SheetOrmLogger.log(
+        `[Query] first  input=${inputCount} filters=${this.filterGroups.flat().length} → null (limit=0)`,
+      );
+      return null;
+    }
     const visible = entities.slice(offset, limit !== undefined ? offset + limit : undefined);
-    return visible.length > 0 ? visible[0] : null;
+    const result = visible.length > 0 ? visible[0] : null;
+    SheetOrmLogger.log(
+      `[Query] first  input=${inputCount} filters=${this.filterGroups.flat().length} → ${result ? "found" : "null"}`,
+    );
+    return result;
   }
 
   /**
@@ -159,13 +176,18 @@ export class Query<T extends Entity> {
    */
   select(offset: number, limit: number): PaginatedResult<T> {
     let entities = this.dataProvider();
+    const inputCount = entities.length;
     entities = this.applyFilters(entities);
 
     if (this.sorts.length > 0) {
       entities = QueryEngine.sortEntities(entities, this.sorts);
     }
 
-    return QueryEngine.paginateEntities(entities, offset, limit);
+    const paged = QueryEngine.paginateEntities(entities, offset, limit);
+    SheetOrmLogger.log(
+      `[Query] select input=${inputCount} filters=${this.filterGroups.flat().length} offset=${offset} limit=${limit} → ${paged.items.length}/${paged.total}`,
+    );
+    return paged;
   }
 
   /**
@@ -173,7 +195,11 @@ export class Query<T extends Entity> {
    */
   count(): number {
     let entities = this.dataProvider();
+    const inputCount = entities.length;
     entities = this.applyFilters(entities);
+    SheetOrmLogger.log(
+      `[Query] count  input=${inputCount} filters=${this.filterGroups.flat().length} → ${entities.length}`,
+    );
     return entities.length;
   }
 

@@ -9,6 +9,7 @@ import { IndexStore } from "./index/IndexStore.js";
 import { Query } from "./query/Query.js";
 import { RuntimeBenchmark } from "./testing/RuntimeBenchmark.js";
 import { RuntimeParity } from "./testing/RuntimeParity.js";
+import { SheetOrmLogger } from "./utils/SheetOrmLogger.js";
 
 // ─── Demo model (internal, not exported) ──────────────────────────────────────
 
@@ -38,6 +39,7 @@ export class GasEntrypoints {
   static readonly Decorators = Decorators;
   static readonly IndexStore = IndexStore;
   static readonly Registry = Registry;
+  static readonly SheetOrmLogger = SheetOrmLogger;
 
   static runTestsStageOne(): void {
     RuntimeParity.runStageOne();

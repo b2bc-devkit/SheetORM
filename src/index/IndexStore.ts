@@ -4,6 +4,7 @@
 import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter.js";
 import type { ICacheProvider } from "../core/types/ICacheProvider.js";
 import type { IndexMeta } from "./IndexMeta.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 /**
  * Combined (per-class) index sheet layout (idx_{ClassName}s):
@@ -84,6 +85,7 @@ export class IndexStore {
       if (rows.length === 0) continue;
       const sheet = this.adapter.getSheetByName(indexTableName);
       if (!sheet) continue;
+      SheetOrmLogger.log(`[Index:${indexTableName}] flushIndexBatch ${rows.length} rows`);
       if (this.cache) {
         const data = this.getCombinedData(indexTableName);
         sheet.writeRowsAt(data.length, rows);
@@ -646,14 +648,24 @@ export class IndexStore {
     if (this.cache) {
       const cacheKey = `cidx:${indexTableName}`;
       const cached = this.cache.get<unknown[][]>(cacheKey);
-      if (cached !== null) return cached;
+      if (cached !== null) {
+        SheetOrmLogger.log(`[Index:${indexTableName}] getCombinedData cache HIT — ${cached.length} rows`);
+        return cached;
+      }
       const sheet = this.adapter.getSheetByName(indexTableName);
       const data = sheet ? sheet.getAllData() : [];
+      SheetOrmLogger.log(
+        `[Index:${indexTableName}] getCombinedData cache MISS — read ${data.length} rows from sheet`,
+      );
       this.cache.set(cacheKey, data);
       return data;
     }
     const sheet = this.adapter.getSheetByName(indexTableName);
-    return sheet ? sheet.getAllData() : [];
+    const data = sheet ? sheet.getAllData() : [];
+    SheetOrmLogger.log(
+      `[Index:${indexTableName}] getCombinedData (no cache) — read ${data.length} rows from sheet`,
+    );
+    return data;
   }
 
   private invalidateSearchCacheForTable(indexTableName: string): void {

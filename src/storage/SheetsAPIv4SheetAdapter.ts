@@ -1,6 +1,7 @@
 // SheetORM — Sheets REST API v4 sheet adapter
 
 import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 // ─── A1 notation helpers ──────────────────────────────────────────────────────
 
@@ -82,12 +83,21 @@ export class SheetsAPIv4SheetAdapter implements ISheetAdapter {
   getAllData(): unknown[][] {
     const lastRow = this.sheet.getLastRow();
     const lastCol = this.sheet.getLastColumn();
-    if (lastRow <= 1 || lastCol === 0) return [];
-    return this.sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    if (lastRow <= 1 || lastCol === 0) {
+      SheetOrmLogger.log(`[V4Sheet:${this.sheet.getName()}] getAllData → 0 rows (empty)`);
+      return [];
+    }
+    const result = this.sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    SheetOrmLogger.log(
+      `[V4Sheet:${this.sheet.getName()}] getAllData → ${result.length} rows × ${lastCol} cols`,
+    );
+    return result;
   }
 
   getRowCount(): number {
-    return Math.max(0, this.sheet.getLastRow() - 1);
+    const count = Math.max(0, this.sheet.getLastRow() - 1);
+    SheetOrmLogger.log(`[V4Sheet:${this.sheet.getName()}] getRowCount → ${count}`);
+    return count;
   }
 
   getRow(rowIndex: number): unknown[] {
@@ -123,6 +133,9 @@ export class SheetsAPIv4SheetAdapter implements ISheetAdapter {
     if (rows.length === 0) return;
     const startRow = this.sheet.getLastRow() + 1 + this.appendedOffset;
     const numCols = rows[0].length;
+    SheetOrmLogger.log(
+      `[V4Sheet:${this.sheet.getName()}] appendRows ${rows.length} rows × ${numCols} cols at sheetRow=${startRow}`,
+    );
     this.parent.addPendingRange(a1Range(this.sheet.getName(), startRow, rows.length, numCols), rows);
     this.appendedOffset += rows.length;
   }
@@ -137,6 +150,9 @@ export class SheetsAPIv4SheetAdapter implements ISheetAdapter {
     if (rows.length === 0) return;
     const sheetRow = startRowIndex + 2; // 0-based data index + 1 (header) + 1 (1-base)
     const numCols = rows[0].length;
+    SheetOrmLogger.log(
+      `[V4Sheet:${this.sheet.getName()}] writeRowsAt dataIdx=${startRowIndex} sheetRow=${sheetRow} rows=${rows.length} cols=${numCols}`,
+    );
     this.parent.addPendingRange(a1Range(this.sheet.getName(), sheetRow, rows.length, numCols), rows);
   }
 
