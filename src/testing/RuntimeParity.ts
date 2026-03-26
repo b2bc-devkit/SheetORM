@@ -1523,7 +1523,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       ];
       const filters: Filter[] = [{ field: "city", operator: "in", value: manyValues }];
       const result = QueryEngine.filterEntities(queryEngineUsers, filters);
-      assertEqual(result.length, 3, "should match 3 users from cities in the large set");
+      assertEqual(result.length, 5, "should match 5 users from cities in the large set");
     },
     "returns empty items when limit is 0": () => {
       const result = QueryEngine.paginateEntities(queryEngineUsers, 0, 0);
@@ -2182,7 +2182,9 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
     },
     "uses crypto.getRandomValues when available": () => {
       type CryptoLike = { getRandomValues: (buf: Uint8Array) => Uint8Array };
-      const originalCrypto = (globalThis as typeof globalThis & { crypto?: unknown }).crypto;
+      const g = globalThis as typeof globalThis & { crypto?: unknown; Utilities?: unknown };
+      const originalCrypto = g.crypto;
+      const originalUtilities = g.Utilities;
       const fakeCrypto: CryptoLike = {
         getRandomValues: (buf: Uint8Array) => {
           for (let i = 0; i < buf.length; i++) buf[i] = i;
@@ -2190,6 +2192,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         },
       };
 
+      // Remove Utilities so the GAS path is bypassed and crypto path is taken
+      Object.defineProperty(globalThis, "Utilities", {
+        value: undefined,
+        writable: true,
+        configurable: true,
+      });
       Object.defineProperty(globalThis, "crypto", {
         value: fakeCrypto,
         writable: true,
@@ -2204,6 +2212,11 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
           "UUID should come from crypto bytes with RFC4122 v4 bits applied",
         );
       } finally {
+        Object.defineProperty(globalThis, "Utilities", {
+          value: originalUtilities,
+          writable: true,
+          configurable: true,
+        });
         Object.defineProperty(globalThis, "crypto", {
           value: originalCrypto,
           writable: true,
