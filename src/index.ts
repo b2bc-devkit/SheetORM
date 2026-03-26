@@ -65,9 +65,9 @@ export class GasEntrypoints {
     console.log("[demoCreate — START]");
 
     // ── car1 ──────────────────────────────────────────────────────────────
-    console.log("  const car1 = new DemoCar();");
-    console.log("  car1.make  = 'Toyota';  car1.model = 'Corolla';");
-    console.log("  car1.year  = 2022;      car1.color = 'White';   car1.price = 28000;");
+    console.log("\n▶ const car1 = new DemoCar();");
+    console.log('  car1.make = "Toyota";  car1.model = "Corolla";');
+    console.log('  car1.year = 2022;      car1.color = "White";   car1.price = 28000;');
     console.log("  car1.save();");
     const car1 = new DemoCar();
     car1.make = "Toyota";
@@ -76,12 +76,12 @@ export class GasEntrypoints {
     car1.color = "White";
     car1.price = 28_000;
     car1.save();
-    console.log(`  → saved  [${car1.__id}]  ${car1.make} ${car1.model}  ${car1.color}  $${car1.price}\n`);
+    console.log(`  → [${car1.__id}]  ${car1.make} ${car1.model}  ${car1.color}  $${car1.price}`);
 
     // ── car2 ──────────────────────────────────────────────────────────────
-    console.log("  const car2 = new DemoCar();");
-    console.log("  car2.make  = 'BMW';     car2.model = 'X5';");
-    console.log("  car2.year  = 2023;      car2.color = 'Black';   car2.price = 85000;");
+    console.log("\n▶ const car2 = new DemoCar();");
+    console.log('  car2.make = "BMW";     car2.model = "X5";');
+    console.log('  car2.year = 2023;      car2.color = "Black";   car2.price = 85000;');
     console.log("  car2.save();");
     const car2 = new DemoCar();
     car2.make = "BMW";
@@ -90,12 +90,12 @@ export class GasEntrypoints {
     car2.color = "Black";
     car2.price = 85_000;
     car2.save();
-    console.log(`  → saved  [${car2.__id}]  ${car2.make} ${car2.model}  ${car2.color}  $${car2.price}\n`);
+    console.log(`  → [${car2.__id}]  ${car2.make} ${car2.model}  ${car2.color}  $${car2.price}`);
 
     // ── car3 ──────────────────────────────────────────────────────────────
-    console.log("  const car3 = new DemoCar();");
-    console.log("  car3.make  = 'Honda';   car3.model = 'Civic';");
-    console.log("  car3.year  = 2024;      car3.color = 'Red';     car3.price = 32000;");
+    console.log("\n▶ const car3 = new DemoCar();");
+    console.log('  car3.make = "Honda";   car3.model = "Civic";');
+    console.log('  car3.year = 2024;      car3.color = "Red";     car3.price = 32000;');
     console.log("  car3.save();");
     const car3 = new DemoCar();
     car3.make = "Honda";
@@ -104,12 +104,12 @@ export class GasEntrypoints {
     car3.color = "Red";
     car3.price = 32_000;
     car3.save();
-    console.log(`  → saved  [${car3.__id}]  ${car3.make} ${car3.model}  ${car3.color}  $${car3.price}\n`);
+    console.log(`  → [${car3.__id}]  ${car3.make} ${car3.model}  ${car3.color}  $${car3.price}`);
 
     // ── car4 ──────────────────────────────────────────────────────────────
-    console.log("  const car4 = new DemoCar();");
-    console.log("  car4.make  = 'Ford';    car4.model = 'Mustang';");
-    console.log("  car4.year  = 2023;      car4.color = 'Blue';    car4.price = 57000;");
+    console.log("\n▶ const car4 = new DemoCar();");
+    console.log('  car4.make = "Ford";    car4.model = "Mustang";');
+    console.log('  car4.year = 2023;      car4.color = "Blue";    car4.price = 57000;');
     console.log("  car4.save();");
     const car4 = new DemoCar();
     car4.make = "Ford";
@@ -118,12 +118,12 @@ export class GasEntrypoints {
     car4.color = "Blue";
     car4.price = 57_000;
     car4.save();
-    console.log(`  → saved  [${car4.__id}]  ${car4.make} ${car4.model}  ${car4.color}  $${car4.price}\n`);
+    console.log(`  → [${car4.__id}]  ${car4.make} ${car4.model}  ${car4.color}  $${car4.price}`);
 
     // ── car5 ──────────────────────────────────────────────────────────────
-    console.log("  const car5 = new DemoCar();");
-    console.log("  car5.make  = 'Toyota';  car5.model = 'Camry';");
-    console.log("  car5.year  = 2021;      car5.color = 'Silver';  car5.price = 34000;");
+    console.log("\n▶ const car5 = new DemoCar();");
+    console.log('  car5.make = "Toyota";  car5.model = "Camry";');
+    console.log('  car5.year = 2021;      car5.color = "Silver";  car5.price = 34000;');
     console.log("  car5.save();");
     const car5 = new DemoCar();
     car5.make = "Toyota";
@@ -132,9 +132,9 @@ export class GasEntrypoints {
     car5.color = "Silver";
     car5.price = 34_000;
     car5.save();
-    console.log(`  → saved  [${car5.__id}]  ${car5.make} ${car5.model}  ${car5.color}  $${car5.price}\n`);
+    console.log(`  → [${car5.__id}]  ${car5.make} ${car5.model}  ${car5.color}  $${car5.price}`);
 
-    console.log("\n▶ DemoCar.count()");
+    console.log("\n▶ DemoCar.count();");
     console.log(`  → ${DemoCar.count()} rows in sheet`);
     console.log("[demoCreate — END]");
   }
@@ -188,22 +188,21 @@ export class GasEntrypoints {
   static demoUpdate(): void {
     console.log("[demoUpdate — START]");
 
-    console.log('\n▶ const toyotas = DemoCar.where("make", "=", "Toyota").execute();');
+    // ── Step 1: raise Toyota prices by 5 % and update colour ─────────────
+    console.log('\n▶ [1] const toyotas = DemoCar.where("make", "=", "Toyota").execute();');
+    console.log("  for (const car of toyotas) {");
+    console.log("    car.price = Math.round(car.price * 1.05);");
+    console.log('    car.color = car.color === "White" ? "Pearl White" : car.color;');
+    console.log("    car.save();");
+    console.log("  }");
     const toyotas = DemoCar.where("make", "=", "Toyota").execute();
 
     if (toyotas.length === 0) {
-      console.log("⚠  No Toyota records found — run demoCreate first.");
+      console.log("⚠  No records found — run demoCreate first.");
       return;
     }
 
-    console.log(`  → ${toyotas.length} records found`);
-    console.log("\nfor (const car of toyotas) {");
-    console.log("  car.price = Math.round(car.price * 1.05);");
-    console.log("  car.color = car.color === 'White' ? 'Pearl White' : car.color;");
-    console.log("  car.save();");
-    console.log("}");
-    console.log("\n▶ Result:");
-
+    console.log(`  → ${toyotas.length} Toyota(s) found:`);
     for (const car of toyotas) {
       const oldPrice = car.price;
       const oldColor = car.color;
@@ -211,10 +210,50 @@ export class GasEntrypoints {
       car.color = car.color === "White" ? "Pearl White" : car.color;
       car.save();
       console.log(
-        `  ✎ Updated [${car.__id}]  ${car.make} ${car.model}` +
-          `\n      color: ${oldColor} → ${car.color}` +
-          `\n      price: $${oldPrice} → $${car.price}`,
+        `  ✎ [${car.__id}]  ${car.make} ${car.model}` +
+          `  color: ${oldColor} → ${car.color}` +
+          `  price: $${oldPrice} → $${car.price}`,
       );
+    }
+
+    // ── Step 2: give every BMW a model-year bump and a discount ───────────
+    console.log('\n▶ [2] const bmws = DemoCar.where("make", "=", "BMW").execute();');
+    console.log("  for (const car of bmws) {");
+    console.log("    car.year += 1;");
+    console.log("    car.price = Math.round(car.price * 0.92);");
+    console.log('    car.color = "Midnight Blue";');
+    console.log("    car.save();");
+    console.log("  }");
+    const bmws = DemoCar.where("make", "=", "BMW").execute();
+    console.log(`  → ${bmws.length} BMW(s) found:`);
+    for (const car of bmws) {
+      const oldYear = car.year;
+      const oldPrice = car.price;
+      const oldColor = car.color;
+      car.year += 1;
+      car.price = Math.round(car.price * 0.92);
+      car.color = "Midnight Blue";
+      car.save();
+      console.log(
+        `  ✎ [${car.__id}]  ${car.make} ${car.model}` +
+          `  year: ${oldYear} → ${car.year}` +
+          `  color: ${oldColor} → ${car.color}` +
+          `  price: $${oldPrice} → $${car.price}`,
+      );
+    }
+
+    // ── Step 3: append "(updated)" suffix to every car's model ──────────
+    console.log("\n▶ [3] const all = DemoCar.find();");
+    console.log("  for (const car of all) {");
+    console.log('    car.model = car.model.replace(/ \\(updated\\)$/, "") + " (updated)";');
+    console.log("    car.save();");
+    console.log("  }");
+    const all = DemoCar.find();
+    console.log(`  → ${all.length} total cars:`);
+    for (const car of all) {
+      car.model = car.model.replace(/ \(updated\)$/, "") + " (updated)";
+      car.save();
+      console.log(`  ✎ [${car.__id}]  ${car.make}  ${car.model}  $${car.price}  ${car.color}`);
     }
 
     console.log("\n▶ DemoCar.count()");
@@ -228,31 +267,31 @@ export class GasEntrypoints {
   static demoDelete(): void {
     console.log("[demoDelete — START]");
 
-    console.log("\n▶ const toDelete = Query.from(DemoCar)");
+    console.log("\n▶ const cars = Query.from(DemoCar)");
     console.log('    .where("make", "=", "Honda")');
     console.log('    .or("make", "=", "Ford")');
     console.log("    .execute();");
-    const toDelete = Query.from(DemoCar).where("make", "=", "Honda").or("make", "=", "Ford").execute();
+    console.log("  for (const car of cars) { car.delete(); }");
+    const cars = Query.from(DemoCar).where("make", "=", "Honda").or("make", "=", "Ford").execute();
 
-    if (toDelete.length === 0) {
+    if (cars.length === 0) {
       console.log("⚠  No Honda / Ford records found — run demoCreate first.");
       return;
     }
 
-    console.log(`  → ${toDelete.length} records found`);
-    console.log("\nfor (const car of toDelete) {");
-    console.log("  car.delete();");
-    console.log("}");
+    console.log(`  → ${cars.length} records found`);
 
+    console.log("\n▶ DemoCar.count();");
     const before = DemoCar.count();
-    console.log(`\n▶ DemoCar.count() before  →  ${before}`);
+    console.log(`  → ${before} rows before delete`);
 
-    for (const car of toDelete) {
+    for (const car of cars) {
       car.delete();
       console.log(`  ✗ Deleted [${car.__id}]  ${car.make} ${car.model}`);
     }
 
-    console.log(`\n▶ DemoCar.count() after   →  ${DemoCar.count()}`);
+    console.log("\n▶ DemoCar.count();");
+    console.log(`  → ${DemoCar.count()} rows after delete`);
     console.log("[demoDelete — END]");
   }
 }
