@@ -62,11 +62,7 @@ export class GasEntrypoints {
    * Run this first to populate the table.
    */
   static demoCreate(): void {
-    console.log("╔══════════════════════════════════╗");
-    console.log("║         demoCreate — START       ║");
-    console.log("╚══════════════════════════════════╝");
-
-    console.log("\n▶ Code executed:\n");
+    console.log("[demoCreate — START]");
 
     // ── car1 ──────────────────────────────────────────────────────────────
     console.log("  const car1 = new DemoCar();");
@@ -138,18 +134,16 @@ export class GasEntrypoints {
     car5.save();
     console.log(`  → saved  [${car5.__id}]  ${car5.make} ${car5.model}  ${car5.color}  $${car5.price}\n`);
 
-    console.log("▶ DemoCar.count()");
+    console.log("\n▶ DemoCar.count()");
     console.log(`  → ${DemoCar.count()} rows in sheet`);
-    console.log("══════════════════════════════════");
+    console.log("[demoCreate — END]");
   }
 
   /**
    * demoRead — queries the DemoCar table in several ways.
    */
   static demoRead(): void {
-    console.log("╔══════════════════════════════════╗");
-    console.log("║          demoRead — START        ║");
-    console.log("╚══════════════════════════════════╝");
+    console.log("[demoRead — START]");
 
     // 1. All records
     console.log("\n▶ [1]  DemoCar.find()");
@@ -185,16 +179,14 @@ export class GasEntrypoints {
 
     console.log("\n▶ [5]  DemoCar.count()");
     console.log(`  → ${DemoCar.count()} rows total`);
-    console.log("══════════════════════════════════");
+    console.log("[demoRead — END]");
   }
 
   /**
    * demoUpdate — finds each Toyota and raises its price by 5 %.
    */
   static demoUpdate(): void {
-    console.log("╔══════════════════════════════════╗");
-    console.log("║        demoUpdate — START        ║");
-    console.log("╚══════════════════════════════════╝");
+    console.log("[demoUpdate — START]");
 
     console.log('\n▶ const toyotas = DemoCar.where("make", "=", "Toyota").execute();');
     const toyotas = DemoCar.where("make", "=", "Toyota").execute();
@@ -205,10 +197,11 @@ export class GasEntrypoints {
     }
 
     console.log(`  → ${toyotas.length} records found`);
-    console.log("\n▶ for each Toyota:");
+    console.log("\nfor (const car of toyotas) {");
     console.log("  car.price = Math.round(car.price * 1.05);");
     console.log("  car.color = car.color === 'White' ? 'Pearl White' : car.color;");
     console.log("  car.save();");
+    console.log("}");
     console.log("\n▶ Result:");
 
     for (const car of toyotas) {
@@ -226,16 +219,14 @@ export class GasEntrypoints {
 
     console.log("\n▶ DemoCar.count()");
     console.log(`  → ${DemoCar.count()} rows total`);
-    console.log("══════════════════════════════════");
+    console.log("[demoUpdate — END]");
   }
 
   /**
    * demoDelete — removes all Honda and Ford records from the sheet.
    */
   static demoDelete(): void {
-    console.log("╔══════════════════════════════════╗");
-    console.log("║        demoDelete — START        ║");
-    console.log("╚══════════════════════════════════╝");
+    console.log("[demoDelete — START]");
 
     console.log("\n▶ const toDelete = Query.from(DemoCar)");
     console.log('    .where("make", "=", "Honda")');
@@ -249,8 +240,9 @@ export class GasEntrypoints {
     }
 
     console.log(`  → ${toDelete.length} records found`);
-    console.log("\n▶ for each record:");
+    console.log("\nfor (const car of toDelete) {");
     console.log("  car.delete();");
+    console.log("}");
 
     const before = DemoCar.count();
     console.log(`\n▶ DemoCar.count() before  →  ${before}`);
@@ -261,6 +253,6 @@ export class GasEntrypoints {
     }
 
     console.log(`\n▶ DemoCar.count() after   →  ${DemoCar.count()}`);
-    console.log("══════════════════════════════════");
+    console.log("[demoDelete — END]");
   }
 }
