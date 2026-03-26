@@ -175,9 +175,8 @@ export class IndexStore {
     entries: Array<{ field: string; value: unknown }>,
     entityId: string,
   ): void {
-    const sheet = this.adapter.getSheetByName(indexTableName);
-    if (!sheet) return;
-
+    // Do NOT call getSheetByName here — in batch mode the sheet is never needed
+    // for the write path; fetching it per-entity causes 1000× GAS API calls.
     const rows: unknown[][] = [];
     let data: unknown[][] | null = null;
 
@@ -224,7 +223,7 @@ export class IndexStore {
 
     if (rows.length > 0) {
       if (this.indexBatch !== null) {
-        // Batch mode: accumulate rows, no sheet write yet
+        // Batch mode: accumulate rows, no sheet call needed
         let pending = this.indexBatch.get(indexTableName);
         if (!pending) {
           pending = [];
@@ -234,10 +233,14 @@ export class IndexStore {
         return;
       }
 
+      // Non-batch: fetch sheet once, only now that we know we need to write
+      const sheet = this.adapter.getSheetByName(indexTableName);
+      if (!sheet) return;
+
       if (this.cache) {
-        const data = this.getCombinedData(indexTableName);
-        sheet.writeRowsAt(data.length, rows);
-        for (const row of rows) data.push(row);
+        const cacheData = this.getCombinedData(indexTableName);
+        sheet.writeRowsAt(cacheData.length, rows);
+        for (const row of rows) cacheData.push(row);
         this.searchIndexCache.clear();
       } else {
         sheet.appendRows(rows);

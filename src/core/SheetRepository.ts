@@ -39,6 +39,10 @@ export class SheetRepository<T extends Entity> {
     dataIndex: number;
     mode: "create" | "update";
   }> | null = null;
+  /** Cached sheet reference for the duration of saveAll() — avoids 1000× getSheetByName(). */
+  private batchSheet: ISheetAdapter | null = null;
+  /** Row count captured once at saveAll() start — avoids 1000× getLastRow(). */
+  private batchBaseRowCount: number | null = null;
 
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -90,7 +94,7 @@ export class SheetRepository<T extends Entity> {
   }
 
   private doSave(partial: Partial<T> & { __id?: string }): T {
-    const sheet = this.getSheet();
+    const sheet = this.batchSheet ?? this.getSheet();
     const now = new Date().toISOString();
 
     // ── Existence check: prefer in-memory index, fall back to single API call ──
@@ -182,9 +186,10 @@ export class SheetRepository<T extends Entity> {
       const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
 
       // Write at computed position — single setValues call, no flush needed
-      // In batch mode, account for already-buffered entities that haven't been flushed yet
+      // In batch mode, account for already-buffered entities that haven't been flushed yet.
+      // batchBaseRowCount is captured once at saveAll() start to avoid 1000× getLastRow().
       const dataIndex =
-        sheet.getRowCount() +
+        (this.batchBaseRowCount ?? sheet.getRowCount()) +
         (this.entityBatch ? this.entityBatch.filter((item) => item.mode === "create").length : 0);
       if (!this.idToRowIndex) {
         if (dataIndex === 0) {
@@ -258,6 +263,8 @@ export class SheetRepository<T extends Entity> {
     const sheet = this.getSheet();
     SheetOrmLogger.log(`[Repo:${this.schema.tableName}] saveAll START — ${entities.length} entities`);
     this.entityBatch = [];
+    this.batchSheet = sheet;
+    this.batchBaseRowCount = sheet.getRowCount();
     if (this.schema.indexTableName) {
       this.indexStore.beginIndexBatch();
     }
@@ -267,10 +274,14 @@ export class SheetRepository<T extends Entity> {
       if (this.schema.indexTableName) {
         this.indexStore.flushIndexBatch();
       }
+      this.batchSheet = null;
+      this.batchBaseRowCount = null;
       SheetOrmLogger.log(`[Repo:${this.schema.tableName}] saveAll DONE — ${entities.length} entities`);
       return results;
     } catch (err) {
       this.entityBatch = null;
+      this.batchSheet = null;
+      this.batchBaseRowCount = null;
       if (this.schema.indexTableName) {
         this.indexStore.cancelIndexBatch();
       }
