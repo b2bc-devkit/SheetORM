@@ -98,6 +98,16 @@ describe("Query", () => {
     expect(result.hasNext).toBe(false);
   });
 
+  it("select() applies orderBy before pagination", () => {
+    const result = createBuilder().orderBy("price", "asc").select(1, 2);
+    // price asc => Banana(0.8), Carrot(1.2), Apple(1.5), Donut(2.5), Eggplant(3.0)
+    expect(result.total).toBe(5);
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0].name).toBe("Carrot");
+    expect(result.items[1].name).toBe("Apple");
+    expect(result.hasNext).toBe(true);
+  });
+
   it("groupBy() groups results", () => {
     const groups = createBuilder().groupBy("category");
     expect(groups).toHaveLength(3);

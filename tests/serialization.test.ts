@@ -189,6 +189,12 @@ describe("entityToRow / rowToEntity", () => {
     const result = Serialization.deserializeValue(nativeDate, dateFd);
     expect(result).toBe("2024-03-15T10:30:00.000Z");
   });
+
+  it("deserializes date from numeric cell value as string", () => {
+    const fd: FieldDefinition = { name: "timestamp", type: "date" };
+    const result = Serialization.deserializeValue(12345, fd);
+    expect(result).toBe("12345");
+  });
 });
 
 describe("serializeValue edge cases", () => {
@@ -281,6 +287,17 @@ describe("deserializeValue edge cases", () => {
     expect(Serialization.deserializeValue("FALSE", fd)).toBe(false);
   });
 
+  it("deserializes yes as true and numeric-string zero as false for boolean type", () => {
+    const fd: FieldDefinition = { name: "x", type: "boolean" };
+    expect(Serialization.deserializeValue("yes", fd)).toBe(true);
+    expect(Serialization.deserializeValue("0", fd)).toBe(false);
+  });
+
+  it("deserializes boolean string one as true", () => {
+    const fd: FieldDefinition = { name: "x", type: "boolean" };
+    expect(Serialization.deserializeValue("1", fd)).toBe(true);
+  });
+
   it("serializes boolean from string yes/no", () => {
     const fd: FieldDefinition = { name: "x", type: "boolean" };
     expect(Serialization.serializeValue("yes", fd)).toBe(true);
@@ -321,6 +338,16 @@ describe("deserializeValue edge cases", () => {
     const row = Serialization.entityToRow(entity, fields, headers);
     expect(row[3]).toBe("Alice");
     expect(row[4]).toBe("bonus");
+  });
+
+  it("rowToEntity keeps raw value for column without field definition", () => {
+    const fields: FieldDefinition[] = [{ name: "name", type: "string" }];
+    const headers = ["__id", "__createdAt", "__updatedAt", "name", "extra"];
+    const row = ["id-2", "", "", "Bob", "raw-extra"];
+    const entity = Serialization.rowToEntity(row, headers, fields);
+    expect(entity.__id).toBe("id-2");
+    expect(entity.name).toBe("Bob");
+    expect((entity as unknown as Record<string, unknown>).extra).toBe("raw-extra");
   });
 
   it("rowToEntity converts Date objects in system columns to ISO strings", () => {

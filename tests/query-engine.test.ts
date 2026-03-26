@@ -106,6 +106,11 @@ describe("filterEntities", () => {
 });
 
 describe("sortEntities", () => {
+  it("returns original array reference when no sort clauses", () => {
+    const result = QueryEngine.sortEntities(users, []);
+    expect(result).toBe(users);
+  });
+
   it("sorts ascending by number", () => {
     const sorts: SortClause[] = [{ field: "age", direction: "asc" }];
     const result = QueryEngine.sortEntities(users, sorts);
@@ -206,6 +211,18 @@ describe("executeQuery", () => {
   it("returns all entities for empty options", () => {
     const result = QueryEngine.executeQuery(users, {});
     expect(result).toHaveLength(5);
+  });
+
+  it("normalizes non-finite offset and limit in executeQuery", () => {
+    const options: QueryOptions = {
+      orderBy: [{ field: "age", direction: "asc" }],
+      offset: Number.POSITIVE_INFINITY,
+      limit: Number.NaN,
+    };
+    const result = QueryEngine.executeQuery(users, options);
+    expect(result).toHaveLength(users.length);
+    expect(result[0].name).toBe("Maria");
+    expect(result[result.length - 1].name).toBe("Zofia");
   });
 
   it("executeQuery applies offset without limit correctly", () => {

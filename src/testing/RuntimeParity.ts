@@ -18,7 +18,7 @@ import { Serialization } from "../utils/Serialization.js";
 import { Uuid } from "../utils/Uuid.js";
 import { ParityCatalog } from "./ParityCatalog.js";
 
-const { Indexed, Required, resetDecoratorCaches } = Decorators;
+const { Indexed, Required, Field, resetDecoratorCaches } = Decorators;
 
 interface RuntimeCaseContext {
   state: RuntimeParityState;
@@ -279,6 +279,12 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       cache.set("instant", "gone", 0);
       assertEqual(cache.get("instant"), null, "TTL=0 entry should be expired immediately");
       assertTrue(!cache.has("instant"), "has() should return false for TTL=0 entry");
+    },
+    "constructor with TTL of 0 expires entries immediately": () => {
+      const instant = new MemoryCache(0);
+      instant.set("key", "value");
+      assertEqual(instant.get("key"), null, "entry with default TTL=0 should expire immediately");
+      assertTrue(!instant.has("key"), "has() should return false for default-TTL=0 entry");
     },
     "set() throws for negative per-key TTL": () => {
       const cache = new MemoryCache(1000);
@@ -844,6 +850,25 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(ids.length, 1, "searchCombined should deduplicate repeated entityIds");
       assertEqual(ids[0], "car-001", "deduplicated result should be car-001");
     },
+    "clearAllCaches() allows the search cache to be rebuilt": (ctx: RuntimeCaseContext) => {
+      const adapter = ctx.state.getAdapter();
+      const indexTableName = ctx.state.nextTableName("idx_ClearCaches");
+      const store = new IndexStore(adapter, new MemoryCache());
+      store.createCombinedIndex(indexTableName);
+      store.registerIndex(indexTableName, "name", false);
+      store.addToCombined(indexTableName, "name", "Alice", "user-001");
+
+      // Populate the search index cache
+      const before = store.searchCombined(indexTableName, "name", "Alice");
+      assertDeepEqual(before, ["user-001"], "search should find entry before cache clear");
+
+      // Clear all caches
+      store.clearAllCaches();
+
+      // Search should still work after cache is cleared and rebuilt from sheet
+      const after = store.searchCombined(indexTableName, "name", "Alice");
+      assertDeepEqual(after, ["user-001"], "search should still find entry after cache clear");
+    },
   },
   "query.test.ts": {
     "filters with where()": () => {
@@ -930,6 +955,14 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result.total, 2, "pagination total should match filtered set");
       assertEqual(result.items.length, 2, "items length should match filtered set");
       assertTrue(!result.hasNext, "hasNext should be false for complete page");
+    },
+    "select() applies orderBy before pagination": () => {
+      const result = createBuilder().orderBy("price", "asc").select(1, 2);
+      assertEqual(result.total, 5, "total should represent full sorted set");
+      assertEqual(result.items.length, 2, "page size should respect limit");
+      assertEqual(result.items[0].name, "Carrot", "first paged item should be Carrot");
+      assertEqual(result.items[1].name, "Apple", "second paged item should be Apple");
+      assertTrue(result.hasNext, "hasNext should be true when more sorted rows remain");
     },
     "groupBy() groups results": () => {
       const groups = createBuilder().groupBy("category");
@@ -1193,6 +1226,10 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         "empty filters should return all users",
       );
     },
+    "returns original array reference when no sort clauses": () => {
+      const result = QueryEngine.sortEntities(queryEngineUsers, []);
+      assertTrue(result === queryEngineUsers, "no-sort fast-path should return original array reference");
+    },
     "sorts ascending by number": () => {
       const sorts: SortClause[] = [{ field: "age", direction: "asc" }];
       const result = QueryEngine.sortEntities(queryEngineUsers, sorts);
@@ -1300,6 +1337,20 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(result.length, queryEngineUsers.length - 2, "offset-only should skip first 2 items");
       assertEqual(result[0].name, "Piotr", "first result should be Piotr (3rd in original)");
       assertEqual(result[result.length - 1].name, "Zofia", "last result should be Zofia");
+    },
+    "normalizes non-finite offset and limit in executeQuery": () => {
+      const result = QueryEngine.executeQuery(queryEngineUsers, {
+        orderBy: [{ field: "age", direction: "asc" }],
+        offset: Number.POSITIVE_INFINITY,
+        limit: Number.NaN,
+      });
+      assertEqual(
+        result.length,
+        queryEngineUsers.length,
+        "non-finite pagination values should fallback to full range",
+      );
+      assertEqual(result[0].name, "Maria", "sorted result should start with youngest user");
+      assertEqual(result[result.length - 1].name, "Zofia", "sorted result should end with oldest user");
     },
     "matches entities passing any group": () => {
       const groups: Filter[][] = [
@@ -2002,6 +2053,15 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(Serialization.deserializeValue("false", fd), false, "'false' should deserialize to false");
       assertEqual(Serialization.deserializeValue("FALSE", fd), false, "'FALSE' should deserialize to false");
     },
+    "deserializes yes as true and numeric-string zero as false for boolean type": () => {
+      const fd: FieldDefinition = { name: "x", type: "boolean" };
+      assertEqual(Serialization.deserializeValue("yes", fd), true, "'yes' should deserialize to true");
+      assertEqual(Serialization.deserializeValue("0", fd), false, "'0' string should deserialize to false");
+    },
+    "deserializes boolean string one as true": () => {
+      const fd: FieldDefinition = { name: "x", type: "boolean" };
+      assertEqual(Serialization.deserializeValue("1", fd), true, "'1' string should deserialize to true");
+    },
     "serializes boolean from string yes/no": () => {
       const fd: FieldDefinition = { name: "x", type: "boolean" };
       assertEqual(Serialization.serializeValue("yes", fd), true, "'yes' should serialize to true");
@@ -2049,6 +2109,19 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(row[3], "Alice", "name should be serialized via field definition");
       assertEqual(row[4], "bonus", "extra column without field definition should use raw value");
     },
+    "rowToEntity keeps raw value for column without field definition": () => {
+      const fields: FieldDefinition[] = [{ name: "name", type: "string" }];
+      const headers = ["__id", "__createdAt", "__updatedAt", "name", "extra"];
+      const row = ["id-2", "", "", "Bob", "raw-extra"];
+      const entity = Serialization.rowToEntity(row, headers, fields) as unknown as Record<string, unknown>;
+      assertEqual(entity.__id, "id-2", "should parse __id");
+      assertEqual(entity.name, "Bob", "name should deserialize via field definition");
+      assertEqual(
+        entity.extra,
+        "raw-extra",
+        "extra column without field definition should pass through raw value",
+      );
+    },
     "rowToEntity converts Date objects in system columns to ISO strings": () => {
       const fields: FieldDefinition[] = [{ name: "name", type: "string" }];
       const headers = Serialization.buildHeaders(fields);
@@ -2065,6 +2138,15 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         entity.__updatedAt,
         "2024-06-15T12:00:00.000Z",
         "Date in __updatedAt should become ISO string",
+      );
+    },
+    "deserializes date from numeric cell value as string": () => {
+      const fd: FieldDefinition = { name: "timestamp", type: "date" };
+      const result = Serialization.deserializeValue(12345, fd);
+      assertEqual(
+        result,
+        "12345",
+        "numeric cell value for date type should become its string representation",
       );
     },
   },
@@ -2097,6 +2179,37 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         typeof uuid === "string" && uuid.length > 0,
         "GAS Utilities UUID should be a non-empty string",
       );
+    },
+    "uses crypto.getRandomValues when available": () => {
+      type CryptoLike = { getRandomValues: (buf: Uint8Array) => Uint8Array };
+      const originalCrypto = (globalThis as typeof globalThis & { crypto?: unknown }).crypto;
+      const fakeCrypto: CryptoLike = {
+        getRandomValues: (buf: Uint8Array) => {
+          for (let i = 0; i < buf.length; i++) buf[i] = i;
+          return buf;
+        },
+      };
+
+      Object.defineProperty(globalThis, "crypto", {
+        value: fakeCrypto,
+        writable: true,
+        configurable: true,
+      });
+
+      try {
+        const uuid = Uuid.generate();
+        assertEqual(
+          uuid,
+          "00010203-0405-4607-8809-0a0b0c0d0e0f",
+          "UUID should come from crypto bytes with RFC4122 v4 bits applied",
+        );
+      } finally {
+        Object.defineProperty(globalThis, "crypto", {
+          value: originalCrypto,
+          writable: true,
+          configurable: true,
+        });
+      }
     },
   },
   "record.test.ts": (() => {
@@ -2723,6 +2836,17 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
           "class should be cleared after re-configure",
         );
       },
+      "getClassByName resolves class by table name fallback": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        Car.create({ make: "Toyota", model: "Corolla" }).save();
+        const registry = Registry.getInstance();
+        const resolved = registry.getClassByName(Car.tableName);
+        assertTrue(resolved !== undefined, "class should resolve by table name fallback");
+        assertTrue(
+          resolved === (Car as unknown as RecordStatic),
+          "resolved class should be the Car constructor",
+        );
+      },
       "clears entity cache and allows re-read from sheet": (ctx: RuntimeCaseContext) => {
         const { Car } = setup(ctx);
         const car = new Car();
@@ -3067,6 +3191,273 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         assertEqual(models[0], "Supra", "first sorted model should be Supra");
         assertEqual(models[1], "X1", "second sorted model should be X1");
       },
+      "Field defaultValue fills missing property on save": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("rec");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class Ticket extends BaseRecord {
+          static override get tableName() {
+            return `Tickets_${suffix}`;
+          }
+          title: string;
+
+          @Field({ defaultValue: "open" })
+          status: string;
+        }
+
+        const t = new Ticket();
+        (t as { title: string }).title = "Bug report";
+        t.save();
+        const found = Ticket.findById(t.__id);
+        assertTrue(found !== null, "should find the saved Ticket");
+        assertEqual(found!.status, "open", "status should default to open when not provided");
+      },
+      "Field() without options still registers and persists the field": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("rec");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class Note extends BaseRecord {
+          static override get tableName() {
+            return `Notes_${suffix}`;
+          }
+
+          @Field()
+          body: string;
+        }
+
+        const n = new Note();
+        n.body = "remember me";
+        n.save();
+
+        Registry.getInstance().clearCache();
+        const found = Note.findById(n.__id);
+        assertTrue(found !== null, "should find the saved Note");
+        assertEqual(found!.body, "remember me", "body should round-trip for @Field() without options");
+      },
+      "Field type date stores Date as ISO string in sheet round-trip": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("rec");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class Article extends BaseRecord {
+          static override get tableName() {
+            return `Articles_${suffix}`;
+          }
+          title: string;
+
+          @Field({ type: "date" })
+          publishedAt: Date | null;
+        }
+
+        const isoString = "2024-06-15T12:00:00.000Z";
+        const date = new Date(isoString);
+        const a = new Article();
+        (a as { title: string }).title = "Hello World";
+        (a as { publishedAt: Date }).publishedAt = date;
+        a.save();
+        Registry.getInstance().clearCache();
+        const found = Article.findById(a.__id);
+        assertTrue(found !== null, "should find the saved Article");
+        assertEqual(
+          found!.publishedAt as unknown as string,
+          isoString,
+          "Date should be stored and retrieved as ISO string after sheet read",
+        );
+      },
+      "resetDecoratorCaches() keeps @Field metadata effective": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("rec");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class TicketReset extends BaseRecord {
+          static override get tableName() {
+            return `Tickets_${suffix}`;
+          }
+
+          title: string;
+
+          @Field({ defaultValue: "open" })
+          status: string;
+        }
+
+        const t1 = new TicketReset();
+        t1.title = "first";
+        t1.save();
+        const first = TicketReset.findById(t1.__id);
+        assertTrue(first !== null, "first Ticket should exist");
+        assertEqual(first!.status, "open", "default value should apply before cache reset");
+
+        resetDecoratorCaches();
+
+        const t2 = new TicketReset();
+        t2.title = "second";
+        t2.save();
+        Registry.getInstance().clearCache();
+        const second = TicketReset.findById(t2.__id);
+        assertTrue(second !== null, "second Ticket should exist");
+        assertEqual(second!.status, "open", "default value should still apply after cache reset");
+      },
+      "Field({ required: true }) enforces required validation": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("rec");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class TaskWithFieldRequired extends BaseRecord {
+          static override get tableName() {
+            return `Tasks_${suffix}`;
+          }
+
+          @Field({ required: true })
+          title: string;
+        }
+
+        const task = new TaskWithFieldRequired();
+        let threw = false;
+        try {
+          task.save();
+        } catch (e: unknown) {
+          threw = true;
+          assertTrue(
+            (e as Error).message.includes('Required field "title" is missing'),
+            "error should mention missing required title",
+          );
+        }
+        assertTrue(threw, "save should throw when @Field({ required: true }) field is missing");
+      },
+      "returns the shared IndexStore instance": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("rec");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class CarForIndexStore extends BaseRecord {
+          static override get tableName() {
+            return `Cars_${suffix}`;
+          }
+          make: string;
+
+          @Required()
+          model: string;
+        }
+
+        const c = new CarForIndexStore();
+        (c as { make: string }).make = "Toyota";
+        c.model = "Corolla";
+        c.save();
+
+        const registry = Registry.getInstance();
+        const indexStore = registry.getIndexStore();
+        assertTrue(
+          indexStore !== undefined && indexStore !== null,
+          "getIndexStore() should return an IndexStore",
+        );
+        assertTrue(
+          registry.getIndexStore() === indexStore,
+          "getIndexStore() should return the same instance on repeated calls",
+        );
+      },
+      "batch save updates existing entity when committed": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("rec");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class CarBatch extends BaseRecord {
+          static override get tableName() {
+            return `Cars_${suffix}`;
+          }
+          make: string;
+
+          @Required()
+          model: string;
+
+          year: number;
+        }
+
+        const c = new CarBatch();
+        (c as { make: string }).make = "Honda";
+        c.model = "Civic";
+        (c as { year: number }).year = 2020;
+        c.save();
+        const savedId = c.__id;
+        const createdAt = c.__createdAt;
+
+        const repo = Registry.getInstance().ensureRepository(CarBatch as unknown as RecordStatic);
+        repo.beginBatch();
+        repo.save({ __id: savedId, __createdAt: createdAt, make: "Toyota", model: "Camry", year: 2024 });
+
+        // Sheet not yet updated — cache still shows original
+        const beforeCommit = CarBatch.findById(savedId);
+        assertTrue(beforeCommit !== null, "entity should still be visible before commit");
+        assertEqual(
+          (beforeCommit as { make: string }).make,
+          "Honda",
+          "make should still be Honda before commit",
+        );
+
+        repo.commitBatch();
+        Registry.getInstance().clearCache();
+
+        const updated = CarBatch.findById(savedId);
+        assertTrue(updated !== null, "entity should be found after commit");
+        assertEqual((updated as { make: string }).make, "Toyota", "make should be updated to Toyota");
+        assertEqual((updated as { model: string }).model, "Camry", "model should be updated to Camry");
+        assertEqual((updated as { year: number }).year, 2024, "year should be updated to 2024");
+        assertEqual(
+          (updated as { __createdAt: string }).__createdAt,
+          createdAt,
+          "__createdAt should be preserved",
+        );
+      },
+      "throws when indexed model has no indexTableName": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("rec");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class BrokenIndexedRecord extends BaseRecord {
+          static override get tableName() {
+            return `BrokenIndexed_${suffix}`;
+          }
+
+          static override get indexTableName(): string {
+            return undefined as unknown as string;
+          }
+
+          @Indexed()
+          code: string;
+        }
+
+        const entity = new BrokenIndexedRecord();
+        entity.code = "X-1";
+
+        let threw = false;
+        try {
+          entity.save();
+        } catch (e: unknown) {
+          threw = true;
+          assertTrue(
+            (e as Error).message.includes("has no indexTableName"),
+            "error should mention missing indexTableName",
+          );
+        }
+        assertTrue(threw, "save() should throw when indexed schema has no indexTableName");
+      },
     } as Record<string, RuntimeCaseHandler>;
   })(),
   "sheet-repository.test.ts": {
@@ -3184,6 +3575,73 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertEqual(count, 0, "deleteAll should return 0 when beforeDelete vetoes");
       assertEqual(repo.count(), 3, "all entities should be preserved");
     },
+    "beforeDelete veto on deleteAll can preserve selected entities": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_PartialVetoDelItems");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      let vetoId: string | null = null;
+      const hooks: LifecycleHooks<Entity> = {
+        beforeDelete: (id) => id !== vetoId,
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      const a = repo.save({ name: "A", price: 1, category: "x" });
+      const b = repo.save({ name: "B", price: 2, category: "x" });
+      const c = repo.save({ name: "C", price: 3, category: "x" });
+      vetoId = b.__id;
+
+      const count = repo.deleteAll();
+      assertEqual(count, 2, "deleteAll should remove only non-vetoed entities");
+      assertEqual(repo.count(), 1, "one vetoed entity should remain");
+      const remaining = repo.find();
+      assertEqual(remaining.length, 1, "one entity should remain after partial veto");
+      assertEqual(remaining[0].__id, vetoId, "remaining entity should be the vetoed one");
+      const ids = [a.__id, b.__id, c.__id];
+      assertTrue(ids.includes(remaining[0].__id), "remaining entity should be one of the original entities");
+    },
+    "beforeDelete partial veto works for deleteAll small-batch path": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_PartialVetoSmallDelItems");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      let vetoId: string | null = null;
+      const deletedIds: string[] = [];
+      const hooks: LifecycleHooks<Entity> = {
+        beforeDelete: (id) => id !== vetoId,
+        afterDelete: (id) => {
+          deletedIds.push(id);
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+
+      const a = repo.save({ name: "A", price: 1, category: "x" });
+      const b = repo.save({ name: "B", price: 2, category: "x" });
+      vetoId = b.__id;
+
+      // Exactly 2 entities -> individual delete path (<=2)
+      const count = repo.deleteAll();
+      assertEqual(count, 1, "exactly one entity should be deleted when one is vetoed");
+      assertEqual(repo.count(), 1, "one vetoed entity should remain");
+      const remaining = repo.find();
+      assertEqual(remaining.length, 1, "one entity should remain after partial veto in small batch");
+      assertEqual(remaining[0].__id, vetoId, "remaining entity should be the vetoed one");
+      assertEqual(deletedIds.length, 1, "afterDelete should be called once");
+      assertEqual(deletedIds[0], a.__id, "afterDelete should be called for deleted (non-vetoed) entity");
+    },
     "afterDelete is called with deleted entity ID": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const tableName = ctx.state.nextTableName("tbl_AfterDelItems");
@@ -3206,6 +3664,72 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       const saved = repo.save({ name: "gone", price: 0, category: "x" });
       repo.delete(saved.__id);
       assertDeepEqual(deletedIds, [saved.__id], "afterDelete should receive deleted ID");
+    },
+    "afterDelete is called for each entity removed by deleteAll": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_AfterDelAllItems");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const deletedIds: string[] = [];
+      const hooks: LifecycleHooks<Entity> = {
+        afterDelete: (id) => {
+          deletedIds.push(id);
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      const a = repo.save({ name: "A", price: 1, category: "x" });
+      const b = repo.save({ name: "B", price: 2, category: "x" });
+      const c = repo.save({ name: "C", price: 3, category: "x" });
+
+      const count = repo.deleteAll();
+      assertEqual(count, 3, "deleteAll should remove all entities");
+      assertEqual(repo.count(), 0, "no entities should remain after deleteAll");
+      const expected = new Set([a.__id, b.__id, c.__id]);
+      const actual = new Set(deletedIds);
+      assertEqual(actual.size, expected.size, "afterDelete should be called exactly once per deleted entity");
+      for (const id of expected) {
+        assertTrue(actual.has(id), "afterDelete should include every deleted ID");
+      }
+    },
+    "afterDelete is called for each entity removed by deleteAll small-batch path": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_AfterDelAllSmallItems");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const deletedIds: string[] = [];
+      const hooks: LifecycleHooks<Entity> = {
+        afterDelete: (id) => {
+          deletedIds.push(id);
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      const a = repo.save({ name: "A", price: 1, category: "x" });
+      const b = repo.save({ name: "B", price: 2, category: "x" });
+
+      // Exactly 2 entities -> individual delete path (<=2)
+      const count = repo.deleteAll();
+      assertEqual(count, 2, "deleteAll should remove both entities in small-batch path");
+      assertEqual(repo.count(), 0, "no entities should remain after deleteAll");
+      const expected = new Set([a.__id, b.__id]);
+      const actual = new Set(deletedIds);
+      assertEqual(actual.size, expected.size, "afterDelete should be called once per deleted entity");
+      for (const id of expected) {
+        assertTrue(actual.has(id), "afterDelete should include each deleted ID in small-batch path");
+      }
     },
     "getSheet throws when sheet does not exist": (ctx) => {
       const adapter = ctx.state.getAdapter();
@@ -3302,6 +3826,234 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
       assertTrue(reread !== null, "entity should still be readable after query() mutation");
       assertEqual(reread!.name, "Widget", "query() results should be detached from cache-backed state");
     },
+    "commitBatch() is a no-op when no batch is active": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_CommitNoOp");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      assertTrue(!repo.isBatchActive(), "batch should not be active initially");
+      let threw = false;
+      try {
+        repo.commitBatch();
+      } catch {
+        threw = true;
+      }
+      assertTrue(!threw, "commitBatch() with no active batch should not throw");
+      assertTrue(!repo.isBatchActive(), "batch should still be inactive after no-op commitBatch");
+    },
+    "rollbackBatch() is a no-op when no batch is active": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_RollbackNoOp");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      assertTrue(!repo.isBatchActive(), "batch should not be active initially");
+      let threw = false;
+      try {
+        repo.rollbackBatch();
+      } catch {
+        threw = true;
+      }
+      assertTrue(!threw, "rollbackBatch() with no active batch should not throw");
+      assertTrue(!repo.isBatchActive(), "batch should still be inactive after no-op rollbackBatch");
+    },
+    "rollbackBatch discards queued operations and does not trigger save/delete hooks": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_RollbackDiscardHooks");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const afterSaveCalls: string[] = [];
+      const afterDeleteCalls: string[] = [];
+      const hooks: LifecycleHooks<Entity> = {
+        afterSave: (entity) => {
+          afterSaveCalls.push(entity.__id);
+        },
+        afterDelete: (id) => {
+          afterDeleteCalls.push(id);
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+
+      const existing = repo.save({ name: "Existing", price: 1, category: "x" });
+      // Ignore setup-side save hook calls; verify rollback side effects only.
+      afterSaveCalls.length = 0;
+      afterDeleteCalls.length = 0;
+
+      repo.beginBatch();
+      repo.save({ name: "Queued", price: 2, category: "y" });
+      repo.delete(existing.__id);
+      assertEqual(repo.count(), 1, "queued save/delete should not affect persisted count before commit");
+
+      repo.rollbackBatch();
+
+      assertEqual(repo.count(), 1, "rollback should keep only the original entity");
+      const found = repo.findById(existing.__id);
+      assertTrue(found !== null, "existing entity should remain after rollback");
+      assertEqual(found!.name, "Existing", "existing entity should remain unchanged after rollback");
+      assertEqual(afterSaveCalls.length, 0, "afterSave should not fire for rolled-back queued save");
+      assertEqual(afterDeleteCalls.length, 0, "afterDelete should not fire for rolled-back queued delete");
+    },
+    "beginBatch() resets the buffer when batch is already active": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BeginReset");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      repo.beginBatch();
+      repo.save({ name: "First", price: 1, category: "x" }); // buffered
+      repo.beginBatch(); // resets the buffer, discarding the buffered save
+      repo.commitBatch(); // commits an empty buffer
+      assertEqual(repo.count(), 0, "entity buffered before reset should NOT have been saved");
+    },
+    "queued save applies beforeSave and triggers afterSave on commit": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchQueuedSaveHooks");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const calls: Array<{ isNew: boolean; name: string }> = [];
+      const hooks: LifecycleHooks<Entity> = {
+        beforeSave: (entity) => ({
+          ...entity,
+          name: String(entity.name ?? "").toUpperCase(),
+        }),
+        afterSave: (entity, isNew) => {
+          calls.push({ isNew, name: String(entity.name ?? "") });
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+
+      repo.beginBatch();
+      repo.save({ name: "alpha", price: 1, category: "x" });
+      assertEqual(repo.count(), 0, "queued save should not be visible before commit");
+      assertEqual(calls.length, 0, "afterSave should not fire before commit");
+
+      repo.commitBatch();
+      assertEqual(repo.count(), 1, "entity should be persisted after commit");
+      const all = repo.find();
+      assertEqual(all.length, 1, "one entity should exist after commit");
+      assertEqual(all[0].name, "ALPHA", "beforeSave should uppercase queued entity on commit");
+      assertEqual(calls.length, 1, "afterSave should fire once on commit");
+      assertTrue(calls[0].isNew, "queued save should be treated as a new entity");
+      assertEqual(calls[0].name, "ALPHA", "afterSave should receive transformed entity data");
+    },
+    "queued update applies beforeSave and triggers afterSave with isNew=false": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchQueuedUpdateHooks");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const calls: Array<{ isNew: boolean; name: string }> = [];
+      const hooks: LifecycleHooks<Entity> = {
+        beforeSave: (entity) => ({
+          ...entity,
+          name: String(entity.name ?? "").toUpperCase(),
+        }),
+        afterSave: (entity, isNew) => {
+          calls.push({ isNew, name: String(entity.name ?? "") });
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+
+      const original = repo.save({ name: "alpha", price: 1, category: "x" });
+      calls.length = 0;
+
+      repo.beginBatch();
+      repo.save({ ...original, name: "beta" });
+      const beforeCommit = repo.findById(original.__id);
+      assertTrue(beforeCommit !== null, "original entity should exist before commit");
+      assertEqual(beforeCommit!.name, "ALPHA", "queued update should not apply before commit");
+      assertEqual(calls.length, 0, "afterSave should not fire before commit for queued update");
+
+      repo.commitBatch();
+      const updated = repo.findById(original.__id);
+      assertTrue(updated !== null, "entity should still exist after queued update commit");
+      assertEqual(updated!.name, "BETA", "beforeSave should transform queued update on commit");
+      assertEqual(calls.length, 1, "afterSave should fire once for queued update");
+      assertTrue(!calls[0].isNew, "queued update should be reported as isNew=false");
+      assertEqual(calls[0].name, "BETA", "afterSave should receive transformed updated entity");
+    },
+    "queued update by __id without __createdAt updates existing entity and preserves createdAt": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchQueuedUpdateByIdNoCreatedAt");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+
+      const original = repo.save({ name: "alpha", price: 1, category: "x" });
+      const originalCreatedAt = original.__createdAt;
+
+      repo.beginBatch();
+      const placeholder = repo.save({ __id: original.__id, name: "beta", price: 2, category: "x" });
+      assertTrue(
+        placeholder.__createdAt !== undefined,
+        "placeholder should include __createdAt for likely-new heuristic",
+      );
+      assertEqual(repo.count(), 1, "queued update should not create visible duplicate before commit");
+
+      repo.commitBatch();
+      assertEqual(repo.count(), 1, "commit should keep a single updated entity");
+      const updated = repo.findById(original.__id);
+      assertTrue(updated !== null, "updated entity should still be found by original id");
+      assertEqual(updated!.name, "beta", "name should be updated");
+      assertEqual(updated!.price, 2, "price should be updated");
+      assertEqual(
+        updated!.__createdAt,
+        originalCreatedAt,
+        "original createdAt should be preserved on update",
+      );
+      const all = repo.find();
+      assertEqual(all.length, 1, "only one row should exist after queued update commit");
+      assertEqual(all[0].__id, original.__id, "row id should remain unchanged");
+    },
     "save() in batch mode with explicit __id sets __createdAt for new entity": (ctx) => {
       const adapter = ctx.state.getAdapter();
       const tableName = ctx.state.nextTableName("tbl_BatchCreatedAt");
@@ -3322,6 +4074,379 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         "batch save with explicit __id and no __createdAt should include __createdAt",
       );
       repo.rollbackBatch();
+    },
+    "commitBatch persists queued save with explicit __id for new entity": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchCreatedAtCommit");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+
+      repo.beginBatch();
+      repo.save({ __id: "brand-new-id", name: "X", price: 5, category: "tools" });
+      assertEqual(repo.count(), 0, "queued save should not persist before commit");
+
+      repo.commitBatch();
+      assertEqual(repo.count(), 1, "queued save should persist on commit");
+      const found = repo.findById("brand-new-id");
+      assertTrue(found !== null, "entity with explicit id should be persisted");
+      assertEqual(found!.__id, "brand-new-id", "persisted entity id should match explicit __id");
+      assertEqual(found!.name, "X", "persisted entity name should match payload");
+      assertTrue(found!.__createdAt !== undefined, "persisted entity should have __createdAt set");
+    },
+    "two queued saves with same explicit __id produce one updated entity after commit": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchTwoSavesSameId");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+
+      repo.beginBatch();
+      repo.save({ __id: "same-id", name: "First", price: 1, category: "x" });
+      repo.save({
+        __id: "same-id",
+        name: "Second",
+        price: 2,
+        category: "y",
+        __createdAt: "2020-01-01T00:00:00.000Z",
+      });
+      assertEqual(repo.count(), 0, "queued saves should not persist before commit");
+
+      repo.commitBatch();
+
+      assertEqual(repo.count(), 1, "same-id queued saves should end with one persisted entity");
+      const found = repo.findById("same-id");
+      assertTrue(found !== null, "entity with same-id should exist after commit");
+      assertEqual(found!.name, "Second", "final name should come from second queued save");
+      assertEqual(found!.price, 2, "final price should come from second queued save");
+      assertEqual(found!.category, "y", "final category should come from second queued save");
+      assertTrue(found!.__createdAt !== undefined, "persisted entity should have __createdAt");
+      const all = repo.find();
+      assertEqual(all.length, 1, "there should be exactly one row after commit");
+      assertEqual(all[0].__id, "same-id", "row id should be the explicit same-id");
+    },
+    "two queued saves with same explicit __id trigger afterSave as create then update": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchTwoSavesSameIdHooks");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const calls: Array<{ isNew: boolean; name: string }> = [];
+      const hooks: LifecycleHooks<Entity> = {
+        afterSave: (entity, isNew) => {
+          calls.push({ isNew, name: String(entity.name ?? "") });
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+
+      repo.beginBatch();
+      repo.save({ __id: "same-id", name: "First", price: 1, category: "x" });
+      repo.save({
+        __id: "same-id",
+        name: "Second",
+        price: 2,
+        category: "y",
+        __createdAt: "2020-01-01T00:00:00.000Z",
+      });
+      assertEqual(calls.length, 0, "afterSave should not fire before commit");
+
+      repo.commitBatch();
+
+      assertEqual(calls.length, 2, "afterSave should fire for both queued saves on commit");
+      assertTrue(calls[0].isNew, "first queued save should be treated as create");
+      assertEqual(calls[0].name, "First", "first callback should contain first payload");
+      assertTrue(!calls[1].isNew, "second queued save should be treated as update");
+      assertEqual(calls[1].name, "Second", "second callback should contain second payload");
+    },
+    "deleteAll() in batch mode queues deletes for deferred execution": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchDelAll");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      repo.save({ name: "Alpha", price: 1, category: "x" });
+      repo.save({ name: "Beta", price: 2, category: "x" });
+      assertEqual(repo.count(), 2, "should have 2 entities before batch");
+
+      repo.beginBatch();
+      const queued = repo.deleteAll();
+      assertEqual(queued, 2, "deleteAll() in batch mode should return the number of queued deletes");
+      assertEqual(repo.count(), 2, "count() should still reflect sheet state during batch");
+
+      repo.commitBatch();
+      assertEqual(repo.count(), 0, "all entities should be deleted after commitBatch");
+    },
+    "deleteAll(options) in batch mode queues only matching deletes": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchDelAllFiltered");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      repo.save({ name: "Alpha", price: 1, category: "x" });
+      repo.save({ name: "Beta", price: 2, category: "y" });
+      repo.save({ name: "Gamma", price: 3, category: "x" });
+      assertEqual(repo.count(), 3, "should have 3 entities before filtered batch deleteAll");
+
+      repo.beginBatch();
+      const queued = repo.deleteAll({ where: [{ field: "category", operator: "=", value: "x" }] });
+      assertEqual(queued, 2, "should queue exactly the two matching entities");
+      assertEqual(repo.count(), 3, "count should remain unchanged until commit");
+
+      repo.commitBatch();
+      const remaining = repo.find();
+      assertEqual(remaining.length, 1, "one entity should remain after filtered deletes");
+      assertEqual(remaining[0].name, "Beta", "remaining entity should be Beta");
+    },
+    "delete() in batch mode with non-existent ID is a deferred no-op after commit": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchDeleteMissing");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      repo.save({ name: "Alpha", price: 1, category: "x" });
+      assertEqual(repo.count(), 1, "should have one entity before batch delete missing ID");
+
+      repo.beginBatch();
+      const accepted = repo.delete("missing-id");
+      assertTrue(accepted, "delete should be accepted in batch mode");
+      assertEqual(repo.count(), 1, "count should remain unchanged before commit");
+
+      repo.commitBatch();
+      assertEqual(repo.count(), 1, "missing-id delete should be a no-op after commit");
+      const all = repo.find();
+      assertEqual(all.length, 1, "entity should still exist");
+      assertEqual(all[0].name, "Alpha", "remaining entity should be Alpha");
+    },
+    "afterDelete is called for queued delete when batch is committed": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchDeleteAfterDeleteHook");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const deletedIds: string[] = [];
+      const hooks: LifecycleHooks<Entity> = {
+        afterDelete: (id) => {
+          deletedIds.push(id);
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      const saved = repo.save({ name: "Alpha", price: 1, category: "x" });
+
+      repo.beginBatch();
+      repo.delete(saved.__id);
+      assertEqual(deletedIds.length, 0, "afterDelete should not fire before commit");
+
+      repo.commitBatch();
+      assertDeepEqual(deletedIds, [saved.__id], "afterDelete should fire with saved ID on commit");
+      assertEqual(repo.count(), 0, "entity should be deleted after commit");
+    },
+    "afterDelete is not called for missing queued delete on commit": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchDeleteAfterDeleteMissing");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const deletedIds: string[] = [];
+      const hooks: LifecycleHooks<Entity> = {
+        afterDelete: (id) => {
+          deletedIds.push(id);
+        },
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      repo.save({ name: "Alpha", price: 1, category: "x" });
+
+      repo.beginBatch();
+      repo.delete("missing-id");
+      assertEqual(deletedIds.length, 0, "afterDelete should not fire before commit");
+
+      repo.commitBatch();
+      assertEqual(deletedIds.length, 0, "afterDelete should not fire for missing queued delete");
+      assertEqual(repo.count(), 1, "existing entity should remain untouched");
+    },
+    "missing delete in batch does not block valid queued operations": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchDeleteMissingMixed");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      const alpha = repo.save({ name: "Alpha", price: 1, category: "x" });
+      assertEqual(repo.count(), 1, "should start with a single Alpha entity");
+
+      repo.beginBatch();
+      repo.delete("missing-id");
+      repo.save({ name: "Beta", price: 2, category: "y" });
+      repo.delete(alpha.__id);
+
+      repo.commitBatch();
+      const all = repo.find();
+      assertEqual(all.length, 1, "exactly one entity should remain after mixed batch commit");
+      assertEqual(all[0].name, "Beta", "Beta should be persisted despite missing delete op");
+    },
+    "delete() outside batch returns false for non-existent ID": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_DeleteMissingNoBatch");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      repo.save({ name: "Alpha", price: 1, category: "x" });
+      assertEqual(repo.count(), 1, "should have one entity before non-batch delete attempt");
+
+      const deleted = repo.delete("missing-id");
+      assertTrue(!deleted, "delete should return false for non-existent ID outside batch");
+      assertEqual(repo.count(), 1, "count should remain unchanged after failed delete");
+      assertEqual(repo.find()[0].name, "Alpha", "remaining entity should be Alpha");
+    },
+    "delete() falls back to full scan when cached row index is stale": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_DeleteStaleIndexFallback");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      const alpha = repo.save({ name: "Alpha", price: 1, category: "x" });
+      repo.save({ name: "Beta", price: 2, category: "y" });
+
+      // Prime map and then force stale row index to trigger fallback scan path.
+      assertTrue(repo.findById(alpha.__id) !== null, "alpha should exist before delete");
+      (repo as unknown as { idToRowIndex: Map<string, number> }).idToRowIndex.set(alpha.__id, 9999);
+
+      const deleted = repo.delete(alpha.__id);
+      assertTrue(deleted, "delete should succeed via fallback full scan");
+      assertTrue(repo.findById(alpha.__id) === null, "alpha should be deleted");
+      assertEqual(repo.count(), 1, "only one entity should remain");
+      assertEqual(repo.find()[0].name, "Beta", "remaining entity should be Beta");
+    },
+    "deleteAll(options) in batch mode returns zero when nothing matches": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchDeleteNoMatch");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache());
+      repo.save({ name: "Alpha", price: 1, category: "x" });
+      repo.save({ name: "Beta", price: 2, category: "y" });
+      assertEqual(repo.count(), 2, "should have 2 entities before filtered no-match deleteAll");
+
+      repo.beginBatch();
+      const queued = repo.deleteAll({ where: [{ field: "category", operator: "=", value: "z" }] });
+      assertEqual(queued, 0, "deleteAll should queue zero deletes when filter has no matches");
+      assertEqual(repo.count(), 2, "count should remain unchanged during batch");
+
+      repo.commitBatch();
+      assertEqual(repo.count(), 2, "count should remain unchanged after committing zero-op deleteAll");
+    },
+    "beforeDelete veto is respected when queued deleteAll is committed": (ctx) => {
+      const adapter = ctx.state.getAdapter();
+      const tableName = ctx.state.nextTableName("tbl_BatchDeleteVetoCommit");
+      const schema = {
+        tableName,
+        fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
+        indexes: [],
+      };
+      adapter.createSheet(tableName);
+      const sheet = adapter.getSheetByName(tableName)!;
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+      const indexStore = new IndexStore(adapter, new MemoryCache());
+      let vetoId: string | null = null;
+      const hooks: LifecycleHooks<Entity> = {
+        beforeDelete: (id) => id !== vetoId,
+      };
+      const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), hooks);
+      const a = repo.save({ name: "Alpha", price: 1, category: "x" });
+      const b = repo.save({ name: "Beta", price: 2, category: "x" });
+      vetoId = b.__id;
+      assertEqual(repo.count(), 2, "should have 2 entities before queued deleteAll");
+
+      repo.beginBatch();
+      const queued = repo.deleteAll();
+      assertEqual(queued, 2, "queued deleteAll should include both entities before hooks run");
+      assertEqual(repo.count(), 2, "count should remain unchanged before commit");
+
+      repo.commitBatch();
+      const remaining = repo.find();
+      assertEqual(remaining.length, 1, "one vetoed entity should remain after commit");
+      assertEqual(remaining[0].__id, vetoId, "remaining entity should be vetoed one");
+      const ids = [a.__id, b.__id];
+      assertTrue(ids.includes(remaining[0].__id), "remaining entity should come from original set");
     },
   },
 };

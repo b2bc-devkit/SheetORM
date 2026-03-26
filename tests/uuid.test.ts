@@ -38,4 +38,31 @@ describe("Uuid.generate", () => {
       delete (globalThis as unknown as { Utilities?: unknown }).Utilities;
     }
   });
+
+  it("uses crypto.getRandomValues when available", () => {
+    const originalCrypto = globalThis.crypto;
+    const fakeCrypto = {
+      getRandomValues: (buf: Uint8Array) => {
+        for (let i = 0; i < buf.length; i++) buf[i] = i;
+        return buf;
+      },
+    };
+
+    Object.defineProperty(globalThis, "crypto", {
+      value: fakeCrypto,
+      writable: true,
+      configurable: true,
+    });
+    try {
+      const uuid = Uuid.generate();
+      // bytes 0..15 with RFC4122 v4 adjustments: r[6]=0x46, r[8]=0x88
+      expect(uuid).toBe("00010203-0405-4607-8809-0a0b0c0d0e0f");
+    } finally {
+      Object.defineProperty(globalThis, "crypto", {
+        value: originalCrypto,
+        writable: true,
+        configurable: true,
+      });
+    }
+  });
 });

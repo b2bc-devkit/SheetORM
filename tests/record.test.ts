@@ -1,7 +1,7 @@
 import { MockSpreadsheetAdapter } from "./MockSpreadsheetAdapter";
 import { Record } from "../src/core/Record";
 import { Decorators } from "../src/core/Decorators";
-const { Indexed, Required, resetDecoratorCaches } = Decorators;
+const { Indexed, Required, Field, resetDecoratorCaches } = Decorators;
 import { Query } from "../src/query/Query";
 import { Registry } from "../src/core/Registry";
 import type { RecordStatic } from "../src/core/RecordStatic";
@@ -27,6 +27,39 @@ class Product extends Record {
 
   @Indexed()
   category: string;
+}
+
+class Ticket extends Record {
+  title: string;
+
+  @Field({ defaultValue: "open" })
+  status: string;
+}
+
+class Article extends Record {
+  title: string;
+
+  @Field({ type: "date" })
+  publishedAt: Date | null;
+}
+
+class Note extends Record {
+  @Field()
+  body: string;
+}
+
+class TaskWithFieldRequired extends Record {
+  @Field({ required: true })
+  title: string;
+}
+
+class BrokenIndexedRecord extends Record {
+  static override get indexTableName(): string {
+    return undefined as unknown as string;
+  }
+
+  @Indexed()
+  code: string;
 }
 
 // ─── Tests ──────────────────────────────────────────
@@ -612,6 +645,15 @@ describe("Record ActiveRecord API", () => {
       registry.configure({ adapter });
       expect(registry.getClassByName("Car")).toBeUndefined();
     });
+
+    it("getClassByName resolves class by table name fallback", () => {
+      // Registration path stores class by name and by table
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
+
+      const registry = Registry.getInstance();
+      const resolved = registry.getClassByName(Car.tableName);
+      expect(resolved).toBe(Car as unknown as RecordStatic);
+    });
   });
 
   describe("Registry.clearCache() with index store", () => {
@@ -631,6 +673,19 @@ describe("Record ActiveRecord API", () => {
       const all = Car.find();
       expect(all).toHaveLength(1);
       expect(all[0].make).toBe("Toyota");
+    });
+  });
+
+  describe("Registry.getIndexStore()", () => {
+    it("returns the shared IndexStore instance", () => {
+      // Force registry to initialise (ensureRepository also calls ensureIndexStore internally)
+      Car.create({ make: "Toyota", model: "Corolla" }).save();
+
+      const registry = Registry.getInstance();
+      const indexStore = registry.getIndexStore();
+      expect(indexStore).toBeDefined();
+      // Calling twice must return the same instance
+      expect(registry.getIndexStore()).toBe(indexStore);
     });
   });
 
@@ -871,6 +926,35 @@ describe("Record ActiveRecord API", () => {
       repo.commitBatch();
       expect(Car.count()).toBe(2);
     });
+
+    it("batch save updates existing entity when committed", () => {
+      const car = new Car();
+      car.make = "Honda";
+      car.model = "Civic";
+      car.year = 2020;
+      car.save();
+      const savedId = car.__id;
+      const createdAt = car.__createdAt;
+
+      const repo = Registry.getInstance().ensureRepository(Car as unknown as RecordStatic);
+      repo.beginBatch();
+      // Provide both __id and __createdAt so isLikelyUpdate heuristic treats it as an update
+      repo.save({ __id: savedId, __createdAt: createdAt, make: "Toyota", model: "Camry", year: 2024 });
+
+      // Sheet not yet updated
+      expect(Car.findById(savedId)!.make).toBe("Honda");
+
+      repo.commitBatch();
+
+      // After commit the entity must reflect the updated values
+      Registry.getInstance().clearCache();
+      const updated = Car.findById(savedId);
+      expect(updated).not.toBeNull();
+      expect(updated!.make).toBe("Toyota");
+      expect(updated!.model).toBe("Camry");
+      expect(updated!.year).toBe(2024);
+      expect(updated!.__createdAt).toBe(createdAt);
+    });
   });
 
   describe("findById after gap row uses cached array scan", () => {
@@ -1031,6 +1115,69 @@ describe("Record ActiveRecord API", () => {
 
       // Gap row is gone: replaceAllData wrote back only the remaining entities
       expect(rawSheet._getRawData()).toHaveLength(1);
+    });
+  });
+
+  describe("Field decorator", () => {
+    it("Field defaultValue fills missing property on save", () => {
+      const t = Ticket.create({ title: "Support ticket" });
+      t.save();
+      const found = Ticket.findById(t.__id);
+      expect(found).not.toBeNull();
+      expect(found!.status).toBe("open");
+    });
+
+    it("Field() without options still registers and persists the field", () => {
+      const n = Note.create({ body: "remember me" });
+      n.save();
+
+      Registry.getInstance().clearCache();
+      const found = Note.findById(n.__id);
+      expect(found).not.toBeNull();
+      expect(found!.body).toBe("remember me");
+    });
+
+    it("Field type date stores Date as ISO string in sheet round-trip", () => {
+      const isoString = "2024-06-15T12:00:00.000Z";
+      const date = new Date(isoString);
+      const a = Article.create({ title: "Hello World", publishedAt: date });
+      a.save();
+      // Force re-read from sheet to exercise deserialization
+      Registry.getInstance().clearCache();
+      const found = Article.findById(a.__id);
+      expect(found).not.toBeNull();
+      expect(found!.publishedAt).toBe(isoString);
+    });
+
+    it("resetDecoratorCaches() keeps @Field metadata effective", () => {
+      // First save confirms baseline behavior
+      const t1 = Ticket.create({ title: "first" });
+      t1.save();
+      expect(Ticket.findById(t1.__id)!.status).toBe("open");
+
+      // Reset only derived caches; decorator metadata should still apply
+      resetDecoratorCaches();
+
+      const t2 = Ticket.create({ title: "second" });
+      t2.save();
+      Registry.getInstance().clearCache();
+      const found = Ticket.findById(t2.__id);
+      expect(found).not.toBeNull();
+      expect(found!.status).toBe("open");
+    });
+
+    it("Field({ required: true }) enforces required validation", () => {
+      const task = TaskWithFieldRequired.create({});
+      expect(() => task.save()).toThrow(/Required field "title" is missing/);
+    });
+  });
+
+  describe("indexed schema validation", () => {
+    it("throws when indexed model has no indexTableName", () => {
+      const entity = new BrokenIndexedRecord();
+      entity.code = "X-1";
+
+      expect(() => entity.save()).toThrow("defines indexes but has no indexTableName");
     });
   });
 

@@ -102,4 +102,11 @@ describe("MemoryCache", () => {
   it("set() throws for Infinity per-key TTL", () => {
     expect(() => cache.set("key", "value", Infinity)).toThrow("non-negative finite number");
   });
+
+  it("constructor with TTL of 0 expires entries immediately", () => {
+    const instant = new MemoryCache(0);
+    instant.set("key", "value");
+    expect(instant.get<string>("key")).toBeNull();
+    expect(instant.has("key")).toBe(false);
+  });
 });

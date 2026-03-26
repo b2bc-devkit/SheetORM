@@ -397,4 +397,21 @@ describe("IndexStore", () => {
     const ids = indexStore.searchCombined("idx_Cars", "model", "BMW");
     expect(ids).toEqual(["car-001"]);
   });
+
+  it("clearAllCaches() allows the search cache to be rebuilt", () => {
+    indexStore.createCombinedIndex("idx_Users");
+    indexStore.registerIndex("idx_Users", "name", false);
+    indexStore.addToCombined("idx_Users", "name", "Alice", "user-001");
+
+    // Populate the search index cache
+    const before = indexStore.searchCombined("idx_Users", "name", "Alice");
+    expect(before).toEqual(["user-001"]);
+
+    // Clear all caches
+    indexStore.clearAllCaches();
+
+    // Search should still find results after cache is cleared and rebuilt
+    const after = indexStore.searchCombined("idx_Users", "name", "Alice");
+    expect(after).toEqual(["user-001"]);
+  });
 });
