@@ -4505,13 +4505,11 @@ function validateTests(): void {
   }
 }
 
-function runTests(): string {
-  validateTests();
-
+function runTestsForSuites(suites: typeof ParityCatalog.SUITES): string {
   const runStartedAt = Date.now();
   const state = new RuntimeParityState();
   const results: RuntimeCaseResult[] = [];
-  const total = ParityCatalog.CASE_IDS.length;
+  const total = suites.reduce((sum, s) => sum + s.tests.length, 0);
 
   const log = (msg: string): void => {
     if (typeof Logger !== "undefined" && typeof Logger.log === "function") {
@@ -4523,7 +4521,7 @@ function runTests(): string {
   log("[SheetORM] Clearing all existing sheets from active spreadsheet before test run");
   state.clearAllSheets(log);
 
-  for (const suite of ParityCatalog.SUITES) {
+  for (const suite of suites) {
     log(`[Suite] ${suite.file} (${suite.tests.length} tests)`);
 
     for (const testName of suite.tests) {
@@ -4606,8 +4604,21 @@ function runTests(): string {
   return JSON.stringify(report);
 }
 
+// Stage 1: cache, index-store, query, query-engine (~162 tests)
+function runTestsStageOne(): string {
+  validateTests();
+  return runTestsForSuites(ParityCatalog.SUITES.slice(0, 4));
+}
+
+// Stage 2: serialization, uuid, record, sheet-repository (~162 tests)
+function runTestsStageTwo(): string {
+  validateTests();
+  return runTestsForSuites(ParityCatalog.SUITES.slice(4));
+}
+
 export class RuntimeParity {
-  static run = runTests;
+  static runStageOne = runTestsStageOne;
+  static runStageTwo = runTestsStageTwo;
   static validate = validateTests;
   static readonly CASE_IDS = RUNTIME_PARITY_CASE_IDS;
 }

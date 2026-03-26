@@ -39,8 +39,12 @@ export class GasEntrypoints {
   static readonly IndexStore = IndexStore;
   static readonly Registry = Registry;
 
-  static runTests(): void {
-    RuntimeParity.run();
+  static runTestsStageOne(): void {
+    RuntimeParity.runStageOne();
+  }
+
+  static runTestsStageTwo(): void {
+    RuntimeParity.runStageTwo();
   }
 
   static validateTests(): void {
