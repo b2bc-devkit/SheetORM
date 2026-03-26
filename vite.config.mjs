@@ -116,8 +116,9 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    // TypeScript emits ESNext; no syntax down-levelling needed for the GAS V8 runtime
-    target: "esnext",
+    // GAS V8 doesn't support class fields (ES2022); es2021 is the highest
+    // compatible target.
+    target: "es2021",
     rollupOptions: {
       input: "gas-entry",
       output: {
