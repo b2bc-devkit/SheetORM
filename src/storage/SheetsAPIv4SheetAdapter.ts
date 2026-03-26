@@ -148,9 +148,21 @@ export class SheetsAPIv4SheetAdapter implements ISheetAdapter {
   }
 
   updateRows(updates: Array<{ rowIndex: number; values: unknown[] }>): void {
-    for (const u of updates) {
-      this.updateRow(u.rowIndex, u.values);
+    if (updates.length === 0) return;
+    // Group contiguous rows and buffer each group via writeRowsAt() (buffered)
+    const sorted = [...updates].sort((a, b) => a.rowIndex - b.rowIndex);
+    let groupStart = sorted[0].rowIndex;
+    let groupRows: unknown[][] = [sorted[0].values];
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].rowIndex === sorted[i - 1].rowIndex + 1) {
+        groupRows.push(sorted[i].values);
+      } else {
+        this.writeRowsAt(groupStart, groupRows);
+        groupStart = sorted[i].rowIndex;
+        groupRows = [sorted[i].values];
+      }
     }
+    this.writeRowsAt(groupStart, groupRows);
   }
 
   deleteRow(rowIndex: number): void {

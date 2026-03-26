@@ -68,9 +68,21 @@ export class GoogleSheetAdapter implements ISheetAdapter {
   }
 
   updateRows(updates: Array<{ rowIndex: number; values: unknown[] }>): void {
-    for (const u of updates) {
-      this.updateRow(u.rowIndex, u.values);
+    if (updates.length === 0) return;
+    // Group contiguous rows and flush each group in one setValues() call
+    const sorted = [...updates].sort((a, b) => a.rowIndex - b.rowIndex);
+    let groupStart = sorted[0].rowIndex;
+    let groupRows: unknown[][] = [sorted[0].values];
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].rowIndex === sorted[i - 1].rowIndex + 1) {
+        groupRows.push(sorted[i].values);
+      } else {
+        this.sheet.getRange(groupStart + 2, 1, groupRows.length, groupRows[0].length).setValues(groupRows);
+        groupStart = sorted[i].rowIndex;
+        groupRows = [sorted[i].values];
+      }
     }
+    this.sheet.getRange(groupStart + 2, 1, groupRows.length, groupRows[0].length).setValues(groupRows);
   }
 
   deleteRow(rowIndex: number): void {
