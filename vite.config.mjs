@@ -36,6 +36,7 @@ function gasPlugin() {
       "runTestsStageTwo",
       "validateTests",
       "runBenchmark",
+      "removeAllSheets",
       "demoCreate",
       "demoRead",
       "demoUpdate",
