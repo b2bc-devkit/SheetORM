@@ -5,7 +5,6 @@
 //   runBenchmark()  — full benchmark for Cars + Workers (100 records each)
 
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
-import { SheetsAPIv4SpreadsheetAdapter } from "../storage/SheetsAPIv4SpreadsheetAdapter.js";
 import { Registry } from "../core/Registry.js";
 import { Record as BaseRecord } from "../core/Record.js";
 import { Decorators } from "../core/Decorators.js";
@@ -414,90 +413,6 @@ function runBenchmark(): string {
   log(`[SheetORM]       (3 columns vs all entity columns), saving API read time.`);
   log(`[SheetORM] ════════════════════════════════════════════════════`);
 
-  // ── ADAPTER COMPARISON BENCHMARK ──────────────────────────────────────────
-  // Compares saveAll() write throughput for 1000 records with 4 @Indexed fields:
-  //   • Built-in SpreadsheetApp: flushEntityBatch → setValues()  [entity sheet]
-  //                              flushIndexBatch  → setValues()  [index sheet]
-  //                              = 2 separate native API calls
-  //   • REST API v4 (UrlFetchApp):  entity rows + index rows buffered → 1 batchUpdate
-  //                              = 1 HTTP round-trip for both sheets
-
-  log(`[SheetORM] ════════════════════════════════════════════════════`);
-  log(`[SheetORM] ADAPTER COMPARISON BENCHMARK`);
-  log(`[SheetORM] Built-in SpreadsheetApp.setValues()  vs  Sheets REST API v4 batchUpdate`);
-  log(`[SheetORM] Task: saveAll(${RECORD_COUNT}) with 4 @Indexed fields`);
-  log(`[SheetORM] (entity sheet write + index sheet write per saveAll)`);
-  log(`[SheetORM] ════════════════════════════════════════════════════`);
-
-  // — Step 1: Built-in SpreadsheetApp adapter ——————————————————————————————
-  const builtinSuffix = runId + "_cmp_b";
-  const BuiltinCompCar = createCarClass(builtinSuffix);
-  Registry.getInstance().configure({ adapter });
-
-  const builtinT0 = Date.now();
-  BuiltinCompCar.saveAll(Array.from({ length: RECORD_COUNT }, (_, i) => carData(i)));
-  const adapterBuiltinMs = Date.now() - builtinT0;
-  let adapterV4Ms: number | null = null;
-  let adapterFaster: string | null = null;
-  let adapterRatio: string | null = null;
-  let adapterComparisonError: string | null = null;
-
-  log(`[SheetORM] ─── Built-in SpreadsheetApp adapter ───`);
-  log(`[SheetORM]   saveAll(${RECORD_COUNT}) = ${adapterBuiltinMs} ms`);
-  log(`[SheetORM]   2 native setValues() calls (entity + index sheet)`);
-
-  // — Step 2: Sheets REST API v4 adapter ———————————————————————————————————
-  const v4Suffix = runId + "_cmp_v4";
-  const V4CompCar = createCarClass(v4Suffix);
-  const v4Adapter = new SheetsAPIv4SpreadsheetAdapter(spreadsheet);
-  Registry.getInstance().configure({ adapter: v4Adapter });
-
-  try {
-    const v4T0 = Date.now();
-    V4CompCar.saveAll(Array.from({ length: RECORD_COUNT }, (_, i) => carData(i)));
-    // Flush: entity rows + index rows go to Google Sheets in one HTTP batchUpdate
-    v4Adapter.flushAllPending();
-    adapterV4Ms = Date.now() - v4T0;
-
-    log(`[SheetORM] ─── Sheets REST API v4 adapter ───`);
-    log(`[SheetORM]   saveAll(${RECORD_COUNT}) + batchUpdate flush = ${adapterV4Ms} ms`);
-    log(`[SheetORM]   1 HTTP batchUpdate call (entity + index rows combined)`);
-
-    // — Comparison ————————————————————————————————————————————————————————————
-    const adapterFasterMs = Math.min(adapterBuiltinMs, adapterV4Ms);
-    const adapterSlowerMs = Math.max(adapterBuiltinMs, adapterV4Ms);
-    adapterRatio =
-      adapterFasterMs > 0 ? `${(adapterSlowerMs / adapterFasterMs).toFixed(2)}x` : `>${adapterSlowerMs}x`;
-    adapterFaster = adapterV4Ms <= adapterBuiltinMs ? "REST API v4" : "built-in SpreadsheetApp";
-
-    log(`[SheetORM] ────────────────────────────────────────────────────`);
-    log(`[SheetORM] Built-in: ${adapterBuiltinMs} ms   REST v4: ${adapterV4Ms} ms`);
-    log(`[SheetORM] Faster adapter: ${adapterFaster}  (${adapterRatio} ratio)`);
-    log(`[SheetORM] ════════════════════════════════════════════════════`);
-  } catch (e) {
-    adapterComparisonError = e instanceof Error ? e.message : String(e);
-    const isForbidden = /HTTP\s*403/i.test(adapterComparisonError);
-
-    log(`[SheetORM] ─── Sheets REST API v4 adapter ───`);
-    log(`[SheetORM]   ✗ Adapter comparison skipped: ${adapterComparisonError}`);
-    if (isForbidden) {
-      log(`[SheetORM]   Hint: enable Google Sheets API in the Apps Script GCP project and retry.`);
-      log(
-        `[SheetORM]   URL: https://console.cloud.google.com/marketplace/product/google/sheets.googleapis.com?q=search&referrer=search`,
-      );
-    }
-    log(`[SheetORM] ────────────────────────────────────────────────────`);
-    log(`[SheetORM] Built-in: ${adapterBuiltinMs} ms   REST v4: n/a`);
-    log(`[SheetORM] Faster adapter: n/a (REST API v4 unavailable)`);
-    log(`[SheetORM] ════════════════════════════════════════════════════`);
-  }
-
-  // — Cleanup comparison sheets ————————————————————————————————————————————
-  adapter.deleteSheet(`tbl_Cars_${builtinSuffix}`);
-  adapter.deleteSheet(`idx_Cars_${builtinSuffix}`);
-  adapter.deleteSheet(`tbl_Cars_${v4Suffix}`);
-  adapter.deleteSheet(`idx_Cars_${v4Suffix}`);
-
   Registry.reset();
   resetDecoratorCaches();
 
@@ -564,14 +479,6 @@ function runBenchmark(): string {
       fasterSuite,
       slowerSuite,
       differenceMs: Math.abs(diff),
-    },
-    adapterComparison: {
-      recordCount: RECORD_COUNT,
-      builtinMs: adapterBuiltinMs,
-      v4Ms: adapterV4Ms,
-      ratio: adapterRatio ? +adapterRatio.replace("x", "") : null,
-      faster: adapterFaster,
-      error: adapterComparisonError,
     },
     errors: allErrors,
     spreadsheetUrl: spreadsheet.getUrl(),

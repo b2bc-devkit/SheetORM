@@ -4,3 +4,4 @@ Code.js
 dist
 .tmp-localstorage
 .clasp.json
+tmp/

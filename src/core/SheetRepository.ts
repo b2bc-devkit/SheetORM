@@ -410,18 +410,24 @@ export class SheetRepository<T extends Entity> {
 
     const sheet = this.getSheet();
 
-    // Try in-memory index first, fall back to sheet scan
+    // Fast path: verify entity from in-memory cache — avoids sheet.getRow() API call
+    // (a getRange().getValues() round-trip to GAS, ~200 ms per call).
     let rowIdx: number | null = null;
     if (this.idToRowIndex) {
       const idx = this.idToRowIndex.get(id);
       if (idx !== undefined) {
-        // Verify the row actually contains the expected ID (guard against stale index)
-        const row = sheet.getRow(idx);
-        if (row && String(row[this.idColIdx]) === id) {
+        const cached = this.cache?.get<T[]>(this.dataCacheKey);
+        if (cached?.[idx]?.__id === id) {
           rowIdx = idx;
         } else {
-          // Stale index — fall back to full scan
-          rowIdx = this.rowIndexById(sheet, id);
+          // Cache cold or stale index — verify via sheet read
+          const row = sheet.getRow(idx);
+          if (row && String(row[this.idColIdx]) === id) {
+            rowIdx = idx;
+          } else {
+            // Stale index — fall back to full scan
+            rowIdx = this.rowIndexById(sheet, id);
+          }
         }
       }
     }

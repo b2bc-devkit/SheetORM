@@ -265,21 +265,18 @@ export class IndexStore {
     if (!sheet) return;
 
     const data = this.getCombinedData(indexTableName);
-    const rowsToDelete: number[] = [];
+    const remaining = data.filter((row) => String(row[2]) !== entityId);
+    if (remaining.length === data.length) return; // nothing to remove
 
-    for (let i = 0; i < data.length; i++) {
-      if (String(data[i][2]) === entityId) {
-        rowsToDelete.push(i);
-      }
-    }
-
-    if (rowsToDelete.length > 0) {
-      for (let i = rowsToDelete.length - 1; i >= 0; i--) {
-        sheet.deleteRow(rowsToDelete[i]);
-        data.splice(rowsToDelete[i], 1);
-      }
-      if (!this.cache) this.clearCache();
-      else this.searchIndexCache.clear();
+    // Single replaceAllData() instead of N individual deleteRow() calls.
+    // GAS Sheet.deleteRow() shifts every row below it (O(n) server-side), so
+    // N calls each taking ~300 ms is far worse than one bulk rewrite.
+    sheet.replaceAllData(remaining);
+    if (this.cache) {
+      this.cache.set(`cidx:${indexTableName}`, remaining);
+      this.searchIndexCache.clear();
+    } else {
+      this.clearCache();
     }
   }
 
@@ -358,7 +355,49 @@ export class IndexStore {
       }
     }
 
-    // Collect all rows to delete in one pass
+    // ── Optimised in-place update path ──────────────────────────────────────
+    // When no change clears a field (newStr !== null for all changes), we can
+    // overwrite each index row at its current position with writeRowsAt().
+    // This avoids deleteRow() which shifts every row below it in GAS (~300 ms each).
+    const hasPureDeletion = changes.some((c) => c.oldStr !== null && c.newStr === null);
+    if (!hasPureDeletion) {
+      const fieldOldMapOpt = new Map<string, string>();
+      const fieldNewMapOpt = new Map<string, string>();
+      for (const { field, oldStr, newStr } of changes) {
+        if (oldStr !== null) fieldOldMapOpt.set(field, oldStr);
+        if (newStr !== null) fieldNewMapOpt.set(field, newStr);
+      }
+      // Single pass: find each changed row and overwrite it in-place
+      for (let i = 0; i < data.length; i++) {
+        const fc = String(data[i][0]);
+        const oldStr = fieldOldMapOpt.get(fc);
+        if (oldStr === undefined || String(data[i][1]) !== oldStr || String(data[i][2]) !== entityId)
+          continue;
+        const newStr = fieldNewMapOpt.get(fc);
+        if (newStr !== undefined) {
+          const newRow: unknown[] = [fc, newStr, entityId];
+          sheet.writeRowsAt(i, [newRow]);
+          data[i] = newRow;
+        }
+      }
+      // Handle pure insertions (field was empty/null → now has a value)
+      const insertRows: unknown[][] = changes
+        .filter((c) => c.oldStr === null && c.newStr !== null)
+        .map((c) => [c.field, c.newStr!, entityId]);
+      if (insertRows.length > 0) {
+        if (this.cache) {
+          sheet.writeRowsAt(data.length, insertRows);
+          for (const r of insertRows) data.push(r);
+        } else {
+          for (const r of insertRows) sheet.appendRow(r as unknown[]);
+        }
+      }
+      if (!this.cache) this.clearCache();
+      else this.searchIndexCache.clear();
+      return;
+    }
+
+    // ── Fallback path: handles clearing a field to empty/null (pure deletion) ─
     const fieldOldMap = new Map<string, string>();
     for (const { field, oldStr } of changes) {
       if (oldStr !== null) fieldOldMap.set(field, oldStr);
