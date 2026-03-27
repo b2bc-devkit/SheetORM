@@ -52,6 +52,8 @@ export class SheetRepository<T extends Entity> {
   private physicalRowCount: number | null = null;
   /** True when idToRowIndex was built from a complete sheet scan (bootstrap or loadAllEntities/rowIndexById). */
   private idToRowIndexComplete = false;
+  /** Memoized sheet reference — avoids repeated getSheetByName() API calls within a session. */
+  private sheetCache: ISheetAdapter | null = null;
 
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -222,8 +224,7 @@ export class SheetRepository<T extends Entity> {
             ? this.physicalRowCount
             : sheet.getRowCount();
       const dataIndex =
-        baseCount +
-        (this.entityBatch ? this.entityBatch.filter((item) => item.mode === "create").length : 0);
+        baseCount + (this.entityBatch ? this.entityBatch.filter((item) => item.mode === "create").length : 0);
       if (!this.idToRowIndex) {
         if (dataIndex === 0) {
           this.idToRowIndex = new Map();
@@ -657,12 +658,14 @@ export class SheetRepository<T extends Entity> {
   // ─── Internal Helpers ──────────────────────────────
 
   private getSheet(): ISheetAdapter {
+    if (this.sheetCache) return this.sheetCache;
     const sheet = this.adapter.getSheetByName(this.schema.tableName);
     if (!sheet) {
       throw new Error(
         `Sheet "${this.schema.tableName}" not found. Ensure Registry is configured and the table has been initialized.`,
       );
     }
+    this.sheetCache = sheet;
     return sheet;
   }
 

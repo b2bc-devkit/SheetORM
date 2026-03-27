@@ -759,6 +759,14 @@ export class IndexStore {
         SheetOrmLogger.log(`[Index:${indexTableName}] getCombinedData cache HIT — ${cached.length} rows`);
         return cached;
       }
+      // B6: sheet is known-empty (just created via createCombinedIndex) — seed cache directly,
+      // skip the getAllData() API call that would wastefully read 0 rows from GAS.
+      if (this.indexRowCount.get(indexTableName) === 0) {
+        const empty: unknown[][] = [];
+        this.cache.set(cacheKey, empty);
+        SheetOrmLogger.log(`[Index:${indexTableName}] getCombinedData cache SEED (empty, skip getAllData)`);
+        return empty;
+      }
       const sheet = this.getIndexSheet(indexTableName);
       const data = sheet ? sheet.getAllData() : [];
       SheetOrmLogger.log(
@@ -767,6 +775,11 @@ export class IndexStore {
       this.cache.set(cacheKey, data);
       this.indexRowCount.set(indexTableName, data.length);
       return data;
+    }
+    // No-cache path: B6 — skip getAllData() when table is known-empty
+    if (this.indexRowCount.get(indexTableName) === 0) {
+      SheetOrmLogger.log(`[Index:${indexTableName}] getCombinedData (no cache) — empty (skip getAllData)`);
+      return [];
     }
     const sheet = this.getIndexSheet(indexTableName);
     const data = sheet ? sheet.getAllData() : [];
