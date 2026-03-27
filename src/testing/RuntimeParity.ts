@@ -4612,16 +4612,24 @@ function runTestsStageOne(): string {
   return runTestsForSuites(ParityCatalog.SUITES.slice(0, 4));
 }
 
-// Stage 2: serialization, uuid, record, sheet-repository (~162 tests)
+// Stage 2: serialization, uuid, record (~126 tests, ~250s)
 function runTestsStageTwo(): string {
   SheetOrmLogger.verbose = true;
   validateTests();
-  return runTestsForSuites(ParityCatalog.SUITES.slice(4));
+  return runTestsForSuites(ParityCatalog.SUITES.slice(4, 7));
+}
+
+// Stage 3: sheet-repository (~35 tests, ~120s)
+function runTestsStageThree(): string {
+  SheetOrmLogger.verbose = true;
+  validateTests();
+  return runTestsForSuites(ParityCatalog.SUITES.slice(7));
 }
 
 export class RuntimeParity {
   static runStageOne = runTestsStageOne;
   static runStageTwo = runTestsStageTwo;
+  static runStageThree = runTestsStageThree;
   static validate = validateTests;
   static readonly CASE_IDS = RUNTIME_PARITY_CASE_IDS;
 }

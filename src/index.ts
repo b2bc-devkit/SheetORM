@@ -50,6 +50,10 @@ export class GasEntrypoints {
     RuntimeParity.runStageTwo();
   }
 
+  static runTestsStageThree(): void {
+    RuntimeParity.runStageThree();
+  }
+
   static validateTests(): void {
     RuntimeParity.validate();
   }

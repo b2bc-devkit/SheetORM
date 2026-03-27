@@ -34,6 +34,7 @@ function gasPlugin() {
     GasEntrypoints: [
       "runTestsStageOne",
       "runTestsStageTwo",
+      "runTestsStageThree",
       "validateTests",
       "runBenchmark",
       "removeAllSheets",
