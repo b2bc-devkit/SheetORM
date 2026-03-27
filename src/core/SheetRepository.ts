@@ -95,6 +95,9 @@ export class SheetRepository<T extends Entity> {
 
   private doSave(partial: Partial<T> & { __id?: string }): T {
     const sheet = this.batchSheet ?? this.getSheet();
+    SheetOrmLogger.log(
+      `[Repo:${this.schema.tableName}] doSave — batchMode=${this.batchSheet !== null} id=${partial.__id ?? "(new)"}`,
+    );
     const now = new Date().toISOString();
 
     // ── Existence check: prefer in-memory index, fall back to single API call ──
@@ -139,6 +142,9 @@ export class SheetRepository<T extends Entity> {
     }
 
     const isNew = existingIdx === null;
+    SheetOrmLogger.log(
+      `[Repo:${this.schema.tableName}] doSave — isNew=${isNew}${existingIdx !== null ? ` rowIdx=${existingIdx}` : ""}`,
+    );
 
     // Lifecycle: validate
     if (this.hooks.onValidate) {
@@ -203,6 +209,9 @@ export class SheetRepository<T extends Entity> {
       // In entity batch mode: buffer the row; otherwise write immediately
       if (this.entityBatch !== null) {
         this.entityBatch.push({ entity, row, dataIndex, mode: "create" });
+        SheetOrmLogger.log(
+          `[Repo:${this.schema.tableName}] doSave — CREATE buffered entityBatch[${this.entityBatch.length}] dataIndex=${dataIndex}`,
+        );
       } else {
         sheet.updateRow(dataIndex, row);
       }
@@ -227,6 +236,9 @@ export class SheetRepository<T extends Entity> {
       const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
       if (this.entityBatch !== null) {
         this.entityBatch.push({ entity, row, dataIndex: existingIdx!, mode: "update" });
+        SheetOrmLogger.log(
+          `[Repo:${this.schema.tableName}] doSave — UPDATE buffered entityBatch[${this.entityBatch.length}] rowIdx=${existingIdx}`,
+        );
       } else {
         sheet.updateRow(existingIdx!, row);
       }

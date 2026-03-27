@@ -72,6 +72,7 @@ export class IndexStore {
    */
   beginIndexBatch(): void {
     this.indexBatch = new Map();
+    SheetOrmLogger.log(`[Index] beginIndexBatch`);
   }
 
   /**
@@ -102,6 +103,7 @@ export class IndexStore {
    * Discard buffered entries without writing (used in error paths).
    */
   cancelIndexBatch(): void {
+    SheetOrmLogger.log(`[Index] cancelIndexBatch`);
     this.indexBatch = null;
   }
 
@@ -230,10 +232,16 @@ export class IndexStore {
           this.indexBatch.set(indexTableName, pending);
         }
         for (const row of rows) pending.push(row);
+        SheetOrmLogger.log(
+          `[Index:${indexTableName}] addAllFieldsToCombined — BATCH buffered ${rows.length} rows (pending=${pending.length}) entity=${entityId.slice(0, 8)}`,
+        );
         return;
       }
 
       // Non-batch: fetch sheet once, only now that we know we need to write
+      SheetOrmLogger.log(
+        `[Index:${indexTableName}] addAllFieldsToCombined — non-batch, writing ${rows.length} rows entity=${entityId.slice(0, 8)}`,
+      );
       const sheet = this.adapter.getSheetByName(indexTableName);
       if (!sheet) return;
 

@@ -7,6 +7,7 @@ import type { SortClause } from "../core/types/SortClause.js";
 import type { QueryOptions } from "../core/types/QueryOptions.js";
 import type { PaginatedResult } from "../core/types/PaginatedResult.js";
 import type { GroupResult } from "../core/types/GroupResult.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 /**
  * Resolve a field path to its parts. Single-segment paths (no dots/slashes)
@@ -299,6 +300,13 @@ function groupEntities<T extends Entity>(entities: T[], field: string): GroupRes
  * Execute a full query pipeline: filter → sort → paginate or return all.
  */
 function executeQuery<T extends Entity>(entities: T[], options: QueryOptions): T[] {
+  SheetOrmLogger.log(
+    `[QueryEngine] executeQuery in=${entities.length}` +
+      ` where=${options.where?.length ?? 0}` +
+      ` whereGroups=${options.whereGroups?.length ?? 0}` +
+      ` orderBy=${options.orderBy?.length ?? 0}` +
+      ` offset=${options.offset ?? "-"} limit=${options.limit ?? "-"}`,
+  );
   let result = entities;
 
   if (options.whereGroups && options.whereGroups.length > 0) {
@@ -323,6 +331,7 @@ function executeQuery<T extends Entity>(entities: T[], options: QueryOptions): T
     result = result.slice(offset, offset + limit);
   }
 
+  SheetOrmLogger.log(`[QueryEngine] executeQuery out=${result.length}`);
   return result;
 }
 
