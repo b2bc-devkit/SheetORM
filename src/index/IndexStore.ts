@@ -232,9 +232,6 @@ export class IndexStore {
           this.indexBatch.set(indexTableName, pending);
         }
         for (const row of rows) pending.push(row);
-        SheetOrmLogger.log(
-          `[Index:${indexTableName}] addAllFieldsToCombined — BATCH buffered ${rows.length} rows (pending=${pending.length}) entity=${entityId.slice(0, 8)}`,
-        );
         return;
       }
 
@@ -411,11 +408,14 @@ export class IndexStore {
       }
     }
 
-    // Delete from bottom to top, keeping cache in sync
-    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
-      sheet.deleteRow(rowsToDelete[i]);
-      data.splice(rowsToDelete[i], 1);
-    }
+    // Single replaceAllData instead of N individual deleteRow() calls.
+    // Matches the pattern used in removeAllFromCombined — avoids O(n) row-shift cost per call.
+    const deleteSet = new Set(rowsToDelete);
+    const filteredData = data.filter((_, i) => !deleteSet.has(i));
+    sheet.replaceAllData(filteredData);
+    // Update the cached array reference in-place so subsequent writes land at the correct offset
+    data.length = 0;
+    for (const row of filteredData) data.push(row);
 
     // Collect and write new entries in one batch
     const newRows: unknown[][] = [];

@@ -15,6 +15,7 @@ import { SystemColumns } from "../core/types/SystemColumns.js";
 import { Uuid } from "../utils/Uuid.js";
 import { Serialization } from "../utils/Serialization.js";
 import { IndexStore } from "../index/IndexStore.js";
+import type { IndexMeta } from "../index/IndexMeta.js";
 import { Query } from "../query/Query.js";
 import { QueryEngine } from "../query/QueryEngine.js";
 import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
@@ -43,6 +44,10 @@ export class SheetRepository<T extends Entity> {
   private batchSheet: ISheetAdapter | null = null;
   /** Row count captured once at saveAll() start — avoids 1000× getLastRow(). */
   private batchBaseRowCount: number | null = null;
+  /** Cached entity array used by updateCacheAfterSave in batch mode — avoids 1000× cache.get() log calls. */
+  private batchCachedData: T[] | null = null;
+  /** Indexed fields metadata, cached for the duration of saveAll() — avoids 1000× getIndexedFields() array alloc. */
+  private batchIndexedFields: IndexMeta[] | null = null;
 
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -95,9 +100,12 @@ export class SheetRepository<T extends Entity> {
 
   private doSave(partial: Partial<T> & { __id?: string }): T {
     const sheet = this.batchSheet ?? this.getSheet();
-    SheetOrmLogger.log(
-      `[Repo:${this.schema.tableName}] doSave — batchMode=${this.batchSheet !== null} id=${partial.__id ?? "(new)"}`,
-    );
+    // Per-entity log is suppressed in batch mode to avoid 1000× Logger.log() overhead in GAS
+    if (!this.entityBatch) {
+      SheetOrmLogger.log(
+        `[Repo:${this.schema.tableName}] doSave — batchMode=false id=${partial.__id ?? "(new)"}`,
+      );
+    }
     const now = new Date().toISOString();
 
     // ── Existence check: prefer in-memory index, fall back to single API call ──
@@ -142,9 +150,11 @@ export class SheetRepository<T extends Entity> {
     }
 
     const isNew = existingIdx === null;
-    SheetOrmLogger.log(
-      `[Repo:${this.schema.tableName}] doSave — isNew=${isNew}${existingIdx !== null ? ` rowIdx=${existingIdx}` : ""}`,
-    );
+    if (!this.entityBatch) {
+      SheetOrmLogger.log(
+        `[Repo:${this.schema.tableName}] doSave — isNew=${isNew}${existingIdx !== null ? ` rowIdx=${existingIdx}` : ""}`,
+      );
+    }
 
     // Lifecycle: validate
     if (this.hooks.onValidate) {
@@ -209,9 +219,6 @@ export class SheetRepository<T extends Entity> {
       // In entity batch mode: buffer the row; otherwise write immediately
       if (this.entityBatch !== null) {
         this.entityBatch.push({ entity, row, dataIndex, mode: "create" });
-        SheetOrmLogger.log(
-          `[Repo:${this.schema.tableName}] doSave — CREATE buffered entityBatch[${this.entityBatch.length}] dataIndex=${dataIndex}`,
-        );
       } else {
         sheet.updateRow(dataIndex, row);
       }
@@ -236,9 +243,6 @@ export class SheetRepository<T extends Entity> {
       const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
       if (this.entityBatch !== null) {
         this.entityBatch.push({ entity, row, dataIndex: existingIdx!, mode: "update" });
-        SheetOrmLogger.log(
-          `[Repo:${this.schema.tableName}] doSave — UPDATE buffered entityBatch[${this.entityBatch.length}] rowIdx=${existingIdx}`,
-        );
       } else {
         sheet.updateRow(existingIdx!, row);
       }
@@ -279,6 +283,8 @@ export class SheetRepository<T extends Entity> {
     this.batchBaseRowCount = sheet.getRowCount();
     if (this.schema.indexTableName) {
       this.indexStore.beginIndexBatch();
+      // Pre-fetch indexed fields once — avoids 1000× getIndexedFields() array allocation per entity
+      this.batchIndexedFields = this.indexStore.getIndexedFields(this.schema.indexTableName);
     }
     try {
       const results = entities.map((e) => this.doSave(e));
@@ -288,12 +294,16 @@ export class SheetRepository<T extends Entity> {
       }
       this.batchSheet = null;
       this.batchBaseRowCount = null;
+      this.batchCachedData = null;
+      this.batchIndexedFields = null;
       SheetOrmLogger.log(`[Repo:${this.schema.tableName}] saveAll DONE — ${entities.length} entities`);
       return results;
     } catch (err) {
       this.entityBatch = null;
       this.batchSheet = null;
       this.batchBaseRowCount = null;
+      this.batchCachedData = null;
+      this.batchIndexedFields = null;
       if (this.schema.indexTableName) {
         this.indexStore.cancelIndexBatch();
       }
@@ -688,7 +698,9 @@ export class SheetRepository<T extends Entity> {
    */
   private addToIndexes(entity: T): void {
     if (this.schema.indexTableName) {
-      const indexedFields = this.indexStore.getIndexedFields(this.schema.indexTableName);
+      // Use pre-cached fields in batch mode to avoid 1000× getIndexedFields() array allocation
+      const indexedFields =
+        this.batchIndexedFields ?? this.indexStore.getIndexedFields(this.schema.indexTableName);
       const entries: Array<{ field: string; value: unknown }> = [];
       for (const meta of indexedFields) {
         const value = entity[meta.field];
@@ -731,7 +743,18 @@ export class SheetRepository<T extends Entity> {
 
   private updateCacheAfterSave(entity: T, isNew: boolean): void {
     if (!this.cache) return;
-    const cached = this.cache.get<T[]>(this.dataCacheKey);
+    // In batch mode, reuse pre-fetched array ref to avoid 1000× cache.get() Logger.log() calls in GAS.
+    // batchCachedData is lazily initialised here on the first entity (after the cache entry is created
+    // by the CREATE path in doSave for entity #1 when dataIndex === 0).
+    let cached: T[] | null;
+    if (this.entityBatch !== null) {
+      if (!this.batchCachedData) {
+        this.batchCachedData = this.cache.get<T[]>(this.dataCacheKey);
+      }
+      cached = this.batchCachedData;
+    } else {
+      cached = this.cache.get<T[]>(this.dataCacheKey);
+    }
     if (!cached) return;
 
     if (isNew) {
