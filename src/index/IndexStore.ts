@@ -150,6 +150,9 @@ export class IndexStore {
       this.indexRowCount.set(indexTableName, 0);
     } else {
       this.indexSheetCache.set(indexTableName, existing);
+      // C1: seed indexRowCount with one cheap getLastRow() call so that
+      // addAllFieldsToCombined can skip a full getAllData() on the write path.
+      this.indexRowCount.set(indexTableName, existing.getRowCount());
     }
   }
 
@@ -276,13 +279,31 @@ export class IndexStore {
         `[Index:${indexTableName}] addAllFieldsToCombined — non-batch, writing ${rows.length} rows entity=${entityId.slice(0, 8)}`,
       );
       if (this.cache) {
-        // B2: getCombinedData populates indexSheetCache on MISS, so getIndexSheet below avoids a second API call
-        const cacheData = this.getCombinedData(indexTableName);
+        // C1: avoid getAllData() if the row count is already known from createCombinedIndex.
+        // indexSheetCache was seeded in createCombinedIndex so getIndexSheet() is a map lookup.
         const sheet = this.getIndexSheet(indexTableName);
         if (!sheet) return;
-        sheet.writeRowsAt(cacheData.length, rows);
-        for (const row of rows) cacheData.push(row);
-        this.indexRowCount.set(indexTableName, cacheData.length);
+        const cacheKey = `cidx:${indexTableName}`;
+        const cachedData = this.cache.get<unknown[][]>(cacheKey);
+        if (cachedData !== null) {
+          // Cache HIT: use cached length directly
+          sheet.writeRowsAt(cachedData.length, rows);
+          for (const row of rows) cachedData.push(row);
+          this.indexRowCount.set(indexTableName, cachedData.length);
+        } else {
+          const knownCount = this.indexRowCount.get(indexTableName);
+          if (knownCount !== undefined) {
+            // C1: row count known (seeded by createCombinedIndex) — skip getAllData()
+            sheet.writeRowsAt(knownCount, rows);
+            this.indexRowCount.set(indexTableName, knownCount + rows.length);
+          } else {
+            // Fallback: full read (also populates indexSheetCache on MISS)
+            const cacheData = this.getCombinedData(indexTableName);
+            sheet.writeRowsAt(cacheData.length, rows);
+            for (const row of rows) cacheData.push(row);
+            this.indexRowCount.set(indexTableName, cacheData.length);
+          }
+        }
         this.searchIndexCache.clear();
       } else {
         // B3: use known row count to write at the correct position without appendRows
