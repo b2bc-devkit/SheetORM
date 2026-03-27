@@ -17,6 +17,7 @@ import type { LifecycleHooks } from "../core/types/LifecycleHooks.js";
 import { Serialization } from "../utils/Serialization.js";
 import { Uuid } from "../utils/Uuid.js";
 import { ParityCatalog } from "./ParityCatalog.js";
+import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 const { Indexed, Required, Field, resetDecoratorCaches } = Decorators;
 
@@ -4606,12 +4607,14 @@ function runTestsForSuites(suites: typeof ParityCatalog.SUITES): string {
 
 // Stage 1: cache, index-store, query, query-engine (~162 tests)
 function runTestsStageOne(): string {
+  SheetOrmLogger.verbose = true;
   validateTests();
   return runTestsForSuites(ParityCatalog.SUITES.slice(0, 4));
 }
 
 // Stage 2: serialization, uuid, record, sheet-repository (~162 tests)
 function runTestsStageTwo(): string {
+  SheetOrmLogger.verbose = true;
   validateTests();
   return runTestsForSuites(ParityCatalog.SUITES.slice(4));
 }
