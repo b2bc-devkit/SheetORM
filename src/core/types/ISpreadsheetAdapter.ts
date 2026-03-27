@@ -5,4 +5,5 @@ export interface ISpreadsheetAdapter {
   createSheet(name: string): ISheetAdapter;
   deleteSheet(name: string): void;
   getSheetNames(): string[];
+  removeAllSheets(): void;
 }

@@ -7,6 +7,7 @@ import { Record } from "./core/Record.js";
 import { Registry } from "./core/Registry.js";
 import { IndexStore } from "./index/IndexStore.js";
 import { Query } from "./query/Query.js";
+import { GoogleSpreadsheetAdapter } from "./storage/GoogleSpreadsheetAdapter.js";
 import { RuntimeBenchmark } from "./testing/RuntimeBenchmark.js";
 import { RuntimeParity } from "./testing/RuntimeParity.js";
 import { SheetOrmLogger } from "./utils/SheetOrmLogger.js";
@@ -55,6 +56,10 @@ export class GasEntrypoints {
 
   static runBenchmark(): void {
     RuntimeBenchmark.run();
+  }
+
+  static removeAllSheets(): void {
+    new GoogleSpreadsheetAdapter().removeAllSheets();
   }
 
   // ─── CRUD demos ─────────────────────────────────────────────────────────

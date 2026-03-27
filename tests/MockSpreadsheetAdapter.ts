@@ -25,6 +25,10 @@ export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
     return Array.from(this.sheets.keys());
   }
 
+  removeAllSheets(): void {
+    this.sheets.clear();
+  }
+
   _getSheet(name: string): MockSheetAdapter | undefined {
     return this.sheets.get(name);
   }
