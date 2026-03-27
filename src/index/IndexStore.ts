@@ -2,6 +2,7 @@
 // Inspired by the index-table pattern from document-oriented ORMs
 
 import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter.js";
+import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
 import type { ICacheProvider } from "../core/types/ICacheProvider.js";
 import type { IndexMeta } from "./IndexMeta.js";
 import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
@@ -28,6 +29,10 @@ export class IndexStore {
   private indexRegistry: Map<string, IndexMeta> = new Map();
   private searchIndexCache: Map<string, SearchIndex> = new Map();
   private indexBatch: Map<string, unknown[][]> | null = null;
+  /** Memoized sheet references — avoids duplicate getSheetByName() API calls within a session. */
+  private indexSheetCache: Map<string, ISheetAdapter> = new Map();
+  /** Tracks append position per index table — avoids a full getAllData() read just to know count. */
+  private indexRowCount: Map<string, number> = new Map();
   private static readonly NGRAM_SIZE = 3;
 
   constructor(adapter: ISpreadsheetAdapter, cache?: ICacheProvider) {
@@ -84,16 +89,24 @@ export class IndexStore {
     this.indexBatch = null;
     for (const [indexTableName, rows] of batch) {
       if (rows.length === 0) continue;
-      const sheet = this.adapter.getSheetByName(indexTableName);
+      const sheet = this.getIndexSheet(indexTableName);
       if (!sheet) continue;
       SheetOrmLogger.log(`[Index:${indexTableName}] flushIndexBatch ${rows.length} rows`);
       if (this.cache) {
         const data = this.getCombinedData(indexTableName);
         sheet.writeRowsAt(data.length, rows);
         for (const row of rows) data.push(row);
+        this.indexRowCount.set(indexTableName, data.length);
         this.invalidateSearchCacheForTable(indexTableName);
       } else {
-        sheet.appendRows(rows);
+        // B5: use known row count to write at the correct position without a full getAllData read
+        const knownCount = this.indexRowCount.get(indexTableName);
+        if (knownCount !== undefined) {
+          sheet.writeRowsAt(knownCount, rows);
+          this.indexRowCount.set(indexTableName, knownCount + rows.length);
+        } else {
+          sheet.appendRows(rows);
+        }
         this.invalidateSearchCacheForTable(indexTableName);
       }
     }
@@ -105,6 +118,18 @@ export class IndexStore {
   cancelIndexBatch(): void {
     SheetOrmLogger.log(`[Index] cancelIndexBatch`);
     this.indexBatch = null;
+  }
+
+  /**
+   * Return a memoized sheet reference for the given index table name.
+   * Avoids duplicate getSheetByName() API calls within the same IndexStore instance.
+   */
+  private getIndexSheet(indexTableName: string): ISheetAdapter | null {
+    const cached = this.indexSheetCache.get(indexTableName);
+    if (cached !== undefined) return cached;
+    const sheet = this.adapter.getSheetByName(indexTableName);
+    if (sheet) this.indexSheetCache.set(indexTableName, sheet);
+    return sheet;
   }
 
   // ─── Combined (per-class) index sheet methods ───────────────────────────────
@@ -121,6 +146,10 @@ export class IndexStore {
     if (!existing) {
       const sheet = this.adapter.createSheet(indexTableName);
       sheet.setHeaders(["field", "value", "entityId"]);
+      this.indexSheetCache.set(indexTableName, sheet);
+      this.indexRowCount.set(indexTableName, 0);
+    } else {
+      this.indexSheetCache.set(indexTableName, existing);
     }
   }
 
@@ -128,7 +157,7 @@ export class IndexStore {
    * Check whether a combined index sheet exists for the given indexTableName.
    */
   existsCombined(indexTableName: string): boolean {
-    return this.adapter.getSheetByName(indexTableName) !== null;
+    return this.getIndexSheet(indexTableName) !== null;
   }
 
   /**
@@ -136,7 +165,7 @@ export class IndexStore {
    */
   addToCombined(indexTableName: string, field: string, value: unknown, entityId: string): void {
     const meta = this.indexRegistry.get(this.registryKey(indexTableName, field));
-    const sheet = this.adapter.getSheetByName(indexTableName);
+    const sheet = this.getIndexSheet(indexTableName);
     if (!sheet) return;
 
     const valueStr = String(value);
@@ -161,9 +190,16 @@ export class IndexStore {
       const data = this.getCombinedData(indexTableName);
       sheet.writeRowsAt(data.length, [newRow]);
       data.push(newRow);
+      this.indexRowCount.set(indexTableName, data.length);
       this.searchIndexCache.delete(`${this.registryKey(indexTableName, field)}`);
     } else {
-      sheet.appendRow(newRow);
+      const knownCount = this.indexRowCount.get(indexTableName);
+      if (knownCount !== undefined) {
+        sheet.writeRowsAt(knownCount, [newRow]);
+        this.indexRowCount.set(indexTableName, knownCount + 1);
+      } else {
+        sheet.appendRow(newRow);
+      }
       this.invalidateSearchCacheForTable(indexTableName);
     }
   }
@@ -239,16 +275,26 @@ export class IndexStore {
       SheetOrmLogger.log(
         `[Index:${indexTableName}] addAllFieldsToCombined — non-batch, writing ${rows.length} rows entity=${entityId.slice(0, 8)}`,
       );
-      const sheet = this.adapter.getSheetByName(indexTableName);
-      if (!sheet) return;
-
       if (this.cache) {
+        // B2: getCombinedData populates indexSheetCache on MISS, so getIndexSheet below avoids a second API call
         const cacheData = this.getCombinedData(indexTableName);
+        const sheet = this.getIndexSheet(indexTableName);
+        if (!sheet) return;
         sheet.writeRowsAt(cacheData.length, rows);
         for (const row of rows) cacheData.push(row);
+        this.indexRowCount.set(indexTableName, cacheData.length);
         this.searchIndexCache.clear();
       } else {
-        sheet.appendRows(rows);
+        // B3: use known row count to write at the correct position without appendRows
+        const sheet = this.getIndexSheet(indexTableName);
+        if (!sheet) return;
+        const knownCount = this.indexRowCount.get(indexTableName);
+        if (knownCount !== undefined) {
+          sheet.writeRowsAt(knownCount, rows);
+          this.indexRowCount.set(indexTableName, knownCount + rows.length);
+        } else {
+          sheet.appendRows(rows);
+        }
         this.searchIndexCache.clear();
       }
     }
@@ -258,7 +304,7 @@ export class IndexStore {
    * Remove all combined index entries for an entity.
    */
   removeAllFromCombined(indexTableName: string, entityId: string): void {
-    const sheet = this.adapter.getSheetByName(indexTableName);
+    const sheet = this.getIndexSheet(indexTableName);
     if (!sheet) return;
 
     const data = this.getCombinedData(indexTableName);
@@ -269,6 +315,7 @@ export class IndexStore {
     // GAS Sheet.deleteRow() shifts every row below it (O(n) server-side), so
     // N calls each taking ~300 ms is far worse than one bulk rewrite.
     sheet.replaceAllData(remaining);
+    this.indexRowCount.set(indexTableName, remaining.length);
     if (this.cache) {
       this.cache.set(`cidx:${indexTableName}`, remaining);
       this.searchIndexCache.clear();
@@ -284,7 +331,7 @@ export class IndexStore {
    */
   removeMultipleFromCombined(indexTableName: string, entityIds: string[]): void {
     if (entityIds.length === 0) return;
-    const sheet = this.adapter.getSheetByName(indexTableName);
+    const sheet = this.getIndexSheet(indexTableName);
     if (!sheet) return;
 
     const idSet = new Set(entityIds);
@@ -294,6 +341,7 @@ export class IndexStore {
     if (remaining.length === data.length) return;
 
     sheet.replaceAllData(remaining);
+    this.indexRowCount.set(indexTableName, remaining.length);
     if (this.cache) {
       this.cache.set(`cidx:${indexTableName}`, remaining);
       this.searchIndexCache.clear();
@@ -312,7 +360,7 @@ export class IndexStore {
     oldValues: Record<string, unknown>,
     newValues: Record<string, unknown>,
   ): void {
-    const sheet = this.adapter.getSheetByName(indexTableName);
+    const sheet = this.getIndexSheet(indexTableName);
     if (!sheet) return;
 
     const indexedFields = this.getIndexedFields(indexTableName);
@@ -385,8 +433,11 @@ export class IndexStore {
         if (this.cache) {
           sheet.writeRowsAt(data.length, insertRows);
           for (const r of insertRows) data.push(r);
+          this.indexRowCount.set(indexTableName, data.length);
         } else {
           for (const r of insertRows) sheet.appendRow(r as unknown[]);
+          const prev = this.indexRowCount.get(indexTableName);
+          if (prev !== undefined) this.indexRowCount.set(indexTableName, prev + insertRows.length);
         }
       }
       if (!this.cache) this.clearCache();
@@ -416,6 +467,7 @@ export class IndexStore {
     // Update the cached array reference in-place so subsequent writes land at the correct offset
     data.length = 0;
     for (const row of filteredData) data.push(row);
+    this.indexRowCount.set(indexTableName, data.length);
 
     // Collect and write new entries in one batch
     const newRows: unknown[][] = [];
@@ -428,9 +480,12 @@ export class IndexStore {
       if (this.cache) {
         sheet.writeRowsAt(data.length, newRows);
         for (const row of newRows) data.push(row);
+        this.indexRowCount.set(indexTableName, data.length);
         this.searchIndexCache.clear();
       } else {
         for (const row of newRows) sheet.appendRow(row as unknown[]);
+        const prev = this.indexRowCount.get(indexTableName);
+        if (prev !== undefined) this.indexRowCount.set(indexTableName, prev + newRows.length);
         this.clearCache();
       }
     } else if (!this.cache) {
@@ -465,6 +520,8 @@ export class IndexStore {
    */
   dropCombinedIndex(indexTableName: string): void {
     this.adapter.deleteSheet(indexTableName);
+    this.indexSheetCache.delete(indexTableName);
+    this.indexRowCount.delete(indexTableName);
     // Clear cache BEFORE removing registry entries, since clearCache()
     // iterates indexRegistry to find cache keys to invalidate.
     this.clearCache();
@@ -702,19 +759,21 @@ export class IndexStore {
         SheetOrmLogger.log(`[Index:${indexTableName}] getCombinedData cache HIT — ${cached.length} rows`);
         return cached;
       }
-      const sheet = this.adapter.getSheetByName(indexTableName);
+      const sheet = this.getIndexSheet(indexTableName);
       const data = sheet ? sheet.getAllData() : [];
       SheetOrmLogger.log(
         `[Index:${indexTableName}] getCombinedData cache MISS — read ${data.length} rows from sheet`,
       );
       this.cache.set(cacheKey, data);
+      this.indexRowCount.set(indexTableName, data.length);
       return data;
     }
-    const sheet = this.adapter.getSheetByName(indexTableName);
+    const sheet = this.getIndexSheet(indexTableName);
     const data = sheet ? sheet.getAllData() : [];
     SheetOrmLogger.log(
       `[Index:${indexTableName}] getCombinedData (no cache) — read ${data.length} rows from sheet`,
     );
+    this.indexRowCount.set(indexTableName, data.length);
     return data;
   }
 

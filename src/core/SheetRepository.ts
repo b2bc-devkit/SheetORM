@@ -48,6 +48,10 @@ export class SheetRepository<T extends Entity> {
   private batchCachedData: T[] | null = null;
   /** Indexed fields metadata, cached for the duration of saveAll() — avoids 1000× getIndexedFields() array alloc. */
   private batchIndexedFields: IndexMeta[] | null = null;
+  /** Physical sheet row count, tracked to avoid repeated getLastRow() API calls in non-batch save sequences. */
+  private physicalRowCount: number | null = null;
+  /** True when idToRowIndex was built from a complete sheet scan (bootstrap or loadAllEntities/rowIndexById). */
+  private idToRowIndexComplete = false;
 
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -129,23 +133,29 @@ export class SheetRepository<T extends Entity> {
 
       // Fallback: fast scan — check only the ID column, deserialize just the target entity
       if (existingIdx === null) {
-        const data = sheet.getAllData();
-        const rowIndex = new Map<string, number>();
-        const col = this.idColIdx;
-        for (let i = 0; i < data.length; i++) {
-          const rowId = String(data[i][col]);
-          rowIndex.set(rowId, i);
-          if (rowId === partial.__id) {
-            existingIdx = i;
-            existingEntity = Serialization.rowToEntity<T>(
-              data[i],
-              this.headers,
-              this.schema.fields,
-              this.fieldMap,
-            );
+        if (this.idToRowIndex && this.idToRowIndexComplete && !this.idToRowIndex.has(partial.__id)) {
+          // idToRowIndex covers all rows; entity's ID is absent → definitely new, skip sheet read.
+        } else {
+          const data = sheet.getAllData();
+          const rowIndex = new Map<string, number>();
+          const col = this.idColIdx;
+          for (let i = 0; i < data.length; i++) {
+            const rowId = String(data[i][col]);
+            rowIndex.set(rowId, i);
+            if (rowId === partial.__id) {
+              existingIdx = i;
+              existingEntity = Serialization.rowToEntity<T>(
+                data[i],
+                this.headers,
+                this.schema.fields,
+                this.fieldMap,
+              );
+            }
           }
+          this.idToRowIndex = rowIndex;
+          this.physicalRowCount = data.length;
+          this.idToRowIndexComplete = true;
         }
-        this.idToRowIndex = rowIndex;
       }
     }
 
@@ -204,12 +214,21 @@ export class SheetRepository<T extends Entity> {
       // Write at computed position — single setValues call, no flush needed
       // In batch mode, account for already-buffered entities that haven't been flushed yet.
       // batchBaseRowCount is captured once at saveAll() start to avoid 1000× getLastRow().
+      // physicalRowCount avoids a getLastRow() API call when the count is already known in-session.
+      const baseCount =
+        this.batchBaseRowCount !== null
+          ? this.batchBaseRowCount
+          : this.physicalRowCount !== null
+            ? this.physicalRowCount
+            : sheet.getRowCount();
       const dataIndex =
-        (this.batchBaseRowCount ?? sheet.getRowCount()) +
+        baseCount +
         (this.entityBatch ? this.entityBatch.filter((item) => item.mode === "create").length : 0);
       if (!this.idToRowIndex) {
         if (dataIndex === 0) {
           this.idToRowIndex = new Map();
+          this.physicalRowCount = 0;
+          this.idToRowIndexComplete = true;
           // Bootstrap empty cache so subsequent finds are cache hits
           if (this.cache && !this.cache.has(this.dataCacheKey)) {
             this.cache.set(this.dataCacheKey, []);
@@ -221,6 +240,7 @@ export class SheetRepository<T extends Entity> {
         this.entityBatch.push({ entity, row, dataIndex, mode: "create" });
       } else {
         sheet.updateRow(dataIndex, row);
+        if (this.physicalRowCount !== null) this.physicalRowCount++;
       }
 
       // Add to indexes
@@ -288,9 +308,13 @@ export class SheetRepository<T extends Entity> {
     }
     try {
       const results = entities.map((e) => this.doSave(e));
+      const savedCreates = (this.entityBatch ?? []).filter((i) => i.mode === "create").length;
       this.flushEntityBatch(sheet);
       if (this.schema.indexTableName) {
         this.indexStore.flushIndexBatch();
+      }
+      if (this.batchBaseRowCount !== null) {
+        this.physicalRowCount = this.batchBaseRowCount + savedCreates;
       }
       this.batchSheet = null;
       this.batchBaseRowCount = null;
@@ -309,6 +333,8 @@ export class SheetRepository<T extends Entity> {
       }
       if (this.cache) this.cache.delete(this.dataCacheKey);
       this.idToRowIndex = null;
+      this.physicalRowCount = null;
+      this.idToRowIndexComplete = false;
       throw err;
     }
   }
@@ -452,6 +478,7 @@ export class SheetRepository<T extends Entity> {
     }
 
     sheet.deleteRow(rowIdx);
+    if (this.physicalRowCount !== null) this.physicalRowCount--;
 
     // Update idToRowIndex: remove deleted ID and shift rows above it down
     if (this.idToRowIndex) {
@@ -531,6 +558,8 @@ export class SheetRepository<T extends Entity> {
       rowIndex.set(remaining[i].__id, i);
     }
     this.idToRowIndex = rowIndex;
+    this.physicalRowCount = rows.length;
+    this.idToRowIndexComplete = true;
 
     return deleteIds.size;
   }
@@ -605,6 +634,8 @@ export class SheetRepository<T extends Entity> {
     } catch (err) {
       if (this.cache) this.cache.delete(this.dataCacheKey);
       this.idToRowIndex = null;
+      this.physicalRowCount = null;
+      this.idToRowIndexComplete = false;
       throw err;
     }
   }
@@ -665,6 +696,8 @@ export class SheetRepository<T extends Entity> {
       entities.push(entity);
     }
     this.idToRowIndex = rowIndex;
+    this.physicalRowCount = data.length;
+    this.idToRowIndexComplete = true;
 
     if (this.cache) {
       this.cache.set(this.dataCacheKey, entities);
@@ -690,6 +723,8 @@ export class SheetRepository<T extends Entity> {
       if (rowId === id) result = i;
     }
     this.idToRowIndex = rowIndex;
+    this.physicalRowCount = data.length;
+    this.idToRowIndexComplete = true;
     return result;
   }
 
