@@ -62,6 +62,7 @@ export class SheetRepository<T extends Entity> {
     cache?: ICacheProvider,
     hooks?: LifecycleHooks<T>,
     initialSheet?: ISheetAdapter,
+    initialRowCount?: number,
   ) {
     this.adapter = adapter;
     this.schema = schema;
@@ -69,6 +70,7 @@ export class SheetRepository<T extends Entity> {
     this.cache = cache ?? null;
     this.hooks = hooks ?? {};
     this.sheetCache = initialSheet ?? null;
+    this.physicalRowCount = initialRowCount ?? null;
     this.headers = Serialization.buildHeaders(schema.fields);
     this.idColIdx = this.headers.indexOf(SystemColumns.ID);
     this.requiredFields = schema.fields.filter((f) => f.required);
