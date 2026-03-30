@@ -61,12 +61,14 @@ export class SheetRepository<T extends Entity> {
     indexStore: IndexStore,
     cache?: ICacheProvider,
     hooks?: LifecycleHooks<T>,
+    initialSheet?: ISheetAdapter,
   ) {
     this.adapter = adapter;
     this.schema = schema;
     this.indexStore = indexStore;
     this.cache = cache ?? null;
     this.hooks = hooks ?? {};
+    this.sheetCache = initialSheet ?? null;
     this.headers = Serialization.buildHeaders(schema.fields);
     this.idColIdx = this.headers.indexOf(SystemColumns.ID);
     this.requiredFields = schema.fields.filter((f) => f.required);
