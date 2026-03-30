@@ -141,8 +141,13 @@ export class IndexStore {
    * Create the combined index sheet for a Record class (if not already present).
    * Sheet name equals the class's indexTableName (e.g. idx_Cars).
    */
-  createCombinedIndex(indexTableName: string, preloadedSheet?: ISheetAdapter): void {
-    const existing = preloadedSheet ?? this.adapter.getSheetByName(indexTableName);
+  createCombinedIndex(indexTableName: string, preloadedSheet?: ISheetAdapter | null): void {
+    // undefined = not provided (fall back to getSheetByName)
+    // null      = caller confirmed the sheet does not exist (skip getSheetByName, go straight to insertSheet)
+    // ISheetAdapter = use this sheet directly
+    const existing = preloadedSheet !== undefined
+      ? preloadedSheet
+      : this.adapter.getSheetByName(indexTableName);
     if (!existing) {
       const sheet = this.adapter.insertSheet(indexTableName);
       sheet.setHeaders(["field", "value", "entityId"]);

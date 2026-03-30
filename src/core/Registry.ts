@@ -91,8 +91,12 @@ export class Registry {
     }
 
     // Combined index sheet: one sheet (idx_ClassName) holds all indexed fields
-    // H3: pass pre-loaded index sheet to avoid a second getSheetByName() API call
-    indexStore.createCombinedIndex(schema.indexTableName, existingSheets.get(schema.indexTableName));
+    // H3+I1: pass the pre-loaded sheet if found, or null to signal "confirmed absent" so
+    // createCombinedIndex skips the redundant getSheetByName() API call.
+    indexStore.createCombinedIndex(
+      schema.indexTableName,
+      existingSheets.has(schema.indexTableName) ? existingSheets.get(schema.indexTableName)! : null,
+    );
     for (const idx of schema.indexes) {
       indexStore.registerIndex(schema.indexTableName, idx.field, idx.unique ?? false);
     }
