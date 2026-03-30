@@ -9,5 +9,8 @@ export interface ISpreadsheetAdapter {
   insertSheet(name: string): ISheetAdapter;
   deleteSheet(name: string): void;
   getSheetNames(): string[];
+  /** H3: Return all existing sheets as a name→adapter map in a single API call.
+   *  Use at the start of ensureRepository() to avoid one getSheetByName() per table/index. */
+  getSheets(): Map<string, ISheetAdapter>;
   removeAllSheets(): void;
 }

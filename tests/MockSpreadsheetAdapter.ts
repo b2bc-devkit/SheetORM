@@ -31,6 +31,10 @@ export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
     return Array.from(this.sheets.keys());
   }
 
+  getSheets(): Map<string, ISheetAdapter> {
+    return new Map(this.sheets);
+  }
+
   removeAllSheets(): void {
     this.sheets.clear();
   }

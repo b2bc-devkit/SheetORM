@@ -50,6 +50,14 @@ export class GoogleSpreadsheetAdapter implements ISpreadsheetAdapter {
     return this.spreadsheet.getSheets().map((s) => s.getName());
   }
 
+  getSheets(): Map<string, ISheetAdapter> {
+    const map = new Map<string, ISheetAdapter>();
+    for (const sheet of this.spreadsheet.getSheets()) {
+      map.set(sheet.getName(), new GoogleSheetAdapter(sheet));
+    }
+    return map;
+  }
+
   removeAllSheets(): void {
     const sheets = this.spreadsheet.getSheets();
     SheetOrmLogger.log(`[Spreadsheet] removeAllSheets() → deleting ${sheets.length} sheet(s)`);

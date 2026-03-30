@@ -141,8 +141,8 @@ export class IndexStore {
    * Create the combined index sheet for a Record class (if not already present).
    * Sheet name equals the class's indexTableName (e.g. idx_Cars).
    */
-  createCombinedIndex(indexTableName: string): void {
-    const existing = this.adapter.getSheetByName(indexTableName);
+  createCombinedIndex(indexTableName: string, preloadedSheet?: ISheetAdapter): void {
+    const existing = preloadedSheet ?? this.adapter.getSheetByName(indexTableName);
     if (!existing) {
       const sheet = this.adapter.insertSheet(indexTableName);
       sheet.setHeaders(["field", "value", "entityId"]);
@@ -155,7 +155,9 @@ export class IndexStore {
       // addAllFieldsToCombined can skip a full getAllData() on the write path.
       const rowCount = existing.getRowCount();
       this.indexRowCount.set(indexTableName, rowCount);
-      SheetOrmLogger.log(`[Index] createCombinedIndex "${indexTableName}" → existing (C1) rowCount=${rowCount}`);
+      SheetOrmLogger.log(
+        `[Index] createCombinedIndex "${indexTableName}" → existing (C1) rowCount=${rowCount}`,
+      );
     }
   }
 
