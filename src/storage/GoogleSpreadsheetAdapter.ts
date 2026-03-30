@@ -48,11 +48,12 @@ export class GoogleSpreadsheetAdapter implements ISpreadsheetAdapter {
     const sheets = this.spreadsheet.getSheets();
     SheetOrmLogger.log(`[Spreadsheet] removeAllSheets() → deleting ${sheets.length} sheet(s)`);
     if (sheets.length === 0) return;
-    // GAS requires at least one sheet — insert a placeholder, delete originals, then rename it
-    const placeholder = this.spreadsheet.insertSheet("__sheetorm_placeholder__");
-    for (const sheet of sheets) {
-      this.spreadsheet.deleteSheet(sheet);
+    // GAS requires at least one sheet — keep the first, delete the rest, then clear and rename it
+    const keeper = sheets[0];
+    for (let i = 1; i < sheets.length; i++) {
+      this.spreadsheet.deleteSheet(sheets[i]);
     }
-    placeholder.setName("Sheet1");
+    keeper.clear();
+    keeper.setName("Sheet1");
   }
 }
