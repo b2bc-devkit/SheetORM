@@ -2,6 +2,7 @@
 
 import type { Entity } from "./types/Entity.js";
 import type { ICacheProvider } from "./types/ICacheProvider.js";
+import type { ISheetAdapter } from "./types/ISheetAdapter.js";
 import type { ISpreadsheetAdapter } from "./types/ISpreadsheetAdapter.js";
 import type { TableSchema } from "./types/TableSchema.js";
 import { SheetRepository } from "./SheetRepository.js";
@@ -62,17 +63,19 @@ export class Registry {
     return this.indexStore;
   }
 
-  private ensureTable(schema: TableSchema, indexStore: IndexStore): void {
+  private ensureTable(schema: TableSchema, indexStore: IndexStore): { sheet: ISheetAdapter; created: boolean } {
     const adapter = this.getAdapter();
     SheetOrmLogger.log(`[Registry] ensureTable "${schema.tableName}" (indexes=${schema.indexes.length})`);
 
     let sheet = adapter.getSheetByName(schema.tableName);
+    let created = false;
     if (!sheet) {
       sheet = adapter.createSheet(schema.tableName);
+      created = true;
     }
     sheet.setHeaders(Serialization.buildHeaders(schema.fields));
 
-    if (schema.indexes.length === 0) return;
+    if (schema.indexes.length === 0) return { sheet, created };
 
     if (!schema.indexTableName) {
       throw new Error(
@@ -86,6 +89,8 @@ export class Registry {
     for (const idx of schema.indexes) {
       indexStore.registerIndex(schema.indexTableName, idx.field, idx.unique ?? false);
     }
+
+    return { sheet, created };
   }
 
   registerClass(ctor: RecordStatic): void {
@@ -118,9 +123,17 @@ export class Registry {
       indexes: Decorators.getIndexes(ctor),
     };
 
-    this.ensureTable(schema, indexStore);
+    const { sheet, created } = this.ensureTable(schema, indexStore);
 
-    const repo = new SheetRepository<T>(this.getAdapter(), schema, indexStore, this.cache!);
+    const repo = new SheetRepository<T>(
+      this.getAdapter(),
+      schema,
+      indexStore,
+      this.cache!,
+      undefined,
+      sheet,
+      created ? 0 : undefined,
+    );
 
     this.repos.set(tableName, repo as unknown as SheetRepository<Entity>);
     return repo;
