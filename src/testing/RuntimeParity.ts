@@ -4845,21 +4845,21 @@ function runTestsForSuites(suites: typeof ParityCatalog.SUITES): string {
 
 // Stage 1: cache, index-store, query, query-engine (~162 tests)
 function runTestsStageOne(): string {
-  SheetOrmLogger.verbose = false;
+  SheetOrmLogger.verbose = true;
   validateTests();
   return runTestsForSuites(ParityCatalog.SUITES.slice(0, 4));
 }
 
 // Stage 2: serialization, uuid, record (~126 tests, ~250s)
 function runTestsStageTwo(): string {
-  SheetOrmLogger.verbose = false;
+  SheetOrmLogger.verbose = true;
   validateTests();
   return runTestsForSuites(ParityCatalog.SUITES.slice(4, 7));
 }
 
 // Stage 3: sheet-repository (~35 tests, ~120s)
 function runTestsStageThree(): string {
-  SheetOrmLogger.verbose = false;
+  SheetOrmLogger.verbose = true;
   validateTests();
   return runTestsForSuites(ParityCatalog.SUITES.slice(7));
 }
