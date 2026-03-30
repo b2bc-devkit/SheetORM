@@ -144,15 +144,18 @@ export class IndexStore {
   createCombinedIndex(indexTableName: string): void {
     const existing = this.adapter.getSheetByName(indexTableName);
     if (!existing) {
-      const sheet = this.adapter.createSheet(indexTableName);
+      const sheet = this.adapter.insertSheet(indexTableName);
       sheet.setHeaders(["field", "value", "entityId"]);
       this.indexSheetCache.set(indexTableName, sheet);
       this.indexRowCount.set(indexTableName, 0);
+      SheetOrmLogger.log(`[Index] createCombinedIndex "${indexTableName}" → insertSheet (G4 new) rowCount=0`);
     } else {
       this.indexSheetCache.set(indexTableName, existing);
       // C1: seed indexRowCount with one cheap getLastRow() call so that
       // addAllFieldsToCombined can skip a full getAllData() on the write path.
-      this.indexRowCount.set(indexTableName, existing.getRowCount());
+      const rowCount = existing.getRowCount();
+      this.indexRowCount.set(indexTableName, rowCount);
+      SheetOrmLogger.log(`[Index] createCombinedIndex "${indexTableName}" → existing (C1) rowCount=${rowCount}`);
     }
   }
 

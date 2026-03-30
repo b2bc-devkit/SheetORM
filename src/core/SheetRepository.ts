@@ -54,6 +54,8 @@ export class SheetRepository<T extends Entity> {
   private idToRowIndexComplete = false;
   /** Memoized sheet reference — avoids repeated getSheetByName() API calls within a session. */
   private sheetCache: ISheetAdapter | null = null;
+  /** Memoized set of indexed field names — avoids repeated getIndexedFields() array allocations in find(). */
+  private indexedFieldNames: Set<string>;
 
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -82,6 +84,16 @@ export class SheetRepository<T extends Entity> {
     for (const f of schema.fields) {
       this.fieldMap.set(f.name, f);
     }
+
+    // Pre-build indexed-field name set once — avoids getIndexedFields() array alloc on every find()
+    this.indexedFieldNames = new Set(schema.indexes.map((idx) => idx.field));
+
+    SheetOrmLogger.log(
+      `[Repo:${schema.tableName}] constructor — ` +
+        `sheetCache=${initialSheet ? "seeded" : "null"} ` +
+        `physicalRowCount=${initialRowCount !== undefined ? String(initialRowCount) : "unknown"} ` +
+        `indexedFields=[${schema.indexes.map((i) => i.field).join(",")}]`,
+    );
   }
 
   // ─── CRUD ──────────────────────────────────────────
@@ -826,8 +838,6 @@ export class SheetRepository<T extends Entity> {
   }
 
   private isIndexedField(fieldName: string): boolean {
-    if (!this.schema.indexTableName) return false;
-    const indexed = this.indexStore.getIndexedFields(this.schema.indexTableName);
-    return indexed.some((m) => m.field === fieldName);
+    return this.indexedFieldNames.has(fieldName);
   }
 }

@@ -17,6 +17,12 @@ export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
     return sheet;
   }
 
+  insertSheet(name: string): ISheetAdapter {
+    const sheet = new MockSheetAdapter(name);
+    this.sheets.set(name, sheet);
+    return sheet;
+  }
+
   deleteSheet(name: string): void {
     this.sheets.delete(name);
   }

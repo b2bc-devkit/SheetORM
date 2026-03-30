@@ -3483,7 +3483,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const hooks: LifecycleHooks<Entity> = {
@@ -3511,7 +3511,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const hooks: LifecycleHooks<Entity> = {
@@ -3529,7 +3529,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const calls: Array<{ isNew: boolean }> = [];
@@ -3554,7 +3554,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const hooks: LifecycleHooks<Entity> = { beforeDelete: () => false };
@@ -3572,7 +3572,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const hooks: LifecycleHooks<Entity> = { beforeDelete: () => false };
@@ -3592,7 +3592,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       let vetoId: string | null = null;
@@ -3622,7 +3622,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       let vetoId: string | null = null;
@@ -3657,7 +3657,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const deletedIds: string[] = [];
@@ -3679,7 +3679,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const deletedIds: string[] = [];
@@ -3711,7 +3711,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const deletedIds: string[] = [];
@@ -3757,7 +3757,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       let repoRef: SheetRepository<Entity> | null = null;
@@ -3791,7 +3791,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -3813,7 +3813,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -3835,7 +3835,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -3857,7 +3857,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -3879,7 +3879,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const afterSaveCalls: string[] = [];
@@ -3921,7 +3921,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -3939,7 +3939,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const calls: Array<{ isNew: boolean; name: string }> = [];
@@ -3976,7 +3976,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const calls: Array<{ isNew: boolean; name: string }> = [];
@@ -4017,7 +4017,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4056,7 +4056,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4076,7 +4076,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4101,7 +4101,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4138,7 +4138,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const calls: Array<{ isNew: boolean; name: string }> = [];
@@ -4176,7 +4176,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4200,7 +4200,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4227,7 +4227,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4253,7 +4253,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const deletedIds: string[] = [];
@@ -4281,7 +4281,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const deletedIds: string[] = [];
@@ -4309,7 +4309,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4334,7 +4334,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4354,7 +4354,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4379,7 +4379,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       const repo = new SheetRepository<Entity>(adapter, schema, indexStore, new MemoryCache(), undefined, sheet, 0);
@@ -4403,7 +4403,7 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         fields: [{ name: "name" }, { name: "price" }, { name: "category" }],
         indexes: [],
       };
-      const sheet = adapter.createSheet(tableName);
+      const sheet = adapter.insertSheet(tableName);
       sheet.setHeaders(Serialization.buildHeaders(schema.fields));
       const indexStore = new IndexStore(adapter, new MemoryCache());
       let vetoId: string | null = null;

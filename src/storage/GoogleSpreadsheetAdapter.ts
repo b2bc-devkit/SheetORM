@@ -32,6 +32,12 @@ export class GoogleSpreadsheetAdapter implements ISpreadsheetAdapter {
     return new GoogleSheetAdapter(sheet);
   }
 
+  insertSheet(name: string): ISheetAdapter {
+    SheetOrmLogger.log(`[Spreadsheet] insertSheet("${name}")`);
+    const sheet = this.spreadsheet.insertSheet(name);
+    return new GoogleSheetAdapter(sheet);
+  }
+
   deleteSheet(name: string): void {
     const sheet = this.spreadsheet.getSheetByName(name);
     if (sheet) {
