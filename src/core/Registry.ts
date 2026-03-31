@@ -125,11 +125,16 @@ export class Registry {
 
     const indexStore = this.ensureIndexStore();
 
+    const indexes = Decorators.getIndexes(ctor);
     const schema: TableSchema = {
       tableName,
-      indexTableName: ctor.indexTableName,
+      // K2: only populate indexTableName when the class has @Indexed fields.
+      // Record.indexTableName always returns a string (e.g. "idx_Cars"), but for classes
+      // without indexes this causes every update/delete to call getSheetByName() on a
+      // non-existent index sheet, wasting ~700ms per API call.
+      indexTableName: indexes.length > 0 ? ctor.indexTableName : undefined,
       fields: Decorators.getFields(ctor),
-      indexes: Decorators.getIndexes(ctor),
+      indexes,
     };
 
     const { sheet, created } = this.ensureTable(schema, indexStore);

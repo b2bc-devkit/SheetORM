@@ -317,7 +317,9 @@ export class SheetRepository<T extends Entity> {
     SheetOrmLogger.log(`[Repo:${this.schema.tableName}] saveAll START — ${entities.length} entities`);
     this.entityBatch = [];
     this.batchSheet = sheet;
-    this.batchBaseRowCount = sheet.getRowCount();
+    // K1: reuse physicalRowCount when available — avoids a getLastRow() API call (~700ms)
+    // when the row count is already known in-session (e.g. new table seeded to 0, or after previous load).
+    this.batchBaseRowCount = this.physicalRowCount !== null ? this.physicalRowCount : sheet.getRowCount();
     if (this.schema.indexTableName) {
       this.indexStore.beginIndexBatch();
       // Pre-fetch indexed fields once — avoids 1000× getIndexedFields() array allocation per entity
