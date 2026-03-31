@@ -145,15 +145,17 @@ export class IndexStore {
     // undefined = not provided (fall back to getSheetByName)
     // null      = caller confirmed the sheet does not exist (skip getSheetByName, go straight to insertSheet)
     // ISheetAdapter = use this sheet directly
-    const existing = preloadedSheet !== undefined
-      ? preloadedSheet
-      : this.adapter.getSheetByName(indexTableName);
+    const existing =
+      preloadedSheet !== undefined ? preloadedSheet : this.adapter.getSheetByName(indexTableName);
     if (!existing) {
       const sheet = this.adapter.insertSheet(indexTableName);
-      sheet.setHeaders(["field", "value", "entityId"]);
+      // J1: skip setHeaders() for index sheets — column positions are hard-coded (field=0, value=1, entityId=2)
+      // and no production code reads the header row; saves 1 GAS API call (~700ms) per new index sheet.
       this.indexSheetCache.set(indexTableName, sheet);
       this.indexRowCount.set(indexTableName, 0);
-      SheetOrmLogger.log(`[Index] createCombinedIndex "${indexTableName}" → insertSheet (G4 new) rowCount=0`);
+      SheetOrmLogger.log(
+        `[Index] createCombinedIndex "${indexTableName}" → insertSheet (J1 no-header) rowCount=0`,
+      );
     } else {
       this.indexSheetCache.set(indexTableName, existing);
       // C1: seed indexRowCount with one cheap getLastRow() call so that

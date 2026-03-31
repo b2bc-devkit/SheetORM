@@ -79,7 +79,11 @@ export class Registry {
     SheetOrmLogger.log(
       `[Registry] ensureTable "${schema.tableName}" → ${created ? "insertSheet (G4 new)" : "existing sheet"}`,
     );
-    sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+    // J2: only write headers for newly-created sheets; existing sheets already have the correct
+    // header row from a prior execution, re-writing it wastes ~700ms per table per GAS call.
+    if (created) {
+      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+    }
 
     if (schema.indexes.length === 0) return { sheet, created };
 
