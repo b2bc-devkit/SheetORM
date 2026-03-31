@@ -66,13 +66,11 @@ export class Registry {
   private ensureTable(
     schema: TableSchema,
     indexStore: IndexStore,
-    existingSheets: Map<string, ISheetAdapter>,
   ): { sheet: ISheetAdapter; created: boolean } {
     const adapter = this.getAdapter();
     SheetOrmLogger.log(`[Registry] ensureTable "${schema.tableName}" (indexes=${schema.indexes.length})`);
 
-    // H3: use pre-loaded map instead of individual getSheetByName() API call
-    let sheet = existingSheets.get(schema.tableName) ?? null;
+    let sheet = adapter.getSheetByName(schema.tableName);
     let created = false;
     if (!sheet) {
       sheet = adapter.insertSheet(schema.tableName);
@@ -90,13 +88,7 @@ export class Registry {
       );
     }
 
-    // Combined index sheet: one sheet (idx_ClassName) holds all indexed fields
-    // H3+I1: pass the pre-loaded sheet if found, or null to signal "confirmed absent" so
-    // createCombinedIndex skips the redundant getSheetByName() API call.
-    indexStore.createCombinedIndex(
-      schema.indexTableName,
-      existingSheets.has(schema.indexTableName) ? existingSheets.get(schema.indexTableName)! : null,
-    );
+    indexStore.createCombinedIndex(schema.indexTableName);
     for (const idx of schema.indexes) {
       indexStore.registerIndex(schema.indexTableName, idx.field, idx.unique ?? false);
     }
@@ -127,10 +119,6 @@ export class Registry {
 
     const indexStore = this.ensureIndexStore();
 
-    // H3: load all existing sheets once (one API call) to avoid per-sheet getSheetByName() calls
-    const existingSheets = this.getAdapter().getSheets();
-    SheetOrmLogger.log(`[Registry] ensureRepository "${tableName}" → loaded ${existingSheets.size} existing sheets (H3)`);
-
     const schema: TableSchema = {
       tableName,
       indexTableName: ctor.indexTableName,
@@ -138,7 +126,7 @@ export class Registry {
       indexes: Decorators.getIndexes(ctor),
     };
 
-    const { sheet, created } = this.ensureTable(schema, indexStore, existingSheets);
+    const { sheet, created } = this.ensureTable(schema, indexStore);
 
     const repo = new SheetRepository<T>(
       this.getAdapter(),
