@@ -76,7 +76,9 @@ export class Registry {
       sheet = adapter.insertSheet(schema.tableName);
       created = true;
     }
-    SheetOrmLogger.log(`[Registry] ensureTable "${schema.tableName}" → ${created ? "insertSheet (G4 new)" : "existing sheet"}`);
+    SheetOrmLogger.log(
+      `[Registry] ensureTable "${schema.tableName}" → ${created ? "insertSheet (G4 new)" : "existing sheet"}`,
+    );
     sheet.setHeaders(Serialization.buildHeaders(schema.fields));
 
     if (schema.indexes.length === 0) return { sheet, created };
