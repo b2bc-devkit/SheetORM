@@ -158,4 +158,13 @@ export class GoogleSheetAdapter implements ISheetAdapter {
   flush(): void {
     SpreadsheetApp.flush();
   }
+
+  writeAllRowsWithHeaders(headers: string[], rows: unknown[][]): void {
+    const numCols = headers.length;
+    const allRows: unknown[][] = [headers, ...rows];
+    SheetOrmLogger.log(
+      `[Sheet:${this.sheet.getName()}] writeAllRowsWithHeaders ${rows.length} data rows + header (${allRows.length} total)`,
+    );
+    this.sheet.getRange(1, 1, allRows.length, numCols).setValues(allRows);
+  }
 }

@@ -105,6 +105,11 @@ export class MockSheetAdapter implements ISheetAdapter {
     // no-op in mock
   }
 
+  writeAllRowsWithHeaders(headers: string[], rows: unknown[][]): void {
+    this.headers = [...headers] as string[];
+    this.data = rows.map((row) => [...row]);
+  }
+
   _getRawData(): unknown[][] {
     return this.data;
   }

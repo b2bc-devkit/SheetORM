@@ -15,4 +15,6 @@ export interface ISheetAdapter {
   replaceAllData(rows: unknown[][]): void;
   clear(): void;
   flush(): void;
+  /** L1: Write header row + data rows in a single API call (row 1 = headers, row 2+ = data). */
+  writeAllRowsWithHeaders(headers: string[], rows: unknown[][]): void;
 }

@@ -56,6 +56,8 @@ export class SheetRepository<T extends Entity> {
   private sheetCache: ISheetAdapter | null = null;
   /** Memoized set of indexed field names — avoids repeated getIndexedFields() array allocations in find(). */
   private indexedFieldNames: Set<string>;
+  /** L1: true when headers haven't been written to the sheet yet (new sheet from ensureTable). */
+  private headersDeferred: boolean;
 
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -65,6 +67,7 @@ export class SheetRepository<T extends Entity> {
     hooks?: LifecycleHooks<T>,
     initialSheet?: ISheetAdapter,
     initialRowCount?: number,
+    headersDeferred?: boolean,
   ) {
     this.adapter = adapter;
     this.schema = schema;
@@ -87,6 +90,9 @@ export class SheetRepository<T extends Entity> {
 
     // Pre-build indexed-field name set once — avoids getIndexedFields() array alloc on every find()
     this.indexedFieldNames = new Set(schema.indexes.map((idx) => idx.field));
+
+    // L1: defer header write to first data flush — saves one GAS API call per new sheet
+    this.headersDeferred = headersDeferred ?? false;
 
     SheetOrmLogger.log(
       `[Repo:${schema.tableName}] constructor — ` +
@@ -256,7 +262,13 @@ export class SheetRepository<T extends Entity> {
       if (this.entityBatch !== null) {
         this.entityBatch.push({ entity, row, dataIndex, mode: "create" });
       } else {
-        sheet.updateRow(dataIndex, row);
+        // L1: write headers + first data row in a single API call for newly-created sheets
+        if (this.headersDeferred) {
+          sheet.writeAllRowsWithHeaders(this.headers, [row]);
+          this.headersDeferred = false;
+        } else {
+          sheet.updateRow(dataIndex, row);
+        }
         if (this.physicalRowCount !== null) this.physicalRowCount++;
       }
 
@@ -782,11 +794,17 @@ export class SheetRepository<T extends Entity> {
     SheetOrmLogger.log(
       `[Repo:${this.schema.tableName}] flushEntityBatch ${batch.length} rows (creates=${creates} updates=${updates}); calling sheet.updateRows()`,
     );
-    sheet.updateRows(
-      [...batch]
-        .sort((a, b) => a.dataIndex - b.dataIndex)
-        .map((item) => ({ rowIndex: item.dataIndex, values: item.row })),
-    );
+    const sorted = [...batch].sort((a, b) => a.dataIndex - b.dataIndex);
+    // L1: write header row + data rows in a single API call for newly-created sheets
+    if (this.headersDeferred) {
+      sheet.writeAllRowsWithHeaders(
+        this.headers,
+        sorted.map((item) => item.row as unknown[]),
+      );
+      this.headersDeferred = false;
+    } else {
+      sheet.updateRows(sorted.map((item) => ({ rowIndex: item.dataIndex, values: item.row })));
+    }
   }
 
   private cloneEntity(entity: T): T {

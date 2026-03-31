@@ -8,7 +8,6 @@ import type { TableSchema } from "./types/TableSchema.js";
 import { SheetRepository } from "./SheetRepository.js";
 import { IndexStore } from "../index/IndexStore.js";
 import { MemoryCache } from "./cache/MemoryCache.js";
-import { Serialization } from "../utils/Serialization.js";
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
 import { Decorators } from "./Decorators.js";
 import type { RecordStatic } from "./RecordStatic.js";
@@ -79,10 +78,11 @@ export class Registry {
     SheetOrmLogger.log(
       `[Registry] ensureTable "${schema.tableName}" → ${created ? "insertSheet (G4 new)" : "existing sheet"}`,
     );
-    // J2: only write headers for newly-created sheets; existing sheets already have the correct
-    // header row from a prior execution, re-writing it wastes ~700ms per table per GAS call.
-    if (created) {
-      sheet.setHeaders(Serialization.buildHeaders(schema.fields));
+    // L1: headers for newly-created sheets are deferred — they will be written
+    // together with the first data flush in SheetRepository, saving one GAS API call (~700ms).
+    // Existing sheets already have the correct header row from a prior execution.
+    if (!created) {
+      // Nothing to do — existing sheet already has headers.
     }
 
     if (schema.indexes.length === 0) return { sheet, created };
@@ -147,6 +147,7 @@ export class Registry {
       undefined,
       sheet,
       created ? 0 : undefined,
+      created, // L1: defer header write to first data flush
     );
 
     this.repos.set(tableName, repo as unknown as SheetRepository<Entity>);
