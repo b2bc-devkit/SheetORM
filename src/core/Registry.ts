@@ -90,7 +90,9 @@ export class Registry {
       );
     }
 
-    indexStore.createCombinedIndex(schema.indexTableName);
+    // I1: if the data table was just created, the index table cannot exist yet →
+    // pass null to skip the redundant getSheetByName() API call inside createCombinedIndex.
+    indexStore.createCombinedIndex(schema.indexTableName, created ? null : undefined);
     for (const idx of schema.indexes) {
       indexStore.registerIndex(schema.indexTableName, idx.field, idx.unique ?? false);
     }
