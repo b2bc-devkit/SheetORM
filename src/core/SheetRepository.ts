@@ -655,6 +655,13 @@ export class SheetRepository<T extends Entity> {
     this.batchBuffer = null;
 
     try {
+      // L2: optimize delete-only batches (common for deleteAll() in batch mode)
+      // by applying one bulk rewrite instead of N × deleteRow() API calls.
+      if (buffer.length > 0 && buffer.every((op) => op.type === "delete")) {
+        this.commitDeleteBatch(buffer.map((op) => op.data as string));
+        return;
+      }
+
       for (const op of buffer) {
         if (op.type === "save") {
           this.doSave(op.data as Partial<T> & { __id?: string });
@@ -669,6 +676,67 @@ export class SheetRepository<T extends Entity> {
       this.idToRowIndexComplete = false;
       throw err;
     }
+  }
+
+  /**
+   * Commit a delete-only batch.
+   * Falls back to per-ID deletes for tiny or duplicate-heavy batches to preserve semantics.
+   */
+  private commitDeleteBatch(ids: string[]): void {
+    if (ids.length === 0) return;
+
+    const uniqueCount = new Set(ids).size;
+    if (ids.length <= 2 || uniqueCount !== ids.length) {
+      for (const id of ids) {
+        this.doDelete(id);
+      }
+      return;
+    }
+
+    const all = this.loadAllEntities();
+    if (all.length === 0) return;
+
+    const existingIds = new Set(all.map((e) => e.__id));
+    const deleteIds: string[] = [];
+
+    // Preserve caller order from queued operations
+    for (const id of ids) {
+      if (!existingIds.has(id)) continue;
+      if (this.hooks.beforeDelete && this.hooks.beforeDelete(id) === false) continue;
+      deleteIds.push(id);
+    }
+    if (deleteIds.length === 0) return;
+
+    const deleteSet = new Set(deleteIds);
+    const remaining = all.filter((e) => !deleteSet.has(e.__id));
+    const rows = remaining.map((e) =>
+      Serialization.entityToRow(e, this.schema.fields, this.headers, this.fieldMap),
+    );
+
+    const sheet = this.getSheet();
+    sheet.replaceAllData(rows);
+
+    if (this.schema.indexTableName) {
+      this.indexStore.removeMultipleFromCombined(this.schema.indexTableName, deleteIds);
+    }
+
+    if (this.hooks.afterDelete) {
+      for (const id of deleteIds) {
+        this.hooks.afterDelete(id);
+      }
+    }
+
+    if (this.cache) {
+      this.cache.set(this.dataCacheKey, remaining);
+    }
+
+    const rowIndex = new Map<string, number>();
+    for (let i = 0; i < remaining.length; i++) {
+      rowIndex.set(remaining[i].__id, i);
+    }
+    this.idToRowIndex = rowIndex;
+    this.physicalRowCount = rows.length;
+    this.idToRowIndexComplete = true;
   }
 
   /**
