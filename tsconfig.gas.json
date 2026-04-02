@@ -1,11 +1,18 @@
+// TypeScript config for the Google Apps Script (GAS) build.
+// Used by scripts/build.mjs → `tsc -p tsconfig.gas.json`.
+// Compiles src/ to build/, which Vite then bundles into dist/Code.js.
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    // Target latest ES features; Vite down-levels to es2021 during bundling.
     "target": "ESNext",
     "lib": ["ESNext"],
+    // Intermediate JS output consumed by Vite's gasPlugin.
     "outDir": "build",
+    // No .d.ts files needed — the GAS bundle is a single IIFE script.
     "declaration": false
   },
+  // Only compile library sources, not tests or examples.
   "include": ["src"],
   "exclude": ["tests"]
 }

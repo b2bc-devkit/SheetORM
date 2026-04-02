@@ -1,3 +1,20 @@
+/**
+ * @module ParityCatalog
+ *
+ * Canonical catalog of every Jest test case that must also have a
+ * corresponding runtime handler in {@link RuntimeParity}.
+ *
+ * The catalog is the single source of truth for parity validation:
+ * - `SUITES` lists each test file and its test names.
+ * - `CASE_IDS` is a flat array of composite IDs (`"file::testName"`).
+ * - `toCaseId()` builds a composite ID from file + test name.
+ *
+ * Both Jest tests (via `parity-validator.test.ts`) and GAS runtime
+ * tests (via `RuntimeParity.validate()`) cross-check against this
+ * catalog to detect drift.
+ */
+
+/** Describes a single Jest test file and its ordered list of test names. */
 interface ParitySuite {
   file: string;
   tests: string[];
@@ -368,16 +385,27 @@ const PARITY_SUITES: ParitySuite[] = [
   },
 ];
 
+/** Build a composite parity case ID from a test file name and test name. */
 function toParityCaseId(file: string, testName: string): string {
   return `${file}::${testName}`;
 }
 
+/** Pre-computed flat array of all case IDs across all suites. */
 const PARITY_CASE_IDS: string[] = PARITY_SUITES.flatMap((suite) =>
   suite.tests.map((testName) => toParityCaseId(suite.file, testName)),
 );
 
+/**
+ * Public API for accessing the parity test catalog.
+ *
+ * Used by `parity-validator.test.ts` (Jest) and `RuntimeParity.validate()` (GAS)
+ * to ensure that both environments define the same set of test cases.
+ */
 export class ParityCatalog {
+  /** All suite definitions with test names. */
   static readonly SUITES = PARITY_SUITES;
+  /** Flat array of composite case IDs. */
   static readonly CASE_IDS = PARITY_CASE_IDS;
+  /** Utility to build a composite case ID. */
   static toCaseId = toParityCaseId;
 }

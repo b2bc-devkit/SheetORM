@@ -1,3 +1,31 @@
+/**
+ * @module RuntimeParity
+ *
+ * Runtime parity test suite for Google Apps Script (GAS).
+ *
+ * This file mirrors the Jest test suites (tests/*.test.ts) but runs against
+ * real Google Sheets via the GAS execution environment.  Its purpose is to
+ * verify that SheetORM behaves identically in both the Jest mock environment
+ * and the real GAS runtime ("parity").
+ *
+ * **Architecture**:
+ * - {@link RuntimeParityState} — per-run state: unique table names, spreadsheet access.
+ * - {@link runtimeSuiteHandlers} — a map of `file → testName → handler` that mirrors
+ *   every Jest `test()` block.  Each handler exercises the same logic but using
+ *   real Google Sheets API calls instead of mocks.
+ * - {@link RuntimeParity} — public API (static methods) invoked from GAS menu:
+ *   - `runStageOne()` / `runStageTwo()` / `runStageThree()` — execute test subsets.
+ *   - `validate()` — cross-check collected results against {@link ParityCatalog}.
+ *
+ * Tests are split into three stages to stay within the 6-minute GAS execution
+ * time limit.  Each stage persists results to a `__parity_results_*` sheet so
+ * that `validate()` can aggregate them later.
+ *
+ * Helper functions (`fail`, `assertTrue`, `assertEqual`, `assertDeepEqual`,
+ * `assertThrows`, `sleepMs`) provide assertion primitives similar to Jest's
+ * `expect()` API.
+ */
+
 import type { Entity } from "../core/types/Entity.js";
 import type { FieldDefinition } from "../core/types/FieldDefinition.js";
 import type { Filter } from "../core/types/Filter.js";
@@ -19,16 +47,23 @@ import { Uuid } from "../utils/Uuid.js";
 import { ParityCatalog } from "./ParityCatalog.js";
 import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
+/** Destructure decorator functions for concise usage in test model definitions. */
 const { Indexed, Required, Field, resetDecoratorCaches } = Decorators;
 
+// ─── Internal types ───────────────────────────────────────────────────────────
+
+/** Context object passed to every runtime test case handler. */
 interface RuntimeCaseContext {
   state: RuntimeParityState;
 }
 
+/** Signature of a single runtime test case handler function. */
 type RuntimeCaseHandler = (ctx: RuntimeCaseContext) => void;
 
+/** Map of suite file name → test name → handler function. */
 type RuntimeSuiteHandlers = Record<string, Record<string, RuntimeCaseHandler>>;
 
+/** Result of executing a single runtime test case. */
 interface RuntimeCaseResult {
   id: string;
   ok: boolean;
@@ -36,11 +71,24 @@ interface RuntimeCaseResult {
   error?: string;
 }
 
+// ─── RuntimeParityState ───────────────────────────────────────────────────────
+
+/**
+ * Per-run state container for runtime parity tests.
+ *
+ * Generates unique table names (using a timestamp + sequence) to avoid
+ * collisions between consecutive runs.  Also provides access to the
+ * active spreadsheet and adapter.
+ */
 class RuntimeParityState {
+  /** Timestamp-based run identifier for unique table naming. */
   private readonly runId = Date.now();
+  /** Monotonically increasing counter for table name uniqueness. */
   private sequence = 0;
+  /** Lazily-initialised spreadsheet reference. */
   private spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
 
+  /** Return the active GAS spreadsheet (cached after first call). */
   getSpreadsheet(): GoogleAppsScript.Spreadsheet.Spreadsheet {
     if (this.spreadsheet) return this.spreadsheet;
     if (typeof SpreadsheetApp === "undefined") {
@@ -50,15 +98,28 @@ class RuntimeParityState {
     return this.spreadsheet;
   }
 
+  /** Create a fresh GoogleSpreadsheetAdapter for the active spreadsheet. */
   getAdapter(): GoogleSpreadsheetAdapter {
     return new GoogleSpreadsheetAdapter(this.getSpreadsheet());
   }
 
+  /**
+   * Generate a unique table name based on `baseName`, run ID, and sequence.
+   * Ensures no two tests within the same run share a sheet name.
+   */
   nextTableName(baseName: string): string {
     this.sequence += 1;
     return `${baseName}_${this.runId}_${this.sequence}`;
   }
 
+  /**
+   * Delete all sheets from the active spreadsheet except one "Sheet1" keeper.
+   *
+   * Reuses the first existing sheet as a keeper to avoid the 10M-cell limit
+   * issue that can occur when inserting a new sheet into a nearly-full
+   * spreadsheet, then deletes all remaining sheets.  The keeper is cleared
+   * and trimmed to 1 row × 1 column.
+   */
   clearAllSheets(log?: (msg: string) => void): void {
     const emit = log ?? (() => {});
     const spreadsheet = this.getSpreadsheet();
@@ -107,20 +168,28 @@ class RuntimeParityState {
   }
 }
 
+// ─── Assertion helpers ────────────────────────────────────────────────────────
+// Minimal assertion primitives that mirror Jest's expect() API.
+// Designed for GAS where Jest is unavailable.
+
+/** Unconditionally throw an error — used by assertion helpers. */
 function fail(message: string): never {
   throw new Error(message);
 }
 
+/** Assert that `condition` is truthy; throw a descriptive error otherwise. */
 function assertTrue(condition: boolean, message: string): void {
   if (!condition) fail(message);
 }
 
+/** Assert strict equality (===) between `actual` and `expected`. */
 function assertEqual<T>(actual: T, expected: T, message: string): void {
   if (actual !== expected) {
     fail(`${message}. Expected: ${String(expected)}, actual: ${String(actual)}`);
   }
 }
 
+/** Assert deep equality via JSON.stringify comparison. */
 function assertDeepEqual(actual: unknown, expected: unknown, message: string): void {
   const actualJson = JSON.stringify(actual);
   const expectedJson = JSON.stringify(expected);
@@ -129,6 +198,7 @@ function assertDeepEqual(actual: unknown, expected: unknown, message: string): v
   }
 }
 
+/** Assert that `run` throws an error whose message matches `pattern`. */
 function assertThrows(run: () => void, pattern: RegExp, message: string): void {
   try {
     run();
@@ -142,6 +212,7 @@ function assertThrows(run: () => void, pattern: RegExp, message: string): void {
   fail(`${message}. Expected function to throw.`);
 }
 
+/** Sleep for `milliseconds` using GAS `Utilities.sleep` or busy-wait fallback. */
 function sleepMs(milliseconds: number): void {
   if (typeof Utilities !== "undefined" && typeof Utilities.sleep === "function") {
     Utilities.sleep(milliseconds);
@@ -4703,6 +4774,13 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
   },
 };
 
+/**
+ * Look up a runtime test handler by its parity case ID (format: `file::testName`).
+ *
+ * @param id - Composite case ID, e.g. `"cache.test.ts::stores and retrieves values"`.
+ * @returns The handler function for that test case.
+ * @throws If the ID format is invalid or no handler is registered.
+ */
 function getRuntimeCaseHandler(id: string): RuntimeCaseHandler {
   const separator = "::";
   const separatorIndex = id.indexOf(separator);
@@ -4725,6 +4803,13 @@ const RUNTIME_PARITY_CASE_IDS: string[] = Object.entries(runtimeSuiteHandlers)
   )
   .sort();
 
+/**
+ * Validate that every Jest test case in {@link ParityCatalog} has a
+ * corresponding runtime handler, and vice versa.
+ *
+ * Throws a descriptive error if any test is missing in either direction,
+ * preventing silent parity drift between Jest and GAS test suites.
+ */
 function validateTests(): void {
   const expected = new Set(ParityCatalog.CASE_IDS);
   const actual = new Set(RUNTIME_PARITY_CASE_IDS);
@@ -4744,6 +4829,14 @@ function validateTests(): void {
   }
 }
 
+/**
+ * Execute all runtime parity tests for the given suite subset.
+ *
+ * Clears all existing sheets, runs each test handler in sequence,
+ * collects pass/fail results with timing, and returns a JSON report
+ * string.  Throws on any failure so the GAS execution log shows the
+ * error summary.
+ */
 function runTestsForSuites(suites: typeof ParityCatalog.SUITES): string {
   const runStartedAt = Date.now();
   const state = new RuntimeParityState();
@@ -4843,31 +4936,43 @@ function runTestsForSuites(suites: typeof ParityCatalog.SUITES): string {
   return JSON.stringify(report);
 }
 
-// Stage 1: cache, index-store, query, query-engine (~162 tests)
+/** Stage 1: cache, index-store, query, query-engine (~162 tests). */
 function runTestsStageOne(): string {
   SheetOrmLogger.verbose = false;
   validateTests();
   return runTestsForSuites(ParityCatalog.SUITES.slice(0, 4));
 }
 
-// Stage 2: serialization, uuid, record (~126 tests, ~250s)
+/** Stage 2: serialization, uuid, record (~126 tests, ~250s). */
 function runTestsStageTwo(): string {
   SheetOrmLogger.verbose = false;
   validateTests();
   return runTestsForSuites(ParityCatalog.SUITES.slice(4, 7));
 }
 
-// Stage 3: sheet-repository (~35 tests, ~120s)
+/** Stage 3: sheet-repository (~35 tests, ~120s). */
 function runTestsStageThree(): string {
   SheetOrmLogger.verbose = false;
   validateTests();
   return runTestsForSuites(ParityCatalog.SUITES.slice(7));
 }
 
+/**
+ * Public API for runtime parity testing.
+ *
+ * Provides static methods that GAS entry points delegate to.
+ * Results are persisted to dedicated sheets and can be aggregated
+ * via `validate()`.
+ */
 export class RuntimeParity {
+  /** Execute stage-one parity tests (cache, index-store, query, query-engine). */
   static runStageOne = runTestsStageOne;
+  /** Execute stage-two parity tests (serialization, uuid, record). */
   static runStageTwo = runTestsStageTwo;
+  /** Execute stage-three parity tests (sheet-repository). */
   static runStageThree = runTestsStageThree;
+  /** Cross-check that all ParityCatalog case IDs have runtime handlers. */
   static validate = validateTests;
+  /** Complete list of runtime parity case IDs (for external cross-reference). */
   static readonly CASE_IDS = RUNTIME_PARITY_CASE_IDS;
 }

@@ -1,18 +1,31 @@
+// Base TypeScript configuration for SheetORM.
+// Extended by tsconfig.gas.json (Google Apps Script build),
+// tsconfig.npm.json (npm package build), and tsconfig.test.json (Jest tests).
 {
   "compilerOptions": {
+    // Emit the latest ECMAScript features; downstream configs may lower this.
     "target": "ESNext",
     "module": "ESNext",
+    // "Bundler" resolution mirrors how Vite/Rollup resolve imports.
     "moduleResolution": "Bundler",
+    // Enable all strict type-checking options for maximum safety.
     "strict": true,
+    // Disabled because Record fields are initialised via decorators, not constructors.
     "strictPropertyInitialization": false,
+    // Catch dead code early.
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    // Default output directory (overridden by per-target configs).
     "outDir": "build",
     "lib": ["ESNext"],
+    // Provide Google Apps Script global type definitions (e.g. SpreadsheetApp).
     "types": ["google-apps-script"],
+    // Required for @Field, @Indexed, @Required decorators used on Record models.
     "experimentalDecorators": true
   },
+  // Directories included for type-checking.
   "include": ["src", "examples", "tests"],
+  // Explicit entry point for the GAS bundle.
   "files": ["src/index.ts"]
 }

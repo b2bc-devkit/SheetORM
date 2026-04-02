@@ -1,5 +1,21 @@
-// SheetORM — SheetRepository: main CRUD + query interface for a single entity type
-// Inspired by the Repository pattern from common ORM architectures
+/**
+ * Main CRUD and query interface for a single entity type.
+ *
+ * Each `SheetRepository<T>` manages one Google Sheets tab, converting
+ * between in-memory {@link Entity} objects and sheet rows via
+ * {@link Serialization}.  Inspired by the Repository pattern from
+ * common ORM architectures (Hibernate, TypeORM, etc.).
+ *
+ * Performance optimisations (referenced by codename in comments):
+ *   - **B5**  — Known row count passed from Registry avoids getLastRow().
+ *   - **B7**  — `sheetCache` memoises the ISheetAdapter for the tab.
+ *   - **K1**  — Reuses physicalRowCount across saves inside saveAll().
+ *   - **K2**  — Skips index sheet lookup when the class has no @Indexed fields.
+ *   - **L1**  — Defers header write to the first data flush (saves ~700 ms).
+ *   - **L2**  — Bulk delete rewrite for delete-only batch commits.
+ *
+ * @module SheetRepository
+ */
 
 import type { Entity } from "../core/types/Entity.js";
 import type { FieldDefinition } from "../core/types/FieldDefinition.js";
@@ -20,6 +36,12 @@ import { Query } from "../query/Query.js";
 import { QueryEngine } from "../query/QueryEngine.js";
 import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
+/**
+ * Repository providing CRUD, query, pagination, and batch operations
+ * for entities of type `T` stored in a single Google Sheet tab.
+ *
+ * @typeParam T - Entity type managed by this repository.
+ */
 export class SheetRepository<T extends Entity> {
   private adapter: ISpreadsheetAdapter;
   private schema: TableSchema;
@@ -32,14 +54,24 @@ export class SheetRepository<T extends Entity> {
   private defaultableFields: TableSchema["fields"];
   private dataCacheKey: string;
   private fieldMap: Map<string, FieldDefinition>;
+  /** Fast-lookup map: entity ID → 1-based sheet row index for O(1) row access. */
   private idToRowIndex: Map<string, number> | null = null;
+
+  /** Buffered operations when a batch is active (beginBatch/commitBatch). */
   private batchBuffer: Array<{ type: "save" | "delete"; data: unknown }> | null = null;
+
+  /**
+   * Entity batch accumulator used by saveAll().
+   * Each entry stores the entity, its serialised row, 0-based data index, and
+   * whether it is a "create" or "update".  Flushed via flushEntityBatch().
+   */
   private entityBatch: Array<{
     entity: T;
     row: unknown[];
     dataIndex: number;
     mode: "create" | "update";
   }> | null = null;
+
   /** Cached sheet reference for the duration of saveAll() — avoids 1000× getSheetByName(). */
   private batchSheet: ISheetAdapter | null = null;
   /** Row count captured once at saveAll() start — avoids 1000× getLastRow(). */
@@ -52,13 +84,25 @@ export class SheetRepository<T extends Entity> {
   private physicalRowCount: number | null = null;
   /** True when idToRowIndex was built from a complete sheet scan (bootstrap or loadAllEntities/rowIndexById). */
   private idToRowIndexComplete = false;
-  /** Memoized sheet reference — avoids repeated getSheetByName() API calls within a session. */
+  /** Memoized sheet reference — avoids repeated getSheetByName() API calls within a session (B7). */
   private sheetCache: ISheetAdapter | null = null;
   /** Memoized set of indexed field names — avoids repeated getIndexedFields() array allocations in find(). */
   private indexedFieldNames: Set<string>;
   /** L1: true when headers haven't been written to the sheet yet (new sheet from ensureTable). */
   private headersDeferred: boolean;
 
+  /**
+   * Constructs a new repository for the given table schema.
+   *
+   * @param adapter         - Spreadsheet adapter providing sheet management.
+   * @param schema          - Table schema (name, fields, indexes).
+   * @param indexStore      - Shared IndexStore for secondary indexes.
+   * @param cache           - Optional cache provider for in-memory row caching.
+   * @param hooks           - Optional lifecycle hooks (onValidate, beforeSave, afterSave, beforeDelete, afterDelete).
+   * @param initialSheet    - Pre-resolved sheet adapter (B7 optimisation).
+   * @param initialRowCount - Pre-fetched row count (B5 optimisation).
+   * @param headersDeferred - True if the sheet was just created and headers still need writing (L1).
+   */
   constructor(
     adapter: ISpreadsheetAdapter,
     schema: TableSchema,
@@ -74,15 +118,24 @@ export class SheetRepository<T extends Entity> {
     this.indexStore = indexStore;
     this.cache = cache ?? null;
     this.hooks = hooks ?? {};
+
+    // Seed memoised sheet & row count when provided by Registry (B5 / B7)
     this.sheetCache = initialSheet ?? null;
     this.physicalRowCount = initialRowCount ?? null;
+
+    // Build column header array from field definitions (used for serialisation)
     this.headers = Serialization.buildHeaders(schema.fields);
+    // Locate the __id column position for fast primary-key lookups
     this.idColIdx = this.headers.indexOf(SystemColumns.ID);
+
+    // Pre-filter required and defaultable fields for validation/defaults in save()
     this.requiredFields = schema.fields.filter((f) => f.required);
     this.defaultableFields = schema.fields.filter((f) => f.defaultValue !== undefined);
+
+    // Cache key for the data cache (all-entity array)
     this.dataCacheKey = `data:${schema.tableName}`;
 
-    // Pre-build field lookup map once (reused by entityToRow/rowToEntity)
+    // Pre-build field lookup map once (reused by entityToRow / rowToEntity)
     this.fieldMap = new Map();
     for (const f of schema.fields) {
       this.fieldMap.set(f.name, f);
@@ -105,14 +158,21 @@ export class SheetRepository<T extends Entity> {
   // ─── CRUD ──────────────────────────────────────────
 
   /**
-   * Save (create or update) an entity. If __id is present and exists, updates. Otherwise creates.
+   * Save (create or update) an entity.
+   *
+   * When a batch is active (see {@link beginBatch}), the operation is buffered
+   * and deferred until {@link commitBatch} is called.  Otherwise delegates
+   * immediately to {@link doSave}.
+   *
+   * @param partial - Partial entity with optional `__id`.
+   * @returns The saved entity with system columns populated.
    */
   save(partial: Partial<T> & { __id?: string }): T {
     if (this.batchBuffer) {
       const now = new Date().toISOString();
       const id = partial.__id ?? Uuid.generate();
-      // Use presence of __createdAt as heuristic: explicit __id with no __createdAt
-      // likely means a new entity with a caller-supplied ID, not an update.
+      // Heuristic: __id present *with* __createdAt → likely an existing entity (update).
+      // __id present *without* __createdAt → caller-supplied ID for a new entity.
       const isLikelyUpdate = Boolean(partial.__id && partial.__createdAt);
       const buffered = { ...partial, __id: id };
       this.batchBuffer.push({ type: "save", data: buffered });
@@ -126,6 +186,13 @@ export class SheetRepository<T extends Entity> {
     return this.doSave(partial);
   }
 
+  /**
+   * Internal save implementation — resolves existence, validates, applies
+   * defaults, and writes to the sheet or buffers into an entity batch.
+   *
+   * @param partial - Partial entity data with optional `__id`.
+   * @returns Fully populated entity with system columns.
+   */
   private doSave(partial: Partial<T> & { __id?: string }): T {
     const sheet = this.batchSheet ?? this.getSheet();
     // Per-entity log is suppressed in batch mode to avoid 1000× Logger.log() overhead in GAS
@@ -141,13 +208,14 @@ export class SheetRepository<T extends Entity> {
     let existingEntity: T | null = null;
 
     if (partial.__id) {
-      // Try in-memory lookup (idToRowIndex + entity cache)
+      // Try in-memory lookup: idToRowIndex gives us the 0-based data row index,
+      // and the entity cache gives us the current field values (needed for UPDATE merge).
       const cachedIdx = this.idToRowIndex?.get(partial.__id);
       if (cachedIdx !== undefined && this.cache) {
         const cached = this.cache.get<T[]>(this.dataCacheKey);
         if (cached) {
           const cachedEntity = cached[cachedIdx];
-          // Validate ID — gap rows may cause cache index drift
+          // Validate that the cached ID matches — gap rows may cause cache index drift
           if (cachedEntity?.__id === partial.__id) {
             existingIdx = cachedIdx;
             existingEntity = cachedEntity;
@@ -155,7 +223,7 @@ export class SheetRepository<T extends Entity> {
         }
       }
 
-      // Fallback: fast scan — check only the ID column, deserialize just the target entity
+      // Fallback: full-scan the sheet's ID column, deserialize only the matching row
       if (existingIdx === null) {
         if (this.idToRowIndex && this.idToRowIndexComplete && !this.idToRowIndex.has(partial.__id)) {
           // idToRowIndex covers all rows; entity's ID is absent → definitely new, skip sheet read.
@@ -176,6 +244,7 @@ export class SheetRepository<T extends Entity> {
               );
             }
           }
+          // Rebuild the full index as a side effect of the scan
           this.idToRowIndex = rowIndex;
           this.physicalRowCount = data.length;
           this.idToRowIndexComplete = true;
@@ -190,7 +259,7 @@ export class SheetRepository<T extends Entity> {
       );
     }
 
-    // Lifecycle: validate
+    // ── Lifecycle: validate ──
     if (this.hooks.onValidate) {
       const errors = this.hooks.onValidate(partial as Partial<T>);
       if (errors && errors.length > 0) {
@@ -198,14 +267,14 @@ export class SheetRepository<T extends Entity> {
       }
     }
 
-    // Lifecycle: beforeSave
+    // ── Lifecycle: beforeSave ──
     let entityData = partial;
     if (this.hooks.beforeSave) {
       const result = this.hooks.beforeSave(partial as Partial<T>, isNew);
       if (result) entityData = result as Partial<T> & { __id?: string };
     }
 
-    // Apply defaults for fields with defaultValue
+    // Apply defaults for fields with defaultValue (only when undefined)
     for (let i = 0; i < this.defaultableFields.length; i++) {
       const field = this.defaultableFields[i];
       if (entityData[field.name] === undefined) {
@@ -213,7 +282,7 @@ export class SheetRepository<T extends Entity> {
       }
     }
 
-    // Validate required fields
+    // Validate required fields (must not be undefined, null, or empty string)
     for (let i = 0; i < this.requiredFields.length; i++) {
       const field = this.requiredFields[i];
       const val = entityData[field.name];
@@ -225,7 +294,7 @@ export class SheetRepository<T extends Entity> {
     let entity: T;
 
     if (isNew) {
-      // CREATE
+      // ── CREATE path ──
       entity = {
         ...entityData,
         __id: entityData.__id ?? Uuid.generate(),
@@ -235,30 +304,33 @@ export class SheetRepository<T extends Entity> {
 
       const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
 
-      // Write at computed position — single setValues call, no flush needed
-      // In batch mode, account for already-buffered entities that haven't been flushed yet.
-      // batchBaseRowCount is captured once at saveAll() start to avoid 1000× getLastRow().
-      // physicalRowCount avoids a getLastRow() API call when the count is already known in-session.
+      // Compute the 0-based data row index for writing.
+      // In batch mode (saveAll), batchBaseRowCount was captured once at start (K1).
+      // Otherwise reuse physicalRowCount to avoid getLastRow() API calls.
       const baseCount =
         this.batchBaseRowCount !== null
           ? this.batchBaseRowCount
           : this.physicalRowCount !== null
             ? this.physicalRowCount
             : sheet.getRowCount();
+      // Account for already-buffered CREATE entities that haven't been flushed yet
       const dataIndex =
         baseCount + (this.entityBatch ? this.entityBatch.filter((item) => item.mode === "create").length : 0);
+
+      // Bootstrap idToRowIndex and cache when first entity is written to an empty sheet
       if (!this.idToRowIndex) {
         if (dataIndex === 0) {
           this.idToRowIndex = new Map();
           this.physicalRowCount = 0;
           this.idToRowIndexComplete = true;
-          // Bootstrap empty cache so subsequent finds are cache hits
+          // Seed empty cache so subsequent finds are cache hits
           if (this.cache && !this.cache.has(this.dataCacheKey)) {
             this.cache.set(this.dataCacheKey, []);
           }
         }
       }
-      // In entity batch mode: buffer the row; otherwise write immediately
+
+      // In entity batch mode (saveAll): buffer the row; otherwise write immediately
       if (this.entityBatch !== null) {
         this.entityBatch.push({ entity, row, dataIndex, mode: "create" });
       } else {
@@ -269,18 +341,19 @@ export class SheetRepository<T extends Entity> {
         } else {
           sheet.updateRow(dataIndex, row);
         }
+        // Keep physicalRowCount in sync
         if (this.physicalRowCount !== null) this.physicalRowCount++;
       }
 
-      // Add to indexes
+      // Add to secondary indexes (@Indexed fields)
       this.addToIndexes(entity);
 
-      // Update in-memory row index (always, even in batch — so next entity gets correct dataIndex)
+      // Update in-memory row index (always, even in batch — so the next entity gets the correct dataIndex)
       if (this.idToRowIndex) {
         this.idToRowIndex.set(entity.__id, dataIndex);
       }
     } else {
-      // UPDATE — use cached entity or freshly deserialized one
+      // ── UPDATE path — merge existing fields with new values ──
       entity = {
         ...existingEntity!,
         ...entityData,
@@ -296,7 +369,7 @@ export class SheetRepository<T extends Entity> {
         sheet.updateRow(existingIdx!, row);
       }
 
-      // Update indexes
+      // Update secondary indexes with old → new value changes
       const oldValues: Record<string, unknown> = {};
       const newValues: Record<string, unknown> = {};
       for (const field of this.schema.fields) {
@@ -308,10 +381,10 @@ export class SheetRepository<T extends Entity> {
       }
     }
 
-    // Update entity cache in place (avoid full invalidation)
+    // Update entity cache in place (avoid full invalidation after every save)
     this.updateCacheAfterSave(entity, isNew);
 
-    // Lifecycle: afterSave
+    // ── Lifecycle: afterSave ──
     if (this.hooks.afterSave) {
       this.hooks.afterSave(entity, isNew);
     }
@@ -320,33 +393,59 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Save multiple entities in batch, flushing all index writes in a single
-   * sheet call at the end instead of one per entity.
+   * Save multiple entities in a single optimised batch.
+   *
+   * 1. Captures the sheet reference and row count once (K1, B7).
+   * 2. Calls {@link doSave} for each entity — rows are buffered instead of
+   *    written individually.
+   * 3. Flushes all buffered rows via {@link flushEntityBatch} (single API call).
+   * 4. Flushes index writes via {@link IndexStore.flushIndexBatch}.
+   *
+   * On error the batch state is fully reset and the cache is invalidated.
+   *
+   * @param entities - Array of partial entities to save.
+   * @returns Array of fully populated saved entities.
    */
   saveAll(entities: Array<Partial<T>>): T[] {
     if (entities.length === 0) return [];
     const sheet = this.getSheet();
     SheetOrmLogger.log(`[Repo:${this.schema.tableName}] saveAll START — ${entities.length} entities`);
+
+    // Initialise batch state
     this.entityBatch = [];
     this.batchSheet = sheet;
-    // K1: reuse physicalRowCount when available — avoids a getLastRow() API call (~700ms)
-    // when the row count is already known in-session (e.g. new table seeded to 0, or after previous load).
+
+    // K1: reuse physicalRowCount when available — avoids a getLastRow() API call (~700 ms)
+    // when the row count is already known in-session (e.g. new table seeded to 0).
     this.batchBaseRowCount = this.physicalRowCount !== null ? this.physicalRowCount : sheet.getRowCount();
+
     if (this.schema.indexTableName) {
       this.indexStore.beginIndexBatch();
-      // Pre-fetch indexed fields once — avoids 1000× getIndexedFields() array allocation per entity
+      // Pre-fetch indexed fields once — avoids N × getIndexedFields() array allocation
       this.batchIndexedFields = this.indexStore.getIndexedFields(this.schema.indexTableName);
     }
+
     try {
+      // Execute all saves (rows buffered into this.entityBatch)
       const results = entities.map((e) => this.doSave(e));
+
+      // Count how many new rows were created to update physicalRowCount
       const savedCreates = (this.entityBatch ?? []).filter((i) => i.mode === "create").length;
+
+      // Flush buffered rows to the sheet in one updateRows() call
       this.flushEntityBatch(sheet);
+
+      // Flush index batch (single write per index sheet)
       if (this.schema.indexTableName) {
         this.indexStore.flushIndexBatch();
       }
+
+      // Update physicalRowCount with the number of new rows
       if (this.batchBaseRowCount !== null) {
         this.physicalRowCount = this.batchBaseRowCount + savedCreates;
       }
+
+      // Clear batch state
       this.batchSheet = null;
       this.batchBaseRowCount = null;
       this.batchCachedData = null;
@@ -354,6 +453,7 @@ export class SheetRepository<T extends Entity> {
       SheetOrmLogger.log(`[Repo:${this.schema.tableName}] saveAll DONE — ${entities.length} entities`);
       return results;
     } catch (err) {
+      // Error recovery: clear all batch state and invalidate caches
       this.entityBatch = null;
       this.batchSheet = null;
       this.batchBaseRowCount = null;
@@ -371,7 +471,13 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Find an entity by ID.
+   * Find an entity by its primary key (`__id`).
+   *
+   * Uses a fast path when idToRowIndex + cache are populated, falling back
+   * to a full {@link loadAllEntities} scan otherwise.
+   *
+   * @param id - Entity `__id` value.
+   * @returns The matching entity or `null` if not found.
    */
   findById(id: string): T | null {
     // Fast path: hit cached row-index map to avoid full scan
@@ -389,22 +495,28 @@ export class SheetRepository<T extends Entity> {
         return found ? this.cloneEntity(found) : null;
       }
     }
+    // Slow path: load all entities from sheet (populates cache as a side-effect)
     const all = this.loadAllEntities();
     const found = all.find((e) => e.__id === id);
     return found ? this.cloneEntity(found) : null;
   }
 
   /**
-   * Find entities matching query options.
-   * When a `search` operator targets an @Indexed field and a combined index
+   * Find entities matching query options (filter, sort, paginate, group).
+   *
+   * When a `search` operator targets an `@Indexed` field and a combined index
    * sheet exists, the n-gram search index is used to narrow candidates before
    * the full filter pipeline runs (Solr-like optimisation).
+   *
+   * @param options - Optional query options (where, whereGroups, orderBy, offset, limit).
+   * @returns Array of matching entities.
    */
   find(options?: QueryOptions): T[] {
     const all = this.loadAllEntities();
     if (!options) return this.cloneEntities(all);
 
     if (options.where && !options.whereGroups && this.schema.indexTableName) {
+      // Separate search-operator filters (n-gram indexed) from other filters
       const searchFilters: { field: string; value: string }[] = [];
       const otherFilters: typeof options.where = [];
 
@@ -416,11 +528,14 @@ export class SheetRepository<T extends Entity> {
         }
       }
 
+      // N-gram index optimisation: narrow candidates via IndexStore.searchCombined
+      // before running the full filter pipeline (analogous to Solr pre-filtering)
       if (searchFilters.length > 0) {
         let candidateIds: Set<string> | null = null;
         for (const sf of searchFilters) {
           const ids = this.indexStore.searchCombined(this.schema.indexTableName, sf.field, sf.value);
           const idSet = new Set(ids);
+          // Intersect candidate sets across multiple search filters (AND semantics)
           if (candidateIds === null) {
             candidateIds = idSet;
           } else {
@@ -432,6 +547,7 @@ export class SheetRepository<T extends Entity> {
 
         if (!candidateIds || candidateIds.size === 0) return [];
 
+        // Filter the in-memory entities to only those matching the index hits
         const narrowed = all.filter((e) => candidateIds!.has(e.__id));
         return this.cloneEntities(
           QueryEngine.executeQuery(narrowed, {
@@ -442,11 +558,17 @@ export class SheetRepository<T extends Entity> {
       }
     }
 
+    // Standard path: run full QueryEngine pipeline on all entities
     return this.cloneEntities(QueryEngine.executeQuery(all, options));
   }
 
   /**
    * Find the first entity matching query options.
+   *
+   * Delegates to {@link find} with `limit: 1`.
+   *
+   * @param options - Optional query options.
+   * @returns The first matching entity or `null`.
    */
   findOne(options?: QueryOptions): T | null {
     const opts: QueryOptions = { ...options, limit: 1 };
@@ -455,9 +577,13 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Delete an entity by ID. Returns true if found and deleted.
-   * In batch mode, returns true to indicate the delete was queued
-   * (actual removal happens on commitBatch).
+   * Delete an entity by ID.
+   *
+   * When a batch is active, the delete is queued and `true` is returned
+   * immediately; actual removal happens on {@link commitBatch}.
+   *
+   * @param id - Entity `__id` to delete.
+   * @returns `true` if the entity was found and deleted (or queued).
    */
   delete(id: string): boolean {
     if (this.batchBuffer) {
@@ -468,8 +594,20 @@ export class SheetRepository<T extends Entity> {
     return this.doDelete(id);
   }
 
+  /**
+   * Internal delete implementation.
+   *
+   * 1. Runs `beforeDelete` lifecycle hook (can veto deletion by returning `false`).
+   * 2. Resolves the row index via in-memory cache or sheet scan.
+   * 3. Removes from secondary indexes.
+   * 4. Deletes the sheet row and adjusts `idToRowIndex`.
+   * 5. Updates entity cache and runs `afterDelete` hook.
+   *
+   * @param id - Entity `__id` to delete.
+   * @returns `true` if the entity was found and deleted.
+   */
   private doDelete(id: string): boolean {
-    // Lifecycle: beforeDelete
+    // Lifecycle: beforeDelete — can veto deletion by returning false
     if (this.hooks.beforeDelete) {
       const result = this.hooks.beforeDelete(id);
       if (result === false) return false;
@@ -503,15 +641,16 @@ export class SheetRepository<T extends Entity> {
     }
     if (rowIdx === null) return false;
 
-    // Remove from indexes
+    // Remove from secondary indexes
     if (this.schema.indexTableName) {
       this.indexStore.removeAllFromCombined(this.schema.indexTableName, id);
     }
 
+    // Delete the sheet row and adjust the tracked row count
     sheet.deleteRow(rowIdx);
     if (this.physicalRowCount !== null) this.physicalRowCount--;
 
-    // Update idToRowIndex: remove deleted ID and shift rows above it down
+    // Update idToRowIndex: remove deleted ID and shift rows above it down by one
     if (this.idToRowIndex) {
       this.idToRowIndex.delete(id);
       for (const [key, idx] of this.idToRowIndex) {
@@ -521,7 +660,7 @@ export class SheetRepository<T extends Entity> {
       }
     }
 
-    // Update entity cache in place
+    // Update entity cache in place (remove the deleted entity)
     this.updateCacheAfterDelete(id);
 
     // Lifecycle: afterDelete
@@ -533,10 +672,17 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Delete all entities matching a query.
-   * Uses bulk write (replaceAllData) for 3+ deletions, individual deletes for 1-2.
+   * Delete all entities matching a query (or all entities if no options given).
+   *
+   * Uses bulk write (replaceAllData) for 3+ deletions — two API calls instead
+   * of N individual deleteRow() calls.  For 1–2 deletions, individual deletes
+   * are cheaper due to lower overhead.
+   *
+   * @param options - Optional query options to select entities to delete.
+   * @returns Number of entities deleted.
    */
   deleteAll(options?: QueryOptions): number {
+    // In batch mode: queue deletes for later commitBatch()
     if (this.batchBuffer) {
       const entities = this.find(options);
       for (const entity of entities) {
@@ -549,7 +695,7 @@ export class SheetRepository<T extends Entity> {
     const toDelete = options ? QueryEngine.executeQuery(all, options) : [...all];
     if (toDelete.length === 0) return 0;
 
-    // For small batches, individual deletes are cheaper than replaceAllData
+    // For small batches (≤2), individual deletes are cheaper than replaceAllData
     if (toDelete.length <= 2) {
       let count = 0;
       for (const entity of toDelete) {
@@ -558,28 +704,34 @@ export class SheetRepository<T extends Entity> {
       return count;
     }
 
-    // Bulk delete: snapshot → filter → write back (2 API calls vs N)
+    // ── Bulk delete: snapshot → filter out deleted → write back (2 API calls vs N) ──
     const deleteIds = new Set<string>();
     for (const entity of toDelete) {
+      // beforeDelete can veto individual deletions
       if (this.hooks.beforeDelete && this.hooks.beforeDelete(entity.__id) === false) continue;
       deleteIds.add(entity.__id);
     }
     if (deleteIds.size === 0) return 0;
 
+    // Retain only entities not in the delete set
     const remaining = all.filter((e) => !deleteIds.has(e.__id));
     const sheet = this.getSheet();
     const rows = remaining.map((e) =>
       Serialization.entityToRow(e, this.schema.fields, this.headers, this.fieldMap),
     );
+    // Replace the entire sheet data with the filtered rows
     sheet.replaceAllData(rows);
 
+    // Clean up secondary indexes for all deleted entities
     if (this.schema.indexTableName) {
       this.indexStore.removeMultipleFromCombined(this.schema.indexTableName, [...deleteIds]);
     }
+    // afterDelete hooks for each deleted entity
     for (const id of deleteIds) {
       if (this.hooks.afterDelete) this.hooks.afterDelete(id);
     }
 
+    // Rebuild cache and idToRowIndex from the remaining entities
     if (this.cache) {
       this.cache.set(this.dataCacheKey, remaining);
     }
@@ -597,6 +749,9 @@ export class SheetRepository<T extends Entity> {
 
   /**
    * Count entities matching a query.
+   *
+   * @param options - Optional query options (only `where`/`whereGroups` are meaningful).
+   * @returns Total count of matching entities.
    */
   count(options?: QueryOptions): number {
     const all = this.loadAllEntities();
@@ -605,12 +760,18 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Paginated select.
+   * Paginated select — applies optional filters, then paginates.
+   *
+   * @param offset - 0-based offset.
+   * @param limit  - Maximum number of results.
+   * @param options - Optional query options applied before pagination.
+   * @returns {@link PaginatedResult} with `data`, `total`, `offset`, and `limit`.
    */
   select(offset: number, limit: number, options?: QueryOptions): PaginatedResult<T> {
     let entities = this.cloneEntities(this.loadAllEntities());
 
     if (options) {
+      // Filter/sort first, then paginate (offset/limit from options are stripped to avoid double application)
       entities = QueryEngine.executeQuery(entities, { ...options, offset: undefined, limit: undefined });
     }
 
@@ -618,7 +779,11 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Group entities by a field.
+   * Group entities by a field value.
+   *
+   * @param field   - Field name to group by.
+   * @param options - Optional query options applied before grouping.
+   * @returns Array of {@link GroupResult} objects.
    */
   groupBy(field: string, options?: QueryOptions): GroupResult<T>[] {
     let entities = this.cloneEntities(this.loadAllEntities());
@@ -631,7 +796,9 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Create a fluent query for this repository.
+   * Create a fluent {@link Query} builder for this repository.
+   *
+   * @returns A new Query instance backed by a snapshot of all current entities.
    */
   query(): Query<T> {
     return new Query<T>(() => this.cloneEntities(this.loadAllEntities()));
@@ -640,14 +807,20 @@ export class SheetRepository<T extends Entity> {
   // ─── Batch Operations ──────────────────────────────
 
   /**
-   * Start buffering operations for batch commit.
+   * Start buffering save/delete operations for later atomic commit.
+   *
+   * Call {@link commitBatch} to apply all buffered operations, or
+   * {@link rollbackBatch} to discard them.
    */
   beginBatch(): void {
     this.batchBuffer = [];
   }
 
   /**
-   * Commit all buffered operations.
+   * Commit all buffered operations from {@link beginBatch}.
+   *
+   * L2 optimisation: if the buffer contains only deletes, a bulk rewrite
+   * (replaceAllData) is used instead of N individual deleteRow() calls.
    */
   commitBatch(): void {
     if (!this.batchBuffer) return;
@@ -662,6 +835,7 @@ export class SheetRepository<T extends Entity> {
         return;
       }
 
+      // Mixed batch: replay operations sequentially
       for (const op of buffer) {
         if (op.type === "save") {
           this.doSave(op.data as Partial<T> & { __id?: string });
@@ -670,6 +844,7 @@ export class SheetRepository<T extends Entity> {
         }
       }
     } catch (err) {
+      // On error: invalidate caches to avoid stale state
       if (this.cache) this.cache.delete(this.dataCacheKey);
       this.idToRowIndex = null;
       this.physicalRowCount = null;
@@ -679,12 +854,17 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Commit a delete-only batch.
-   * Falls back to per-ID deletes for tiny or duplicate-heavy batches to preserve semantics.
+   * Commit a delete-only batch via bulk replaceAllData.
+   *
+   * Falls back to per-ID deletes for tiny (≤2) or duplicate-heavy batches
+   * to preserve semantics and avoid unnecessary full-sheet rewrites.
+   *
+   * @param ids - Array of entity IDs to delete.
    */
   private commitDeleteBatch(ids: string[]): void {
     if (ids.length === 0) return;
 
+    // For very small batches or duplicates, individual deletes are cheaper
     const uniqueCount = new Set(ids).size;
     if (ids.length <= 2 || uniqueCount !== ids.length) {
       for (const id of ids) {
@@ -696,10 +876,11 @@ export class SheetRepository<T extends Entity> {
     const all = this.loadAllEntities();
     if (all.length === 0) return;
 
+    // Build set of existing IDs to skip deletes of already-removed entities
     const existingIds = new Set(all.map((e) => e.__id));
     const deleteIds: string[] = [];
 
-    // Preserve caller order from queued operations
+    // Preserve caller order; run beforeDelete hooks (can veto)
     for (const id of ids) {
       if (!existingIds.has(id)) continue;
       if (this.hooks.beforeDelete && this.hooks.beforeDelete(id) === false) continue;
@@ -707,6 +888,7 @@ export class SheetRepository<T extends Entity> {
     }
     if (deleteIds.length === 0) return;
 
+    // Filter out deleted entities and rewrite the entire sheet
     const deleteSet = new Set(deleteIds);
     const remaining = all.filter((e) => !deleteSet.has(e.__id));
     const rows = remaining.map((e) =>
@@ -716,16 +898,19 @@ export class SheetRepository<T extends Entity> {
     const sheet = this.getSheet();
     sheet.replaceAllData(rows);
 
+    // Clean up secondary indexes for deleted entities
     if (this.schema.indexTableName) {
       this.indexStore.removeMultipleFromCombined(this.schema.indexTableName, deleteIds);
     }
 
+    // Run afterDelete hooks
     if (this.hooks.afterDelete) {
       for (const id of deleteIds) {
         this.hooks.afterDelete(id);
       }
     }
 
+    // Rebuild cache and idToRowIndex from the remaining entities
     if (this.cache) {
       this.cache.set(this.dataCacheKey, remaining);
     }
@@ -740,14 +925,16 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Discard buffered operations.
+   * Discard all buffered operations without applying them.
    */
   rollbackBatch(): void {
     this.batchBuffer = null;
   }
 
   /**
-   * Check if batch mode is active.
+   * Check whether batch mode is currently active.
+   *
+   * @returns `true` when {@link beginBatch} was called but not yet committed or rolled back.
    */
   isBatchActive(): boolean {
     return this.batchBuffer !== null;
@@ -755,6 +942,12 @@ export class SheetRepository<T extends Entity> {
 
   // ─── Internal Helpers ──────────────────────────────
 
+  /**
+   * Return the memoised ISheetAdapter for this table, resolving it once
+   * from the spreadsheet adapter and caching it for subsequent calls (B7).
+   *
+   * @throws Error if the sheet doesn't exist.
+   */
   private getSheet(): ISheetAdapter {
     if (this.sheetCache) return this.sheetCache;
     const sheet = this.adapter.getSheetByName(this.schema.tableName);
@@ -768,7 +961,14 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Load all entities from the sheet, with caching.
+   * Load all entities from the sheet, deserialise them, and populate the cache.
+   *
+   * Returns the cached array on a cache hit.  On a cache miss, reads all rows
+   * from the sheet, converts them via {@link Serialization.rowToEntity},
+   * builds {@link idToRowIndex}, and stores the result.
+   *
+   * @throws Error if called during an active entity batch (saveAll).
+   * @returns Array of all entities in the table.
    */
   private loadAllEntities(): T[] {
     if (this.entityBatch) {
@@ -777,11 +977,13 @@ export class SheetRepository<T extends Entity> {
       );
     }
 
+    // Cache hit path
     if (this.cache) {
       const cached = this.cache.get<T[]>(this.dataCacheKey);
       if (cached !== null) return cached;
     }
 
+    // Cache miss: read all rows from the sheet
     const sheet = this.getSheet();
     const data = sheet.getAllData();
     const len = data.length;
@@ -790,12 +992,16 @@ export class SheetRepository<T extends Entity> {
     const fMap = this.fieldMap;
     const entities: T[] = [];
     const rowIndex = new Map<string, number>();
+
+    // Deserialise each row, skipping rows with invalid/missing IDs
     for (let i = 0; i < len; i++) {
       const entity = Serialization.rowToEntity<T>(data[i], headers, fields, fMap);
       if (!entity.__id || entity.__id === "undefined" || entity.__id === "null") continue;
       rowIndex.set(entity.__id, i);
       entities.push(entity);
     }
+
+    // Update in-memory state
     this.idToRowIndex = rowIndex;
     this.physicalRowCount = data.length;
     this.idToRowIndexComplete = true;
@@ -808,7 +1014,12 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Find the 0-based row index for an entity by its __id.
+   * Find the 0-based data row index for an entity by its `__id` via a full
+   * sheet scan.  Rebuilds {@link idToRowIndex} as a side-effect.
+   *
+   * @param sheet - The sheet adapter to read from.
+   * @param id    - Entity `__id` to search for.
+   * @returns 0-based row index, or `null` if not found.
    */
   private rowIndexById(sheet: ISheetAdapter, id: string): number | null {
     const data = sheet.getAllData();
@@ -830,11 +1041,16 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
-   * Add a new entity to all relevant indexes.
+   * Add a newly-created entity to all relevant secondary indexes.
+   *
+   * In batch mode, uses pre-cached {@link batchIndexedFields} to avoid
+   * repeated `getIndexedFields()` allocations.
+   *
+   * @param entity - The entity to index.
    */
   private addToIndexes(entity: T): void {
     if (this.schema.indexTableName) {
-      // Use pre-cached fields in batch mode to avoid 1000× getIndexedFields() array allocation
+      // Use pre-cached fields in batch mode to avoid N × getIndexedFields() array allocation
       const indexedFields =
         this.batchIndexedFields ?? this.indexStore.getIndexedFields(this.schema.indexTableName);
       const entries: Array<{ field: string; value: unknown }> = [];
@@ -850,6 +1066,15 @@ export class SheetRepository<T extends Entity> {
     }
   }
 
+  /**
+   * Flush all buffered entity rows to the sheet in a single API call.
+   *
+   * Called at the end of {@link saveAll}.  Sorts buffered entries by
+   * `dataIndex` to build a contiguous row array, then writes them via
+   * `sheet.updateRows()` (or `writeAllRowsWithHeaders` for the L1 path).
+   *
+   * @param sheet - The sheet adapter to write to.
+   */
   private flushEntityBatch(sheet: ISheetAdapter): void {
     if (!this.entityBatch || this.entityBatch.length === 0) {
       this.entityBatch = null;
@@ -862,6 +1087,7 @@ export class SheetRepository<T extends Entity> {
     SheetOrmLogger.log(
       `[Repo:${this.schema.tableName}] flushEntityBatch ${batch.length} rows (creates=${creates} updates=${updates}); calling sheet.updateRows()`,
     );
+    // Sort by dataIndex for contiguous writes
     const sorted = [...batch].sort((a, b) => a.dataIndex - b.dataIndex);
     // L1: write header row + data rows in a single API call for newly-created sheets
     if (this.headersDeferred) {
@@ -875,17 +1101,28 @@ export class SheetRepository<T extends Entity> {
     }
   }
 
+  /** Shallow-clone an entity to prevent external mutation of cached data. */
   private cloneEntity(entity: T): T {
     return { ...entity };
   }
 
+  /** Shallow-clone an array of entities. */
   private cloneEntities(entities: T[]): T[] {
     return entities.map((entity) => this.cloneEntity(entity));
   }
 
+  /**
+   * Update the entity cache in place after a save (create or update).
+   *
+   * In batch mode, reuses {@link batchCachedData} to avoid repeated
+   * `cache.get()` calls that would trigger verbose logging overhead.
+   *
+   * @param entity - The saved entity.
+   * @param isNew  - Whether this was a create (append) or update (replace).
+   */
   private updateCacheAfterSave(entity: T, isNew: boolean): void {
     if (!this.cache) return;
-    // In batch mode, reuse pre-fetched array ref to avoid 1000× cache.get() Logger.log() calls in GAS.
+    // In batch mode, reuse pre-fetched array ref to avoid N × cache.get() Logger.log() calls in GAS.
     // batchCachedData is lazily initialised here on the first entity (after the cache entry is created
     // by the CREATE path in doSave for entity #1 when dataIndex === 0).
     let cached: T[] | null;
@@ -900,8 +1137,10 @@ export class SheetRepository<T extends Entity> {
     if (!cached) return;
 
     if (isNew) {
+      // Append new entity to the cached array
       cached.push(entity);
     } else {
+      // Replace existing entity in the cached array
       for (let i = 0; i < cached.length; i++) {
         if (cached[i]?.__id === entity.__id) {
           cached[i] = entity;
@@ -911,7 +1150,14 @@ export class SheetRepository<T extends Entity> {
     }
   }
 
-  // Note: idToRowIndex is updated separately in doDelete(). This method only handles the entity array cache.
+  /**
+   * Remove a deleted entity from the entity cache.
+   *
+   * Note: {@link idToRowIndex} is updated separately in {@link doDelete}.
+   * This method only handles the entity array cache.
+   *
+   * @param id - The `__id` of the deleted entity.
+   */
   private updateCacheAfterDelete(id: string): void {
     if (!this.cache) return;
     const cached = this.cache.get<T[]>(this.dataCacheKey);
@@ -925,6 +1171,14 @@ export class SheetRepository<T extends Entity> {
     }
   }
 
+  /**
+   * Check whether a field name has an `@Indexed` decorator.
+   *
+   * Uses the pre-built {@link indexedFieldNames} set for O(1) lookup.
+   *
+   * @param fieldName - Name of the field to check.
+   * @returns `true` if the field is indexed.
+   */
   private isIndexedField(fieldName: string): boolean {
     return this.indexedFieldNames.has(fieldName);
   }

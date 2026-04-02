@@ -1,8 +1,22 @@
-// SheetORM — Runtime Benchmark: GAS performance comparison for Record classes
-// Mirrors tests/benchmark.test.ts but runs against real Google Sheets API.
-//
-// Functions exposed to GAS:
-//   runBenchmark()  — full benchmark for Cars + Workers (100 records each)
+/**
+ * @module RuntimeBenchmark
+ *
+ * Runtime performance benchmark for SheetORM in Google Apps Script.
+ *
+ * Mirrors `tests/benchmark.test.ts` but runs against real Google Sheets API.
+ * Measures CRUD operations, query performance, and compares @Indexed
+ * n-gram search with full-scan "contains" queries.
+ *
+ * **GAS entry point**: `runBenchmark()` — full benchmark for Cars + Workers
+ * (default 1000 records each).
+ *
+ * **Comparison phases**:
+ * 1. CRUD + query benchmark for `Car` class (all fields @Indexed).
+ * 2. CRUD + query benchmark for `Worker` class (no @Indexed fields).
+ * 3. Search comparison: @Indexed "search" (n-gram) vs full-scan "contains".
+ *
+ * Results are logged to the GAS execution log and returned as a JSON report.
+ */
 
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
 import { Registry } from "../core/Registry.js";
@@ -15,11 +29,14 @@ const { Indexed, Required, resetDecoratorCaches } = Decorators;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
+/** Number of records to create per benchmark table. */
 const RECORD_COUNT = 1000;
+/** Number of iterations for the search comparison phase. */
 const SEARCH_ITERS = 100;
 
 // ─── GAS logger helper ───────────────────────────────────────────────────────
 
+/** Log a message to the GAS execution log (no-op outside GAS). */
 function gasLog(msg: string): void {
   if (typeof Logger !== "undefined" && typeof Logger.log === "function") {
     Logger.log(msg);
@@ -28,6 +45,10 @@ function gasLog(msg: string): void {
 
 // ─── Model definitions (created fresh each run to avoid class cache issues) ──
 
+/**
+ * Create a fresh Car model class with unique table names.
+ * All fields are @Indexed to measure index-write overhead.
+ */
 function createCarClass(suffix: string) {
   Registry.reset();
   resetDecoratorCaches();
@@ -58,6 +79,10 @@ function createCarClass(suffix: string) {
   return Car;
 }
 
+/**
+ * Create a fresh Worker model class with unique table names.
+ * No @Indexed fields — used as the baseline for comparison.
+ */
 function createWorkerClass(suffix: string) {
   Registry.reset();
   resetDecoratorCaches();
@@ -85,12 +110,14 @@ function createWorkerClass(suffix: string) {
 
 // ─── Assertion helpers ───────────────────────────────────────────────────────
 
+/** Assert strict equality; throw with label on mismatch. */
 function gasAssertEq<T>(actual: T, expected: T, label: string): void {
   if (actual !== expected) {
     throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
   }
 }
 
+/** Assert a boolean condition; throw with label if false. */
 function gasAssertTrue(condition: boolean, label: string): void {
   if (!condition) {
     throw new Error(`Assertion failed: ${label}`);
@@ -99,6 +126,7 @@ function gasAssertTrue(condition: boolean, label: string): void {
 
 // ─── Core benchmark operations ───────────────────────────────────────────────
 
+/** Collected results from a single model's benchmark run. */
 interface BenchResult {
   tableName: string;
   indexTableName: string;
@@ -110,6 +138,17 @@ interface BenchResult {
   errors: string[];
 }
 
+/**
+ * Run a full CRUD + query benchmark for a single Record subclass.
+ *
+ * Exercises: saveAll, count, findById, find, findOne, where, query().orderBy().limit(),
+ * select, groupBy, update via save, delete single, deleteAll with filter, Query.from, toJSON.
+ *
+ * @param Ctor     - Record subclass constructor.
+ * @param makeData - Factory function producing entity data for index `i`.
+ * @param log      - Logging function (GAS Logger.log or console.log).
+ * @returns BenchResult with timing, pass/fail counts, and errors.
+ */
 function runBenchmarkFor<T extends BaseRecord>(
   Ctor: { new (): T } & typeof BaseRecord,
   makeData: (i: number) => { [key: string]: unknown },
@@ -293,6 +332,13 @@ function runBenchmarkFor<T extends BaseRecord>(
 
 // ─── Public GAS function ─────────────────────────────────────────────────────
 
+/**
+ * Main benchmark entry point — invoked from GAS menu.
+ *
+ * Runs two model benchmarks (Cars with @Indexed, Workers without),
+ * then a search comparison (n-gram vs full-scan), and returns a
+ * JSON report string with all timing data.
+ */
 function runBenchmark(): string {
   const log = gasLog;
   const runId = String(Date.now());
@@ -488,6 +534,11 @@ function runBenchmark(): string {
   return JSON.stringify(report);
 }
 
+/**
+ * Exported wrapper class for the benchmark runner.
+ * `RuntimeBenchmark.run()` delegates to the module-level `runBenchmark()`.
+ */
 export class RuntimeBenchmark {
+  /** Execute the full benchmark suite. */
   static run = runBenchmark;
 }

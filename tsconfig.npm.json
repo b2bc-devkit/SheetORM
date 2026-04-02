@@ -1,12 +1,22 @@
+// TypeScript config for the npm package build.
+// Used by scripts/build-npm.mjs → `tsc -p tsconfig.npm.json`.
+// Produces ES module output with type declarations for npm consumers.
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    // npm package output directory (published via "files" in package.json).
     "outDir": "dist/npm",
+    // Root for calculating relative output paths so dist/npm mirrors src/ layout.
     "rootDir": "src",
+    // Generate .d.ts files so consumers get full type information.
     "declaration": true,
+    // Generate .d.ts.map files for "Go to definition" support in IDEs.
     "declarationMap": true,
+    // Generate .js.map files for debugging.
     "sourceMap": true,
+    // ES2020 is widely supported by Node.js ≥ 14 and modern bundlers.
     "target": "ES2020",
+    // NodeNext module system for proper ESM resolution with .js extensions.
     "module": "NodeNext",
     "moduleResolution": "NodeNext"
   },

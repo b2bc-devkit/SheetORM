@@ -1,18 +1,29 @@
+// TypeScript config for Jest unit tests.
+// Referenced by jest.config.cjs → ts-jest transform options.
+// Uses CommonJS module output because Jest does not natively support ESM.
 {
   "compilerOptions": {
     "target": "ESNext",
+    // CommonJS is required by Jest's default module system.
     "module": "CommonJS",
+    // Classic Node resolution for CommonJS require() calls.
     "moduleResolution": "Node",
     "strict": true,
+    // Disabled because Record fields are initialised via decorators, not constructors.
     "strictPropertyInitialization": false,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    // Separate output dir to avoid polluting the main build.
     "outDir": "build-test",
     "lib": ["ESNext"],
+    // Include Jest assertion types, GAS globals (for mock adapters), and Node.js types.
     "types": ["jest", "google-apps-script", "node"],
+    // Allow default imports from CommonJS modules (e.g. `import X from 'module'`).
     "esModuleInterop": true,
+    // Required for @Field, @Indexed, @Required decorators used on Record models.
     "experimentalDecorators": true
   },
+  // Include both library sources and test files for type-checking.
   "include": ["src", "tests"]
 }

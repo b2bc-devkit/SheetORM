@@ -1,6 +1,25 @@
-// SheetORM — GAS entry point
-// Only the three callable GAS functions are exposed as globals.
-// Internal types, classes and utilities are bundled but not surfaced as GAS menu items.
+/**
+ * @module index
+ *
+ * Google Apps Script (GAS) entry point for the SheetORM library.
+ *
+ * This file is the root module consumed by the Vite/Webpack build that
+ * produces the `Code.js` bundle deployed to GAS.  It exposes:
+ *
+ * - **GasEntrypoints** — a single exported class whose static members
+ *   are the public API surface visible inside the GAS environment.
+ *   GAS functions (`demoCreate`, `runTestsStageOne`, etc.) are mapped
+ *   to `GasEntrypoints.*` methods.
+ *
+ * - **DemoCar** — an internal demo model (not exported) used by the
+ *   CRUD demo methods to showcase SheetORM's capabilities in the
+ *   GAS script editor / execution log.
+ *
+ * Internal types, classes, and utilities are bundled but **not** surfaced
+ * as GAS menu items.
+ */
+
+// ─── Imports ──────────────────────────────────────────────────────────────────
 
 import { Decorators } from "./core/Decorators.js";
 import { Record } from "./core/Record.js";
@@ -14,54 +33,106 @@ import { SheetOrmLogger } from "./utils/SheetOrmLogger.js";
 
 // ─── Demo model (internal, not exported) ──────────────────────────────────────
 
+/** Destructure decorator functions for concise property annotations. */
 const { Indexed, Required, Field } = Decorators;
 
+/**
+ * DemoCar — a sample entity class used by the `demoCreate`, `demoRead`,
+ * `demoUpdate`, and `demoDelete` methods below.  Demonstrates decorators
+ * (`@Indexed`, `@Required`, `@Field`) and the ActiveRecord save/delete API.
+ *
+ * Not exported — exists only for in-GAS demonstration purposes.
+ */
 class DemoCar extends Record {
+  /** Make / brand, indexed for fast lookup (e.g. "Toyota"). */
   @Indexed()
   make: string = "";
 
+  /** Model name, required — save will fail if empty (e.g. "Corolla"). */
   @Required()
   model: string = "";
 
+  /** Model year, stored as a number in the sheet. */
   @Field({ type: "number" })
   year: number = 0;
 
+  /** Body colour — plain string field, no special annotation. */
   color: string = "";
 
+  /** Retail price in USD, stored as a number. */
   @Field({ type: "number" })
   price: number = 0;
 }
 
 // ─── GasEntrypoints ───────────────────────────────────────────────────────────
 
+/**
+ * Single public export of this module.
+ *
+ * Every static member becomes a top-level symbol in the GAS runtime once
+ * the Vite build maps them via `globalThis.*` assignments in `Code.js`.
+ *
+ * **Core API classes** — consumers use these to define models and queries:
+ * - `Record` — ActiveRecord base class
+ * - `Query`  — fluent query builder
+ * - `Decorators` — `@Field`, `@Indexed`, `@Required`
+ * - `IndexStore` — secondary-index manager with n-gram search
+ * - `Registry`   — singleton class registry
+ * - `SheetOrmLogger` — verbose logging toggle
+ *
+ * **Test / benchmark runners** — callable from the GAS editor:
+ * - `runTestsStageOne()` … `runTestsStageThree()` — staged parity tests
+ * - `validateTests()` — validate parity results
+ * - `runBenchmark()` — performance benchmark
+ *
+ * **Utility functions**:
+ * - `removeAllSheets()` — deletes every sheet in the active spreadsheet
+ *
+ * **CRUD demos**:
+ * - `demoCreate()`, `demoRead()`, `demoUpdate()`, `demoDelete()`
+ */
 export class GasEntrypoints {
+  /** ActiveRecord base class. */
   static readonly Record = Record;
+  /** Fluent query builder. */
   static readonly Query = Query;
+  /** Property decorators (`@Field`, `@Indexed`, `@Required`). */
   static readonly Decorators = Decorators;
+  /** Secondary-index manager with n-gram text search. */
   static readonly IndexStore = IndexStore;
+  /** Singleton entity-class registry. */
   static readonly Registry = Registry;
+  /** Verbose logger — set `SheetOrmLogger.verbose = true` for API-call traces. */
   static readonly SheetOrmLogger = SheetOrmLogger;
 
+  // ─── Parity test runners ────────────────────────────────────────────────
+
+  /** Run stage-one parity tests (basic CRUD + query). */
   static runTestsStageOne(): void {
     RuntimeParity.runStageOne();
   }
 
+  /** Run stage-two parity tests (indexes + search). */
   static runTestsStageTwo(): void {
     RuntimeParity.runStageTwo();
   }
 
+  /** Run stage-three parity tests (advanced queries + pagination). */
   static runTestsStageThree(): void {
     RuntimeParity.runStageThree();
   }
 
+  /** Validate all parity test results collected across stages. */
   static validateTests(): void {
     RuntimeParity.validate();
   }
 
+  /** Execute the performance benchmark suite. */
   static runBenchmark(): void {
     RuntimeBenchmark.run();
   }
 
+  /** Delete every sheet in the active spreadsheet (destructive — use with caution). */
   static removeAllSheets(): void {
     new GoogleSpreadsheetAdapter().removeAllSheets();
   }
@@ -69,8 +140,12 @@ export class GasEntrypoints {
   // ─── CRUD demos ─────────────────────────────────────────────────────────
 
   /**
-   * demoCreate — saves 5 DemoCar records to the sheet.
-   * Run this first to populate the table.
+   * demoCreate — saves 5 DemoCar records to the "DemoCar" sheet.
+   *
+   * Run this function first (from the GAS editor's function selector)
+   * to populate the table.  Each car is created via `new DemoCar()`,
+   * fields are assigned, and `car.save()` persists it to the sheet.
+   * Console output mirrors the code for educational purposes.
    */
   static demoCreate(): void {
     console.log("[demoCreate — START]");
@@ -151,7 +226,14 @@ export class GasEntrypoints {
   }
 
   /**
-   * demoRead — queries the DemoCar table in several ways.
+   * demoRead — demonstrates querying the DemoCar table.
+   *
+   * Shows five query styles:
+   * 1. `DemoCar.find()` — fetch all records.
+   * 2. `DemoCar.where(...)` — filter by make ("Toyota").
+   * 3. `Query.from(DemoCar).where(...).orderBy(...)` — recent cars sorted by price desc.
+   * 4. `Query.from(DemoCar).where(...)` — cheap cars (price < 35 000).
+   * 5. `DemoCar.count()` — total row count.
    */
   static demoRead(): void {
     console.log("[demoRead — START]");
@@ -195,6 +277,11 @@ export class GasEntrypoints {
 
   /**
    * demoUpdate — finds each Toyota and raises its price by 5 %.
+   *
+   * Demonstrates three update patterns:
+   * 1. Filter Toyotas → mutate price & colour → save each.
+   * 2. Filter BMWs → bump year, discount price, change colour → save each.
+   * 3. Fetch all → append "(updated)" to model name → save each.
    */
   static demoUpdate(): void {
     console.log("[demoUpdate — START]");
@@ -274,6 +361,10 @@ export class GasEntrypoints {
 
   /**
    * demoDelete — removes all Honda and Ford records from the sheet.
+   *
+   * Uses `Query.from(DemoCar).where(...).or(...)` to select multiple
+   * makes, then iterates and calls `car.delete()` on each.
+   * Before/after row counts are printed for verification.
    */
   static demoDelete(): void {
     console.log("[demoDelete — START]");
