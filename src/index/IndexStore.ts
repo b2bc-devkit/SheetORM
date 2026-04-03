@@ -5,7 +5,7 @@
  * search operations.  Each Record class with `@Indexed` fields gets a
  * single index sheet named `idx_{ClassName}s` (e.g. `idx_Cars`).
  *
- * **Sheet layout** (3-column, no header row since J1 optimisation):
+ * **Sheet layout** (3-column, no header row):
  * ```
  *   Col A (field)    Col B (value)    Col C (entityId)
  *   "brand"          "Toyota"         "abc-123"
@@ -180,7 +180,7 @@ export class IndexStore {
         this.indexRowCount.set(indexTableName, data.length);
         this.invalidateSearchCacheForTable(indexTableName);
       } else {
-        // No-cache path (B5): use known row count to avoid getAllData()
+        // No-cache path: use known row count to avoid getAllData()
         const knownCount = this.indexRowCount.get(indexTableName);
         if (knownCount !== undefined) {
           sheet.writeRowsAt(knownCount, rows);
@@ -229,10 +229,9 @@ export class IndexStore {
    * Create or recognise the combined index sheet for a Record class.
    *
    * - If the sheet does **not** exist: creates it via `insertSheet()` and
-   *   skips the header row (J1 optimisation — saves ~700 ms).
+   *   skips the header row (no header row needed in index sheets).
    * - If the sheet **already** exists: seeds `indexRowCount` with a single
-   *   `getLastRow()` call (C1 optimisation) so subsequent writes can append
-   *   without reading all data.
+   *   `getLastRow()` call so subsequent writes can append without reading all data.
    *
    * The caller can pass a pre-loaded sheet reference or `null` (confirmed
    * non-existent) to avoid a redundant `getSheetByName()` lookup.
@@ -248,7 +247,7 @@ export class IndexStore {
     const existing =
       preloadedSheet !== undefined ? preloadedSheet : this.adapter.getSheetByName(indexTableName);
     if (!existing) {
-      // Create new index sheet — J1: skip setHeaders() (column positions are hard-coded)
+      // Create new index sheet — no header row needed (column positions are hard-coded)
       const sheet = this.adapter.insertSheet(indexTableName);
       this.indexSheetCache.set(indexTableName, sheet);
       this.indexRowCount.set(indexTableName, 0); // Brand new sheet has 0 data rows
@@ -256,7 +255,7 @@ export class IndexStore {
         `[Index] createCombinedIndex "${indexTableName}" → insertSheet (J1 no-header) rowCount=0`,
       );
     } else {
-      // Sheet already exists — C1: seed row count with one getLastRow() call
+      // Sheet already exists — seed row count with one getLastRow() call
       this.indexSheetCache.set(indexTableName, existing);
       const rowCount = existing.getRowCount();
       this.indexRowCount.set(indexTableName, rowCount);
@@ -318,7 +317,7 @@ export class IndexStore {
       this.indexRowCount.set(indexTableName, data.length);
       this.searchIndexCache.delete(`${this.registryKey(indexTableName, field)}`);
     } else {
-      // No-cache path: use known row count (B5) or fall back to appendRow
+      // No-cache path: use known row count or fall back to appendRow
       const knownCount = this.indexRowCount.get(indexTableName);
       if (knownCount !== undefined) {
         sheet.writeRowsAt(knownCount, [newRow]);
@@ -415,7 +414,7 @@ export class IndexStore {
       if (this.cache) {
         // Cache-enabled path: tries three strategies in order of cheapness:
         //   1. Cache HIT   → use cached array length as append offset
-        //   2. C1 row count → previously seeded by createCombinedIndex
+        //   2. Seeded row count → previously seeded by createCombinedIndex
         //   3. Fallback     → full getAllData() read
         const sheet = this.getIndexSheet(indexTableName);
         if (!sheet) return;
@@ -1058,10 +1057,9 @@ export class IndexStore {
    * save cycle.  The cache is invalidated via {@link clearCache} after any
    * write operation.
    *
-   * **B6 optimisation**: when `indexRowCount` records 0 rows for the table
-   * (e.g. immediately after {@link createCombinedIndex}), the method skips
-   * the `getAllData()` call entirely and returns an empty array, saving
-   * ~300 ms per call in Google Apps Script.
+   * When `indexRowCount` records 0 rows for the table (e.g. immediately after
+   * {@link createCombinedIndex}), the method skips the `getAllData()` call
+   * entirely and returns an empty array.
    *
    * @param indexTableName - Combined index sheet name.
    * @returns 2-D array of raw row data (`[field, value, entityId]` per row).
@@ -1076,7 +1074,7 @@ export class IndexStore {
         SheetOrmLogger.log(`[Index:${indexTableName}] getCombinedData cache HIT — ${cached.length} rows`);
         return cached;
       }
-      // B6: sheet is known-empty (just created via createCombinedIndex) — seed cache directly,
+      // Sheet is known-empty (just created via createCombinedIndex) — seed cache directly,
       // skip the getAllData() API call that would wastefully read 0 rows from GAS.
       if (this.indexRowCount.get(indexTableName) === 0) {
         const empty: unknown[][] = [];
@@ -1095,7 +1093,7 @@ export class IndexStore {
       return data;
     }
     // --- No-cache path ---
-    // B6: skip getAllData() when table is known-empty
+    // Skip getAllData() when table is known-empty
     if (this.indexRowCount.get(indexTableName) === 0) {
       SheetOrmLogger.log(`[Index:${indexTableName}] getCombinedData (no cache) — empty (skip getAllData)`);
       return [];

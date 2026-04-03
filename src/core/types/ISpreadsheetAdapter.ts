@@ -29,9 +29,8 @@ export interface ISpreadsheetAdapter {
   getSheetNames(): string[];
 
   /**
-   * H3 optimisation: Return all existing sheets as a name → adapter map
-   * in a single API call. Used at startup to avoid one getSheetByName()
-   * round-trip per table / index sheet.
+   * Return all existing sheets as a name → adapter map in a single API call.
+   * Used at startup to avoid one getSheetByName() round-trip per table / index sheet.
    */
   getSheets(): Map<string, ISheetAdapter>;
 

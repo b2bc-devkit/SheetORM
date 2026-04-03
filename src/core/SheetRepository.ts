@@ -88,7 +88,7 @@ export class SheetRepository<T extends Entity> {
   private sheetCache: ISheetAdapter | null = null;
   /** Memoized set of indexed field names — avoids repeated getIndexedFields() array allocations in find(). */
   private indexedFieldNames: Set<string>;
-  /** L1: true when headers haven't been written to the sheet yet (new sheet from ensureTable). */
+  /** True when headers haven't been written to the sheet yet (new sheet from ensureTable). */
   private headersDeferred: boolean;
 
   /**
@@ -99,9 +99,9 @@ export class SheetRepository<T extends Entity> {
    * @param indexStore      - Shared IndexStore for secondary indexes.
    * @param cache           - Optional cache provider for in-memory row caching.
    * @param hooks           - Optional lifecycle hooks (onValidate, beforeSave, afterSave, beforeDelete, afterDelete).
-   * @param initialSheet    - Pre-resolved sheet adapter (B7 optimisation).
-   * @param initialRowCount - Pre-fetched row count (B5 optimisation).
-   * @param headersDeferred - True if the sheet was just created and headers still need writing (L1).
+   * @param initialSheet    - Pre-resolved sheet adapter (avoids redundant getSheetByName call).
+   * @param initialRowCount - Pre-fetched row count (avoids redundant getLastRow call).
+   * @param headersDeferred - True if the sheet was just created and headers still need writing.
    */
   constructor(
     adapter: ISpreadsheetAdapter,
@@ -119,7 +119,7 @@ export class SheetRepository<T extends Entity> {
     this.cache = cache ?? null;
     this.hooks = hooks ?? {};
 
-    // Seed memoised sheet & row count when provided by Registry (B5 / B7)
+    // Seed memoised sheet & row count when provided by Registry
     this.sheetCache = initialSheet ?? null;
     this.physicalRowCount = initialRowCount ?? null;
 
@@ -144,7 +144,7 @@ export class SheetRepository<T extends Entity> {
     // Pre-build indexed-field name set once — avoids getIndexedFields() array alloc on every find()
     this.indexedFieldNames = new Set(schema.indexes.map((idx) => idx.field));
 
-    // L1: defer header write to first data flush — saves one GAS API call per new sheet
+    // Defer header write to first data flush — saves one GAS API call per new sheet
     this.headersDeferred = headersDeferred ?? false;
 
     SheetOrmLogger.log(
@@ -305,7 +305,7 @@ export class SheetRepository<T extends Entity> {
       const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
 
       // Compute the 0-based data row index for writing.
-      // In batch mode (saveAll), batchBaseRowCount was captured once at start (K1).
+      // In batch mode (saveAll), batchBaseRowCount was captured once at batch start.
       // Otherwise reuse physicalRowCount to avoid getLastRow() API calls.
       const baseCount =
         this.batchBaseRowCount !== null
@@ -334,7 +334,7 @@ export class SheetRepository<T extends Entity> {
       if (this.entityBatch !== null) {
         this.entityBatch.push({ entity, row, dataIndex, mode: "create" });
       } else {
-        // L1: write headers + first data row in a single API call for newly-created sheets
+        // Write headers + first data row in a single API call for newly-created sheets
         if (this.headersDeferred) {
           sheet.writeAllRowsWithHeaders(this.headers, [row]);
           this.headersDeferred = false;
@@ -415,7 +415,7 @@ export class SheetRepository<T extends Entity> {
     this.entityBatch = [];
     this.batchSheet = sheet;
 
-    // K1: reuse physicalRowCount when available — avoids a getLastRow() API call (~700 ms)
+    // Reuse physicalRowCount when available — avoids a getLastRow() API call (~700 ms)
     // when the row count is already known in-session (e.g. new table seeded to 0).
     this.batchBaseRowCount = this.physicalRowCount !== null ? this.physicalRowCount : sheet.getRowCount();
 
@@ -819,8 +819,8 @@ export class SheetRepository<T extends Entity> {
   /**
    * Commit all buffered operations from {@link beginBatch}.
    *
-   * L2 optimisation: if the buffer contains only deletes, a bulk rewrite
-   * (replaceAllData) is used instead of N individual deleteRow() calls.
+   * If the buffer contains only deletes, a bulk rewrite (replaceAllData) is
+   * used instead of N individual deleteRow() calls.
    */
   commitBatch(): void {
     if (!this.batchBuffer) return;
@@ -828,7 +828,7 @@ export class SheetRepository<T extends Entity> {
     this.batchBuffer = null;
 
     try {
-      // L2: optimize delete-only batches (common for deleteAll() in batch mode)
+      // Optimize delete-only batches (common for deleteAll() in batch mode)
       // by applying one bulk rewrite instead of N × deleteRow() API calls.
       if (buffer.length > 0 && buffer.every((op) => op.type === "delete")) {
         this.commitDeleteBatch(buffer.map((op) => op.data as string));
@@ -1089,7 +1089,7 @@ export class SheetRepository<T extends Entity> {
     );
     // Sort by dataIndex for contiguous writes
     const sorted = [...batch].sort((a, b) => a.dataIndex - b.dataIndex);
-    // L1: write header row + data rows in a single API call for newly-created sheets
+    // Write header row + data rows in a single API call for newly-created sheets
     if (this.headersDeferred) {
       sheet.writeAllRowsWithHeaders(
         this.headers,

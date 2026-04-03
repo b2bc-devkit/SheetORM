@@ -254,11 +254,10 @@ export class GoogleSheetAdapter implements ISheetAdapter {
   }
 
   /**
-   * L1 optimisation: Write the header row and all data rows in a single
-   * setValues() API call.  Row 1 = headers, row 2+ = data.
+   * Write the header row and all data rows in a single setValues() API call.
+   * Row 1 = headers, row 2+ = data.
    *
-   * Used for newly-created sheets to avoid a separate setHeaders() round-trip
-   * (~700 ms saved per new table at first save).
+   * Used for newly-created sheets to avoid a separate setHeaders() round-trip.
    */
   writeAllRowsWithHeaders(headers: string[], rows: unknown[][]): void {
     const numCols = headers.length;

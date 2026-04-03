@@ -58,9 +58,8 @@ export interface ISheetAdapter {
   flush(): void;
 
   /**
-   * L1 optimisation: Write the header row and all data rows in a single
-   * setValues() API call. Used for newly-created sheets to avoid a separate
-   * setHeaders() round-trip (~700 ms saved per new table).
+   * Write the header row and all data rows in a single setValues() API call.
+   * Used for newly-created sheets to avoid a separate setHeaders() round-trip.
    */
   writeAllRowsWithHeaders(headers: string[], rows: unknown[][]): void;
 }

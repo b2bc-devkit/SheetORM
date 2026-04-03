@@ -126,9 +126,8 @@ export class Registry {
     SheetOrmLogger.log(
       `[Registry] ensureTable "${schema.tableName}" → ${created ? "insertSheet (G4 new)" : "existing sheet"}`,
     );
-    // L1 optimisation: headers for newly-created sheets are deferred —
-    // they will be written together with the first data flush in
-    // SheetRepository, saving one GAS API call (~700 ms).
+    // Headers for newly-created sheets are deferred — they will be written
+    // together with the first data flush in SheetRepository, saving one GAS API call.
     if (!created) {
       // Nothing to do — existing sheet already has headers from a prior execution.
     }
@@ -196,7 +195,7 @@ export class Registry {
     const indexes = Decorators.getIndexes(ctor);
     const schema: TableSchema = {
       tableName,
-      // K2: only populate indexTableName when the class has @Indexed fields.
+      // Only populate indexTableName when the class has @Indexed fields.
       // Record.indexTableName always returns a string (e.g. "idx_Cars"), but for classes
       // without indexes this causes every update/delete to call getSheetByName() on a
       // non-existent index sheet, wasting ~700 ms per API call.
@@ -208,10 +207,10 @@ export class Registry {
     // Create the sheet tab (or get existing) and register indexes
     const { sheet, created } = this.ensureTable(schema, indexStore);
 
-    // Construct the repository with performance optimisation flags:
-    // - sheet:    pre-resolved ISheetAdapter (B7 cache seed)
-    // - created ? 0 : undefined:  B5 known row count (0 for new sheets)
-    // - created:  L1 defer header write to first data flush
+    // Construct the repository with pre-resolved sheet and row-count hints:
+    // - sheet:                 pre-resolved ISheetAdapter (avoids getSheetByName call)
+    // - created ? 0 : undefined:  known row count (0 for new sheets, avoids getLastRow call)
+    // - created:               defer header write to first data flush
     const repo = new SheetRepository<T>(
       this.getAdapter(),
       schema,
@@ -220,7 +219,7 @@ export class Registry {
       undefined,
       sheet,
       created ? 0 : undefined,
-      created, // L1: defer header write to first data flush
+      created, // defer header write to first data flush
     );
 
     this.repos.set(tableName, repo as unknown as SheetRepository<Entity>);
