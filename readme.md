@@ -1,8 +1,12 @@
 # SheetORM
 
+<img src="assets/logo.png" alt="SheetORM logo" width="100%" />
+
 A TypeScript ORM for Google Sheets running in Google Apps Script (GAS). SheetORM brings a structured,
 type-safe persistence layer to spreadsheet-based applications with an **ActiveRecord** API — define a class,
 extend `Record`, and everything just works.
+
+<img src="assets/demo.gif" alt="SheetORM demo" />
 
 ## Features
 
@@ -207,40 +211,11 @@ Car.groupBy("make");
 
 See [`examples/cars-crud.ts`](examples/cars-crud.ts) for a complete runnable example.
 
-## Publishing (Apps Script & npm)
-
-### Apps Script library
-
-- Prerequisites: `npm run login` (clasp), `appsscript.json` configured for your script, and a Script ID to share.
-- Run `npm run publish:gas` (or VS Code task “Publish: Apps Script library”). It lints, tests, builds, pushes via `clasp push -f`, creates a new version with `GAS_VERSION_MESSAGE` (default: “SheetORM Apps Script release”), and, if `GAS_DEPLOYMENT_ID` is set, deploys with that description.
-- In the Apps Script editor, add the library by Script ID. Use `GasEntrypoints.Record`, `GasEntrypoints.Query`, and `GasEntrypoints.Decorators` in your GAS project; callable menu functions stay limited to `runTests`, `validateTests`, and `runBenchmark`.
-
-### npm package
-
-- Build distributable JS + type definitions with `npm run build:npm` (emits to `dist/npm`).
-- Vite stays dedicated to the GAS bundle; the npm build is plain TypeScript output so consumers can use their own bundler.
-- Publish with `node scripts/publish-npm.mjs` (or VS Code task “Publish: npm package”); set `NPM_TAG` to publish under a dist-tag if needed. The script runs lint, tests, build, then `npm publish --access public`.
-- Import via the bundled aggregator:
-
-```ts
-import { SheetOrm } from "sheetorm";
-
-const { Record, Query, Decorators } = SheetOrm;
-```
-
-- Or import individual surfaces directly: `import { Record } from "sheetorm/core/Record";`, `import { Query } from "sheetorm/query/Query";`, `import { Decorators } from "sheetorm/core/Decorators";`.
-
-### VS Code tasks
-
-Two tasks are available in `.vscode/tasks.json`:
-
-- `Publish: Apps Script library` → runs `npm run publish:gas`
-- `Publish: npm package` → runs `npm run publish:npm`
-
 ## Architecture
 
 ```
 src/
+  core/Decorators.ts      — @Field, @Indexed, @Required property decorators
   core/Record.ts          — ActiveRecord base class (primary API); tableName = tbl_{Name}s, indexTableName = idx_{Name}s
   core/RecordConstructor.ts — Constructor contract for Record subclasses
   core/RecordStatic.ts    — Registry-facing static Record contract
@@ -269,11 +244,10 @@ src/
   index/IndexStore.ts     — Secondary index management
   storage/GoogleSheetAdapter.ts — Native GAS sheet wrapper
   storage/GoogleSpreadsheetAdapter.ts — Native GAS spreadsheet wrapper
-  storage/SheetsAPIv4SheetAdapter.ts — Buffered Sheets API v4 sheet wrapper
-  storage/SheetsAPIv4SpreadsheetAdapter.ts — Buffered Sheets API v4 spreadsheet wrapper
   core/cache/MemoryCache.ts — In-memory cache implementation
   utils/Uuid.ts           — UUID v4 generation (GAS / fallback)
   utils/Serialization.ts  — Row ↔ Entity conversion
+  utils/SheetOrmLogger.ts — Verbose logger for API-call tracing
   testing/ParityCatalog.ts  — Canonical Jest ↔ runtime test case list
   testing/RuntimeParity.ts  — GAS runtime parity suite
   testing/RuntimeBenchmark.ts — GAS runtime benchmark (Cars + Workers, 1 000 records)
@@ -282,18 +256,6 @@ src/
 examples/
   cars-crud.ts            — Full ActiveRecord example
 ```
-
-## Code Organization Rules
-
-Repository conventions are intentionally strict:
-
-- one exported class / interface / type / enum per file
-- no barrel files and no multi-export "grab bag" modules
-- exported free functions are not allowed; behavior should live on classes as static methods
-- filenames must match the exported artifact name (for example `Record.ts`, `QueryOptions.ts`, `SystemColumns.ts`)
-- internal helpers may stay private to a file, but the file's public surface must stay singular and obvious
-
-When adding new files, follow these rules first and treat them as part of the repository contract.
 
 ## API Reference
 
@@ -419,19 +381,21 @@ const ids = indexStore.searchCombined("idx_Cars", "model", "320i");
 npm test
 ```
 
-Runs **128 unit and benchmark tests** across 9 test suites using Jest + ts-jest with in-memory mock adapters:
+Runs **333 unit and benchmark tests** across 11 test suites using Jest + ts-jest with in-memory mock adapters:
 
 | Suite                      | Tests | Description                                  |
 | -------------------------- | ----- | -------------------------------------------- |
-| `record.test.ts`           | 34    | ActiveRecord API (save, find, query, Query)  |
-| `query-engine.test.ts`     | 21    | Filter, sort, paginate, group                |
-| `serialization.test.ts`    | 14    | Row ↔ Entity conversion                      |
-| `query.test.ts`            | 11    | Fluent query API                             |
-| `index-store.test.ts`      | 11    | Secondary index CRUD                         |
-| `cache.test.ts`            | 8     | MemoryCache TTL behavior                     |
-| `uuid.test.ts`             | 2     | UUID generation                              |
+| `record.test.ts`           | 74    | ActiveRecord API (save, find, query, Query)  |
+| `query-engine.test.ts`     | 60    | Filter, sort, paginate, group                |
+| `serialization.test.ts`    | 47    | Row ↔ Entity conversion                      |
+| `index-store.test.ts`      | 44    | Secondary index CRUD                         |
+| `query.test.ts`            | 41    | Fluent query API                             |
+| `sheet-repository.test.ts` | 35    | SheetRepository CRUD, batch, hooks           |
+| `cache.test.ts`            | 16    | MemoryCache TTL behavior                     |
+| `benchmark.test.ts`        | 6     | 1 000-record perf benchmark: Cars vs Workers |
+| `uuid.test.ts`             | 5     | UUID generation                              |
 | `parity-validator.test.ts` | 3     | Jest ↔ GAS runtime parity check              |
-| `benchmark.test.ts`        | 4     | 1 000-record perf benchmark: Cars vs Workers |
+| `sheetorm.test.ts`         | 2     | npm entry point smoke tests                  |
 
 ### Benchmark Tests (`benchmark.test.ts`)
 
@@ -482,7 +446,7 @@ npm test
 
 Run in Google Apps Script (real Sheets API):
 
-- `runTests()` — executes full runtime parity suite against the active spreadsheet
+- `runTestsStageOne()` / `runTestsStageTwo()` / `runTestsStageThree()` — staged runtime parity suite
 - `validateTests()` — validates mapping only (fast drift check)
 
 ### GAS Runtime Benchmark
@@ -497,25 +461,21 @@ Run in Google Apps Script (real Sheets API):
 
 ## Exposed GAS Functions
 
-Only three callable functions are surfaced as GAS globals (visible in the Apps Script editor Run menu and
+The following callable functions are surfaced as GAS globals (visible in the Apps Script editor Run menu and
 callable as triggers). Everything else is an internal implementation detail bundled into `Code.js`.
 
-| Function        | Signature                | Purpose                                                                                                                                                                                                           | When to use                                                                                                                |
-| --------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `runTests`      | `runTests(): void`       | Executes the full runtime parity suite (all ~146 test cases) against the active Google Spreadsheet. Logs per-test PASS/FAIL to `Logger` and cleans up all temporary sheets after the run.                         | After deploying a new version of SheetORM to GAS to verify the real Sheets API behaves identically to the Jest mock suite. |
-| `validateTests` | `validateTests(): void`  | Checks that every Jest test case has a matching GAS handler (and vice versa). Throws immediately if the two catalogs have drifted — no Sheets API calls made.                                                     | Quick sanity check during development; runs in milliseconds without touching any spreadsheet.                              |
-| `runBenchmark`  | `runBenchmark(): void`   | Runs a write/read/query/delete cycle for Cars (with `@Indexed`) and Workers (without `@Indexed`) using 100 records each. Logs per-operation timings and a comparison summary to `Logger`.                         | Measuring real-world Sheets API performance and understanding the latency trade-off of `@Indexed` versus plain tables.     |
-
-## CI
-
-GitHub Actions workflow at `.github/workflows/ci.yml`:
-
-1. TypeScript type-check (`tsc --noEmit`)
-2. Unit tests (`npm test`)
-3. Production build (`npm run build`)
-4. Verify `Code.js` output exists
-
-Matrix: Node 18, 20, 22.
+| Function               | Purpose                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------ |
+| `runTestsStageOne()`   | Stage-one parity tests (basic CRUD + query) against the active spreadsheet.                      |
+| `runTestsStageTwo()`   | Stage-two parity tests (indexes + search).                                                       |
+| `runTestsStageThree()` | Stage-three parity tests (advanced queries + pagination).                                        |
+| `validateTests()`      | Checks Jest ↔ GAS handler mapping parity — no Sheets API calls, fails immediately on drift.      |
+| `runBenchmark()`       | Write/read/query/delete cycle for Cars + Workers (100 records each); logs per-operation timings. |
+| `removeAllSheets()`    | Deletes every sheet in the active spreadsheet (destructive — use with caution).                  |
+| `demoCreate()`         | Creates 5 sample DemoCar records in the sheet.                                                   |
+| `demoRead()`           | Reads and logs DemoCar records using find/query/where.                                           |
+| `demoUpdate()`         | Updates existing DemoCar records and logs changes.                                               |
+| `demoDelete()`         | Deletes DemoCar records and verifies removal.                                                    |
 
 ## Available Scripts
 
@@ -526,8 +486,6 @@ Matrix: Node 18, 20, 22.
 | `npm run lint`   | Lint with ESLint                             |
 | `npm run format` | Format with Prettier                         |
 | `npm run login`  | Authenticate with Google Apps Script (once)  |
-| `npm run push`   | Build + push to GAS                          |
-| `npm run deploy` | Build + push + create versioned deployment   |
 
 ## Sheet Layout
 
@@ -543,18 +501,22 @@ Special sheets:
 
 ## Storage Adapters
 
-SheetORM separates sheet I/O behind two interfaces defined in `src/core/types/ISheetAdapter.ts` and `src/core/types/ISpreadsheetAdapter.ts`:
+SheetORM separates sheet I/O behind two interfaces defined in `src/core/types/ISheetAdapter.ts` and
+`src/core/types/ISpreadsheetAdapter.ts`:
 
-- **`ISpreadsheetAdapter`** — spreadsheet-level operations: `getSheetByName`, `createSheet`, `deleteSheet`, `getSheetNames`
-- **`ISheetAdapter`** — sheet-level operations: read (`getAllData`, `getHeaders`, `getRow`, …), write (`appendRows`, `writeRowsAt`, `updateRow`, …), `clear`, `flush`
+- **`ISpreadsheetAdapter`** — spreadsheet-level operations: `getSheetByName`, `createSheet`, `deleteSheet`,
+  `getSheetNames`
+- **`ISheetAdapter`** — sheet-level operations: read (`getAllData`, `getHeaders`, `getRow`, …), write
+  (`appendRows`, `writeRowsAt`, `updateRow`, …), `clear`, `flush`
 
-Two production adapters are provided. Both implement the full interface; they differ only in how write calls reach Google Sheets.
+One production adapter pair is provided:
 
 ### `GoogleSpreadsheetAdapter` / `GoogleSheetAdapter`
 
 **Location**: `src/storage/GoogleSpreadsheetAdapter.ts`, `src/storage/GoogleSheetAdapter.ts`
 
-Uses the native GAS `SpreadsheetApp` / `Sheet` objects directly. This is the default adapter — no configuration required.
+Uses the native GAS `SpreadsheetApp` / `Sheet` objects directly. This is the default adapter — no
+configuration required.
 
 ```ts
 import { GoogleSpreadsheetAdapter } from "./src/storage/GoogleSpreadsheetAdapter";
@@ -569,93 +531,29 @@ Registry.getInstance().configure({
 });
 ```
 
-| Property             | Value                                                              |
-| -------------------- | ------------------------------------------------------------------ |
-| Write mechanism      | `Range.setValues()` — GAS native API                               |
-| Calls per `saveAll`  | **2** — one `setValues` for entity sheet + one for index sheet     |
-| Flush required       | No — writes are synchronous and immediately visible                |
-| Quota impact         | Counts against SpreadsheetApp call budget (no daily UrlFetch quota)|
-| Read operations      | Native `Range.getValues()`                                         |
-| GAS V8 latency       | ~300–500 ms per `setValues` call on large ranges                   |
-| Best for             | All production use; default choice                                 |
-
-### `SheetsAPIv4SpreadsheetAdapter` / `SheetsAPIv4SheetAdapter`
-
-**Location**: `src/storage/SheetsAPIv4SpreadsheetAdapter.ts`, `src/storage/SheetsAPIv4SheetAdapter.ts`
-
-Buffers all write operations (`writeRowsAt`, `appendRows`) in memory as A1-notation `ValueRange` objects and sends them all in a **single HTTP `spreadsheets.values.batchUpdate` request** when `flushAllPending()` is called. Read operations still use the native GAS API (the ORM reads from in-memory cache after `saveAll`, so extra sheet reads are rare).
-
-```ts
-import { SheetsAPIv4SpreadsheetAdapter } from "./src/storage/SheetsAPIv4SpreadsheetAdapter";
-import { Registry } from "./src/core/Registry";
-
-const v4 = new SheetsAPIv4SpreadsheetAdapter(); // uses active spreadsheet
-Registry.getInstance().configure({ adapter: v4 });
-
-MyRecord.saveAll(items);     // buffers entity rows + index rows in memory
-v4.flushAllPending();        // ONE HTTP batchUpdate — both sheets at once
-```
-
-| Property             | Value                                                                      |
-| -------------------- | -------------------------------------------------------------------------- |
-| Write mechanism      | `UrlFetchApp.fetch()` → Sheets REST API v4 `values:batchUpdate`            |
-| Calls per `saveAll`  | **1** — entity sheet + index sheet rows combined in one HTTP request       |
-| Flush required       | **Yes** — call `v4.flushAllPending()` after each `saveAll` (or batch)      |
-| Auth                 | `ScriptApp.getOAuthToken()` — reuses the existing `spreadsheets` scope     |
-| Quota impact         | `UrlFetchApp` quota: 20 000 calls/day per script                           |
-| Read operations      | Native `Range.getValues()` — unchanged                                     |
-| GAS V8 latency       | 1 HTTP round-trip instead of N `setValues()` calls                         |
-| Best for             | Benchmarking / high-volume batch imports where minimising API calls matters |
-
-**Required OAuth scopes** (already set in `appsscript.json`):
-
-```json
-"oauthScopes": [
-  "https://www.googleapis.com/auth/spreadsheets",
-  "https://www.googleapis.com/auth/script.external_request"
-]
-```
-
-### Adapter comparison
-
-| Criterion                   | `GoogleSpreadsheetAdapter` | `SheetsAPIv4SpreadsheetAdapter` |
-| --------------------------- | :------------------------: | :-----------------------------: |
-| Setup complexity            | None                       | Requires `flushAllPending()` call |
-| Write batching              | 2 calls per `saveAll`      | 1 HTTP call per flush           |
-| Flush step needed           | No                         | Yes                             |
-| UrlFetch daily quota used   | No                         | Yes (1 per flush)               |
-| Works without internet auth | Yes (native GAS)           | No (needs `UrlFetchApp`)        |
-| In-band error visibility    | Immediate on write         | Deferred to flush               |
-| Recommended default         | ✅ Yes                     | Only for bulk-write optimisation |
-
-The `GoogleSpreadsheetAdapter` is the default and recommended choice for all production use. The `SheetsAPIv4SpreadsheetAdapter` is provided as an opt-in for scenarios where reducing the number of GAS API calls is the primary concern (e.g. large batch imports exceeding GAS execution-time limits).
+| Property            | Value                                                               |
+| ------------------- | ------------------------------------------------------------------- |
+| Write mechanism     | `Range.setValues()` — GAS native API                                |
+| Calls per `saveAll` | **2** — one `setValues` for entity sheet + one for index sheet      |
+| Flush required      | No — writes are synchronous and immediately visible                 |
+| Quota impact        | Counts against SpreadsheetApp call budget (no daily UrlFetch quota) |
+| Read operations     | Native `Range.getValues()`                                          |
+| GAS V8 latency      | ~300–500 ms per `setValues` call on large ranges                    |
+| Best for            | All production use; default choice                                  |
 
 ## Development Notes
 
 ### Exposing Functions to GAS
 
-`src/index.ts` now exports a single `GasEntrypoints` class. During bundling, the Vite GAS plugin maps its
-static methods to GAS globals (`runTests`, `validateTests`, `runBenchmark`) and also emits matching stub
-functions so that Apps Script still shows them in the Run menu.
+`src/index.ts` exports a single `GasEntrypoints` class. During bundling, the Vite GAS plugin maps its static
+methods to GAS globals and emits matching stub functions so that Apps Script shows them in the Run menu.
 
-```ts
-export class GasEntrypoints {
-  static runTests(): void {
-    RuntimeParity.run();
-  }
+GAS-callable methods include staged test runners (`runTestsStageOne`/`Two`/`Three`), `validateTests`,
+`runBenchmark`, `removeAllSheets`, and four CRUD demos (`demoCreate`, `demoRead`, `demoUpdate`, `demoDelete`).
+The class also exposes core API classes (`Record`, `Query`, `Decorators`, `IndexStore`, `Registry`,
+`SheetOrmLogger`) as static readonly fields for use inside GAS scripts.
 
-  static validateTests(): void {
-    RuntimeParity.validate();
-  }
-
-  static runBenchmark(): void {
-    RuntimeBenchmark.run();
-  }
-}
-```
-
-This keeps the source aligned with the repository rule of one public export per file while preserving the same
-three callable GAS entrypoints.
+This keeps the source aligned with the repository rule of one public export per file.
 
 ### Circular Dependencies
 
@@ -669,4 +567,4 @@ included in this template):
 
 ## License
 
-GPL-2.0 — see [license.md](license.md).
+GPL-3.0-or-later — see [license.md](license.md).
