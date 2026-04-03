@@ -1,5 +1,5 @@
 {
-  "name": "sheetorm",
+  "name": "@b2bc-devkit/sheetorm",
   "version": "1.0",
   "description": "TypeScript ORM for Google Sheets (Google Apps Script runtime)",
   "type": "module",
