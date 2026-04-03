@@ -1,6 +1,8 @@
 # SheetORM
 
-<img src="assets/logo.png" alt="SheetORM logo" width="100%" />
+<p>
+  <img src="assets/logo.png" alt="SheetORM logo" width="100%" />
+</p>
 
 A TypeScript ORM for Google Sheets running in Google Apps Script (GAS). SheetORM brings a structured,
 type-safe persistence layer to spreadsheet-based applications with an **ActiveRecord** API — define a class,

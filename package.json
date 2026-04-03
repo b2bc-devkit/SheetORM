@@ -49,6 +49,14 @@
     },
     "./package.json": "./package.json"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/b2bc-devkit/SheetORM.git"
+  },
+  "homepage": "https://github.com/b2bc-devkit/SheetORM#readme",
+  "bugs": {
+    "url": "https://github.com/b2bc-devkit/SheetORM/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
