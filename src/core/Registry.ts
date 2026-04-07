@@ -22,6 +22,7 @@ import { MemoryCache } from "./cache/MemoryCache.js";
 import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js";
 import { Decorators } from "./Decorators.js";
 import type { RecordStatic } from "./RecordStatic.js";
+import { SystemColumns } from "./types/SystemColumns.js";
 import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
 
 /**
@@ -126,10 +127,26 @@ export class Registry {
     SheetOrmLogger.log(
       `[Registry] ensureTable "${schema.tableName}" → ${created ? "insertSheet (G4 new)" : "existing sheet"}`,
     );
-    // Headers for newly-created sheets are deferred — they will be written
-    // together with the first data flush in SheetRepository, saving one GAS API call.
-    if (!created) {
-      // Nothing to do — existing sheet already has headers from a prior execution.
+    // Always ensure headers are present on the sheet.
+    // Previously headers for new sheets were deferred to the first data write
+    // (L1 optimisation), but this caused a bug: if a read-only operation
+    // (e.g. findOne) triggered ensureTable, the GAS execution could end
+    // before any write flushed the deferred headers, leaving the sheet
+    // without headers for all subsequent executions.
+    const expectedHeaders = [
+      SystemColumns.ID,
+      SystemColumns.CREATED_AT,
+      SystemColumns.UPDATED_AT,
+      ...schema.fields.map((f) => f.name),
+    ];
+    const existingHeaders = sheet.getHeaders();
+    const hasValidHeaders =
+      existingHeaders.length > 0 && existingHeaders.some((h) => h !== "");
+    if (!hasValidHeaders) {
+      sheet.setHeaders(expectedHeaders);
+      SheetOrmLogger.log(
+        `[Registry] ensureTable "${schema.tableName}" → wrote ${expectedHeaders.length} headers`,
+      );
     }
 
     // If no indexes are defined, skip index table creation
@@ -219,7 +236,7 @@ export class Registry {
       undefined,
       sheet,
       created ? 0 : undefined,
-      created, // defer header write to first data flush
+      false, // headers are always written eagerly in ensureTable
     );
 
     this.repos.set(tableName, repo as unknown as SheetRepository<Entity>);
