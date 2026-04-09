@@ -68,7 +68,7 @@
     "@babel/plugin-transform-numeric-separator": "^7.28.6",
     "@babel/plugin-transform-optional-chaining": "^7.28.6",
     "@google/clasp": "^3.3.0",
-    "@rollup/plugin-babel": "^6.1.0",
+    "@rollup/plugin-babel": "^7.0.0",
     "@types/google-apps-script": "^2.0.8",
     "@types/jest": "^30.0.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
@@ -80,7 +80,7 @@
     "prettier": "^3.8.1",
     "terser": "^5.44.1",
     "ts-jest": "^29.4.6",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "typescript": "^6.0.2",
+    "vite": "^8.0.8"
   }
 }
