@@ -25,7 +25,9 @@
     "experimentalDecorators": true
   },
   // Directories included for type-checking.
-  "include": ["src", "examples", "tests"],
+  // Tests are excluded here because this config sets types: ["google-apps-script"],
+  // which does not include Jest globals. Tests are type-checked via tsconfig.test.json.
+  "include": ["src", "examples"],
   // Explicit entry point for the GAS bundle.
   "files": ["src/index.ts"]
 }
