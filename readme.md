@@ -567,6 +567,11 @@ included in this template):
 1. Install `madge` globally with `npm i --global madge`.
 2. Check for circular dependencies with `madge src/index.ts --circular`.
 
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md). Do not open a public GitHub issue for security
+issues — use GitHub's private Security Advisories instead.
+
 ## License
 
 GPL-3.0-or-later — see [license.md](license.md).
