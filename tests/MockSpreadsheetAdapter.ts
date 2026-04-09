@@ -4,6 +4,7 @@ import { MockSheetAdapter } from "./MockSheetAdapter";
 
 export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
   private sheets = new Map<string, MockSheetAdapter>();
+  private protections = new Map<string, string[]>();
 
   getSheetByName(name: string): ISheetAdapter | null {
     return this.sheets.get(name) ?? null;
@@ -37,9 +38,22 @@ export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
 
   removeAllSheets(): void {
     this.sheets.clear();
+    this.protections.clear();
+  }
+
+  protectSheet(name: string, editors: string[]): void {
+    this.protections.set(name, [...editors]);
   }
 
   _getSheet(name: string): MockSheetAdapter | undefined {
     return this.sheets.get(name);
+  }
+
+  _getProtection(name: string): string[] | undefined {
+    return this.protections.get(name);
+  }
+
+  _clearProtections(): void {
+    this.protections.clear();
   }
 }

@@ -108,4 +108,24 @@ export class GoogleSpreadsheetAdapter implements ISpreadsheetAdapter {
     keeper.clear();
     keeper.setName("Sheet1");
   }
+
+  /**
+   * Protect a sheet tab and restrict editing to the given email addresses.
+   *
+   * Uses the GAS `Protection` API to add a sheet-level protection.
+   * Existing editors (except the owner) are removed, and only the
+   * specified `editors` are granted edit access.
+   *
+   * No-op if the sheet does not exist.
+   */
+  protectSheet(name: string, editors: string[]): void {
+    const sheet = this.spreadsheet.getSheetByName(name);
+    if (!sheet) return;
+    SheetOrmLogger.log(`[Spreadsheet] protectSheet("${name}") → editors: [${editors.join(", ")}]`);
+    const protection = sheet.protect().setDescription("Protected by SheetORM");
+    protection.removeEditors(protection.getEditors());
+    if (editors.length > 0) {
+      protection.addEditors(editors);
+    }
+  }
 }

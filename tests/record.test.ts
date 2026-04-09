@@ -1202,4 +1202,85 @@ describe("Record ActiveRecord API", () => {
       expect(results.map((c) => c.model).sort()).toEqual(["Supra", "X1"]);
     });
   });
+
+  describe("sheet protection", () => {
+    it("protects sheet on first save when isProtected returns true", () => {
+      class ProtectedNote extends Record {
+        body: string;
+        static override isProtected(): boolean {
+          return true;
+        }
+        static override protectedFor(): string[] {
+          return ["alice@example.com", "bob@example.com"];
+        }
+      }
+
+      const note = new ProtectedNote();
+      note.body = "secret";
+      note.save();
+
+      expect(adapter.getSheetNames()).toContain("tbl_ProtectedNotes");
+      const protection = adapter._getProtection("tbl_ProtectedNotes");
+      expect(protection).toBeDefined();
+      expect(protection).toEqual(["alice@example.com", "bob@example.com"]);
+    });
+
+    it("does not protect sheet when isProtected returns false", () => {
+      const car = new Car();
+      car.make = "Toyota";
+      car.model = "Corolla";
+      car.save();
+
+      expect(adapter.getSheetNames()).toContain("tbl_Cars");
+      const protection = adapter._getProtection("tbl_Cars");
+      expect(protection).toBeUndefined();
+    });
+
+    it("does not re-protect sheet on subsequent saves", () => {
+      class TrackedProtected extends Record {
+        value: string;
+        static override isProtected(): boolean {
+          return true;
+        }
+        static override protectedFor(): string[] {
+          return ["admin@example.com"];
+        }
+      }
+
+      const item1 = new TrackedProtected();
+      item1.value = "first";
+      item1.save();
+
+      // Verify protection was applied
+      expect(adapter._getProtection("tbl_TrackedProtecteds")).toEqual(["admin@example.com"]);
+
+      // Clear protections from mock to detect any re-application
+      adapter._clearProtections();
+
+      const item2 = new TrackedProtected();
+      item2.value = "second";
+      item2.save();
+
+      // Protection should NOT be re-applied (sheet already exists)
+      expect(adapter._getProtection("tbl_TrackedProtecteds")).toBeUndefined();
+    });
+
+    it("protects sheet with empty editors list", () => {
+      class LockedSheet extends Record {
+        data: string;
+        static override isProtected(): boolean {
+          return true;
+        }
+        // protectedFor() defaults to [] — no extra editors
+      }
+
+      const item = new LockedSheet();
+      item.data = "locked";
+      item.save();
+
+      const protection = adapter._getProtection("tbl_LockedSheets");
+      expect(protection).toBeDefined();
+      expect(protection).toEqual([]);
+    });
+  });
 });

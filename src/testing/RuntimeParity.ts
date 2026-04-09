@@ -3543,6 +3543,118 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         }
         assertTrue(threw, "save() should throw when indexed schema has no indexTableName");
       },
+      "protects sheet on first save when isProtected returns true": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("prot");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class ProtectedNote extends BaseRecord {
+          static override get tableName() {
+            return `ProtNote_${suffix}`;
+          }
+          static override isProtected(): boolean {
+            return true;
+          }
+          static override protectedFor(): string[] {
+            return ["alice@example.com", "bob@example.com"];
+          }
+          body: string;
+        }
+
+        const note = new ProtectedNote();
+        note.body = "secret";
+        note.save();
+
+        // Verify the sheet was created and protected
+        const spreadsheet = ctx.state.getSpreadsheet();
+        const sheet = spreadsheet.getSheetByName(`ProtNote_${suffix}`);
+        assertTrue(sheet !== null, "protected sheet should exist");
+        const protections = sheet!.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+        assertTrue(protections.length > 0, "sheet should have at least one protection");
+        const editors = protections[0].getEditors().map((e) => e.getEmail());
+        assertTrue(editors.includes("alice@example.com"), "alice should be an editor");
+        assertTrue(editors.includes("bob@example.com"), "bob should be an editor");
+      },
+      "does not protect sheet when isProtected returns false": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+
+        const spreadsheet = ctx.state.getSpreadsheet();
+        const sheet = spreadsheet.getSheetByName(Car.tableName);
+        assertTrue(sheet !== null, "sheet should exist");
+        const protections = sheet!.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+        assertEqual(protections.length, 0, "unprotected sheet should have no protections");
+      },
+      "does not re-protect sheet on subsequent saves": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("reprot");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class TrackedProtected extends BaseRecord {
+          static override get tableName() {
+            return `Tracked_${suffix}`;
+          }
+          static override isProtected(): boolean {
+            return true;
+          }
+          static override protectedFor(): string[] {
+            return ["admin@example.com"];
+          }
+          value: string;
+        }
+
+        const item1 = new TrackedProtected();
+        item1.value = "first";
+        item1.save();
+
+        const spreadsheet = ctx.state.getSpreadsheet();
+        const sheet = spreadsheet.getSheetByName(`Tracked_${suffix}`);
+        assertTrue(sheet !== null, "sheet should exist");
+        const protsBefore = sheet!.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+        assertEqual(protsBefore.length, 1, "should have exactly one protection after first save");
+
+        const item2 = new TrackedProtected();
+        item2.value = "second";
+        item2.save();
+
+        const protsAfter = sheet!.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+        assertEqual(protsAfter.length, 1, "should still have exactly one protection after second save");
+      },
+      "protects sheet with empty editors list": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("locked");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class LockedSheet extends BaseRecord {
+          static override get tableName() {
+            return `Locked_${suffix}`;
+          }
+          static override isProtected(): boolean {
+            return true;
+          }
+          // protectedFor() defaults to [] — no extra editors
+          data: string;
+        }
+
+        const item = new LockedSheet();
+        item.data = "locked";
+        item.save();
+
+        const spreadsheet = ctx.state.getSpreadsheet();
+        const sheet = spreadsheet.getSheetByName(`Locked_${suffix}`);
+        assertTrue(sheet !== null, "sheet should exist");
+        const protections = sheet!.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+        assertTrue(protections.length > 0, "sheet should be protected even with no editors");
+      },
     } as Record<string, RuntimeCaseHandler>;
   })(),
   "sheet-repository.test.ts": {

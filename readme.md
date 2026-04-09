@@ -27,6 +27,7 @@ extend `Record`, and everything just works.
 - **Lifecycle hooks** — `beforeSave`, `afterSave`, `beforeDelete`, `afterDelete`
 - **Batch operations** — `beginBatch` / `commitBatch` / `rollbackBatch` for safe bulk writes
 - **Pagination & grouping** — `select()` returns `PaginatedResult<T>`, `groupBy()` returns `GroupResult<T>`
+- **Sheet protection** — Auto-protect sheets on creation via `isProtected()` / `protectedFor()` overrides
 - **Zero runtime dependencies** — Bundles into a single `Code.js` via Vite
 
 ## Quick Start
@@ -92,6 +93,35 @@ class ArchivedCar extends Record {
   }
 }
 ```
+
+### 5. Protect a sheet
+
+SheetORM can automatically protect auto-created sheets using the Google Sheets Protection API. Override
+`isProtected()` and `protectedFor()` on your model class:
+
+```ts
+class SecretReport extends Record {
+  @Required()
+  title: string;
+
+  body: string;
+
+  static override isProtected(): boolean {
+    return true;
+  }
+
+  static override protectedFor(): string[] {
+    return ["alice@example.com", "bob@example.com"];
+  }
+}
+```
+
+When `isProtected()` returns `true`, the sheet is protected the first time it is created. The emails returned
+by `protectedFor()` are added as editors — all other users (except the spreadsheet owner) are restricted to
+view-only access. If `protectedFor()` returns an empty array, only the owner can edit.
+
+Protection is applied **once** during sheet creation. Existing sheets are never re-protected on subsequent
+saves.
 
 ### Available decorators
 
@@ -273,6 +303,8 @@ decorators and an optional static property to customize behavior:
 | `@Indexed(options?)`          | Secondary index (implies `@Field`); auto-creates `idx_{ClassName}s`          |
 | `static get tableName()`      | Sheet name (defaults to `tbl_{ClassName}s` — e.g. `tbl_Cars` for `Car`)      |
 | `static get indexTableName()` | Combined index sheet name (defaults to `idx_{ClassName}s` — e.g. `idx_Cars`) |
+| `static isProtected()`        | Return `true` to protect the sheet on creation (default: `false`)            |
+| `static protectedFor()`       | Email addresses of allowed editors (default: `[]`)                           |
 
 #### `@Required()`
 
@@ -383,11 +415,11 @@ const ids = indexStore.searchCombined("idx_Cars", "model", "320i");
 npm test
 ```
 
-Runs **333 unit and benchmark tests** across 11 test suites using Jest + ts-jest with in-memory mock adapters:
+Runs **337 unit and benchmark tests** across 11 test suites using Jest + ts-jest with in-memory mock adapters:
 
 | Suite                      | Tests | Description                                  |
 | -------------------------- | ----- | -------------------------------------------- |
-| `record.test.ts`           | 74    | ActiveRecord API (save, find, query, Query)  |
+| `record.test.ts`           | 78    | ActiveRecord API (save, find, query, Query)  |
 | `query-engine.test.ts`     | 60    | Filter, sort, paginate, group                |
 | `serialization.test.ts`    | 47    | Row ↔ Entity conversion                      |
 | `index-store.test.ts`      | 44    | Secondary index CRUD                         |

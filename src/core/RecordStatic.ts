@@ -19,4 +19,10 @@ export interface RecordStatic {
 
   /** JavaScript class name (used for Registry class-name lookup). */
   name: string;
+
+  /** Whether the auto-created sheet should be protected. */
+  isProtected(): boolean;
+
+  /** Email addresses of editors allowed to edit the protected sheet. */
+  protectedFor(): string[];
 }

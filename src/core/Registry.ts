@@ -108,11 +108,13 @@ export class Registry {
    *
    * @param schema     - The table schema (name, fields, indexes).
    * @param indexStore - The shared IndexStore.
+   * @param ctor       - The Record subclass constructor (for protection config).
    * @returns The sheet adapter and whether it was freshly created.
    */
   private ensureTable(
     schema: TableSchema,
     indexStore: IndexStore,
+    ctor: RecordStatic,
   ): { sheet: ISheetAdapter; created: boolean } {
     const adapter = this.getAdapter();
     SheetOrmLogger.log(`[Registry] ensureTable "${schema.tableName}" (indexes=${schema.indexes.length})`);
@@ -140,12 +142,20 @@ export class Registry {
       ...schema.fields.map((f) => f.name),
     ];
     const existingHeaders = sheet.getHeaders();
-    const hasValidHeaders =
-      existingHeaders.length > 0 && existingHeaders.some((h) => h !== "");
+    const hasValidHeaders = existingHeaders.length > 0 && existingHeaders.some((h) => h !== "");
     if (!hasValidHeaders) {
       sheet.setHeaders(expectedHeaders);
       SheetOrmLogger.log(
         `[Registry] ensureTable "${schema.tableName}" → wrote ${expectedHeaders.length} headers`,
+      );
+    }
+
+    // Apply sheet protection when the sheet is newly created and the class opts in
+    if (created && ctor.isProtected()) {
+      const editors = ctor.protectedFor();
+      adapter.protectSheet(schema.tableName, editors);
+      SheetOrmLogger.log(
+        `[Registry] ensureTable "${schema.tableName}" → protected (editors=${editors.length})`,
       );
     }
 
@@ -222,7 +232,7 @@ export class Registry {
     };
 
     // Create the sheet tab (or get existing) and register indexes
-    const { sheet, created } = this.ensureTable(schema, indexStore);
+    const { sheet, created } = this.ensureTable(schema, indexStore, ctor);
 
     // Construct the repository with pre-resolved sheet and row-count hints:
     // - sheet:                 pre-resolved ISheetAdapter (avoids getSheetByName call)

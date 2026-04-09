@@ -106,6 +106,23 @@ export class Record implements Entity {
     return "idx_" + this.name + "s";
   }
 
+  /**
+   * Whether the auto-created sheet should be protected.
+   * Override in a subclass to return `true` and enable sheet protection.
+   */
+  static isProtected(): boolean {
+    return false;
+  }
+
+  /**
+   * Email addresses of editors allowed to edit the protected sheet.
+   * Only used when `isProtected()` returns `true`.
+   * Override in a subclass to specify allowed editors.
+   */
+  static protectedFor(): string[] {
+    return [];
+  }
+
   // ─── Static Factory ──────────────────────────────
 
   /**

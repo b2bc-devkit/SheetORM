@@ -36,4 +36,13 @@ export interface ISpreadsheetAdapter {
 
   /** Delete all sheets except one (GAS requires at least one sheet to exist). */
   removeAllSheets(): void;
+
+  /**
+   * Protect a sheet tab and restrict editing to the given email addresses.
+   * No-op if the sheet does not exist.
+   *
+   * @param name    - The sheet tab name to protect.
+   * @param editors - Email addresses allowed to edit the protected sheet.
+   */
+  protectSheet(name: string, editors: string[]): void;
 }

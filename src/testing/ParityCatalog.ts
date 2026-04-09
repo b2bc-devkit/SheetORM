@@ -341,6 +341,10 @@ const PARITY_SUITES: ParitySuite[] = [
       "batch save updates existing entity when committed",
       "throws when indexed model has no indexTableName",
       "getClassByName resolves class by table name fallback",
+      "protects sheet on first save when isProtected returns true",
+      "does not protect sheet when isProtected returns false",
+      "does not re-protect sheet on subsequent saves",
+      "protects sheet with empty editors list",
     ],
   },
   {
