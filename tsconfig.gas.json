@@ -8,6 +8,7 @@
     "target": "ESNext",
     "lib": ["ESNext"],
     // Intermediate JS output consumed by Vite's gasPlugin.
+    "rootDir": "src",
     "outDir": "build",
     // No .d.ts files needed — the GAS bundle is a single IIFE script.
     "declaration": false
