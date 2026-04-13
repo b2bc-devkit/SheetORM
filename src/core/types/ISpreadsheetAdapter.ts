@@ -45,4 +45,13 @@ export interface ISpreadsheetAdapter {
    * @param editors - Email addresses allowed to edit the protected sheet.
    */
   protectSheet(name: string, editors: string[]): void;
+
+  /**
+   * Hide a sheet tab from the bottom tab bar.
+   * The sheet remains accessible from the "All sheets" menu.
+   * No-op if the sheet does not exist.
+   *
+   * @param name - The sheet tab name to hide.
+   */
+  hideSheet(name: string): void;
 }

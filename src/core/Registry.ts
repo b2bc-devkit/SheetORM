@@ -159,6 +159,12 @@ export class Registry {
       );
     }
 
+    // Hide the sheet tab when the sheet is newly created and the class opts in
+    if (created && ctor.isHidden()) {
+      adapter.hideSheet(schema.tableName);
+      SheetOrmLogger.log(`[Registry] ensureTable "${schema.tableName}" → hidden`);
+    }
+
     // If no indexes are defined, skip index table creation
     if (schema.indexes.length === 0) return { sheet, created };
 

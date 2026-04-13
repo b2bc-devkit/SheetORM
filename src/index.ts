@@ -81,7 +81,7 @@ class DemoCar extends Record {
  * - `SheetOrmLogger` — verbose logging toggle
  *
  * **Test / benchmark runners** — callable from the GAS editor:
- * - `runTestsStageOne()` … `runTestsStageThree()` — staged parity tests
+ * - `runTestsStageOne()` … `runTestsStageFour()` — staged parity tests
  * - `validateTests()` — validate parity results
  * - `runBenchmark()` — performance benchmark
  *
@@ -112,14 +112,19 @@ export class GasEntrypoints {
     RuntimeParity.runStageOne();
   }
 
-  /** Run stage-two parity tests (indexes + search). */
+  /** Run stage-two parity tests (serialization, uuid). */
   static runTestsStageTwo(): void {
     RuntimeParity.runStageTwo();
   }
 
-  /** Run stage-three parity tests (advanced queries + pagination). */
+  /** Run stage-three parity tests (record). */
   static runTestsStageThree(): void {
     RuntimeParity.runStageThree();
+  }
+
+  /** Run stage-four parity tests (sheet-repository). */
+  static runTestsStageFour(): void {
+    RuntimeParity.runStageFour();
   }
 
   /** Validate all parity test results collected across stages. */

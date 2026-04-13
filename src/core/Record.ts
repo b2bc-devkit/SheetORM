@@ -123,6 +123,15 @@ export class Record implements Entity {
     return [];
   }
 
+  /**
+   * Whether the auto-created sheet should be hidden from the tab bar.
+   * Override in a subclass to return `true` and hide the sheet.
+   * Hidden sheets are still accessible from the "All sheets" menu.
+   */
+  static isHidden(): boolean {
+    return false;
+  }
+
   // ─── Static Factory ──────────────────────────────
 
   /**

@@ -25,4 +25,7 @@ export interface RecordStatic {
 
   /** Email addresses of editors allowed to edit the protected sheet. */
   protectedFor(): string[];
+
+  /** Whether the auto-created sheet should be hidden from the tab bar. */
+  isHidden(): boolean;
 }

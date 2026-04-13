@@ -1283,4 +1283,55 @@ describe("Record ActiveRecord API", () => {
       expect(protection).toEqual([]);
     });
   });
+
+  describe("hidden sheets", () => {
+    it("hides sheet on first save when isHidden returns true", () => {
+      class HiddenLog extends Record {
+        entry: string;
+        static override isHidden(): boolean {
+          return true;
+        }
+      }
+
+      const log = new HiddenLog();
+      log.entry = "secret log";
+      log.save();
+
+      expect(adapter.getSheetNames()).toContain("tbl_HiddenLogs");
+      expect(adapter._isHidden("tbl_HiddenLogs")).toBe(true);
+    });
+
+    it("does not hide sheet when isHidden returns false", () => {
+      const car = new Car();
+      car.make = "Toyota";
+      car.model = "Corolla";
+      car.save();
+
+      expect(adapter.getSheetNames()).toContain("tbl_Cars");
+      expect(adapter._isHidden("tbl_Cars")).toBe(false);
+    });
+
+    it("does not re-hide sheet on subsequent saves", () => {
+      class TrackedHidden extends Record {
+        value: string;
+        static override isHidden(): boolean {
+          return true;
+        }
+      }
+
+      const item1 = new TrackedHidden();
+      item1.value = "first";
+      item1.save();
+
+      expect(adapter._isHidden("tbl_TrackedHiddens")).toBe(true);
+
+      // The sheet already exists so isHidden should not be called again
+      const item2 = new TrackedHidden();
+      item2.value = "second";
+      item2.save();
+
+      // Sheet stays hidden (no re-hide call, but state unchanged)
+      expect(adapter._isHidden("tbl_TrackedHiddens")).toBe(true);
+    });
+  });
 });

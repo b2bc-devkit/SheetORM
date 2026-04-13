@@ -28,6 +28,8 @@ extend `Record`, and everything just works.
 - **Batch operations** — `beginBatch` / `commitBatch` / `rollbackBatch` for safe bulk writes
 - **Pagination & grouping** — `select()` returns `PaginatedResult<T>`, `groupBy()` returns `GroupResult<T>`
 - **Sheet protection** — Auto-protect sheets on creation via `isProtected()` / `protectedFor()` overrides
+- **Hidden sheets** — Auto-hide sheets on creation via `isHidden()` override; hidden sheets remain accessible
+  from the "All sheets" menu
 - **Zero runtime dependencies** — Bundles into a single `Code.js` via Vite
 
 ## Quick Start
@@ -94,7 +96,7 @@ class ArchivedCar extends Record {
 }
 ```
 
-### 5. Protect a sheet
+### 4. Protect a sheet
 
 SheetORM can automatically protect auto-created sheets using the Google Sheets Protection API. Override
 `isProtected()` and `protectedFor()` on your model class:
@@ -122,6 +124,27 @@ view-only access. If `protectedFor()` returns an empty array, only the owner can
 
 Protection is applied **once** during sheet creation. Existing sheets are never re-protected on subsequent
 saves.
+
+### 5. Hide a sheet
+
+SheetORM can automatically hide auto-created sheets from the bottom tab bar. Override `isHidden()` on your
+model class:
+
+```ts
+class AuditLog extends Record {
+  action: string;
+  timestamp: string;
+
+  static override isHidden(): boolean {
+    return true;
+  }
+}
+```
+
+When `isHidden()` returns `true`, the sheet is hidden the first time it is created. The sheet tab is removed
+from the bottom tab bar but remains accessible via the "All sheets" menu in Google Sheets.
+
+Hiding is applied **once** during sheet creation. Existing sheets are never re-hidden on subsequent saves.
 
 ### Available decorators
 
@@ -202,7 +225,7 @@ class Car extends Record {
 
 Use decorators only when you need schema metadata or indexing behaviour.
 
-### 4. Use it
+### 6. Use it
 
 ```ts
 // Create — table auto-created on first save
@@ -296,15 +319,16 @@ examples/
 Extend `Record` to define a model. Declare fields as plain class properties — they are auto-discovered. Use
 decorators and an optional static property to customize behavior:
 
-| Decorator / property          | Description                                                                  |
-| ----------------------------- | ---------------------------------------------------------------------------- |
-| `@Required()`                 | Shorthand for marking a field as required                                    |
-| `@Field(options?)`            | Explicit field with options (required, type, defaultValue)                   |
-| `@Indexed(options?)`          | Secondary index (implies `@Field`); auto-creates `idx_{ClassName}s`          |
-| `static get tableName()`      | Sheet name (defaults to `tbl_{ClassName}s` — e.g. `tbl_Cars` for `Car`)      |
-| `static get indexTableName()` | Combined index sheet name (defaults to `idx_{ClassName}s` — e.g. `idx_Cars`) |
-| `static isProtected()`        | Return `true` to protect the sheet on creation (default: `false`)            |
-| `static protectedFor()`       | Email addresses of allowed editors (default: `[]`)                           |
+| Decorator / property          | Description                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------- |
+| `@Required()`                 | Shorthand for marking a field as required                                       |
+| `@Field(options?)`            | Explicit field with options (required, type, defaultValue)                      |
+| `@Indexed(options?)`          | Secondary index (implies `@Field`); auto-creates `idx_{ClassName}s`             |
+| `static get tableName()`      | Sheet name (defaults to `tbl_{ClassName}s` — e.g. `tbl_Cars` for `Car`)         |
+| `static get indexTableName()` | Combined index sheet name (defaults to `idx_{ClassName}s` — e.g. `idx_Cars`)    |
+| `static isProtected()`        | Return `true` to protect the sheet on creation (default: `false`)               |
+| `static protectedFor()`       | Email addresses of allowed editors (default: `[]`)                              |
+| `static isHidden()`           | Return `true` to hide the sheet from the tab bar on creation (default: `false`) |
 
 #### `@Required()`
 
@@ -388,6 +412,20 @@ Query.from(Car).where("year", ">=", 2023).execute();
 Query.from("Car").where("make", "=", "Toyota").first();
 ```
 
+#### Query\<T\> methods
+
+| Method                  | Returns            | Description                           |
+| ----------------------- | ------------------ | ------------------------------------- |
+| `and(field, op, value)` | `Query<T>`         | Add AND condition                     |
+| `or(field, op, value)`  | `Query<T>`         | Add OR condition                      |
+| `orderBy(field, dir?)`  | `Query<T>`         | Sort results (`"asc"` \| `"desc"`)    |
+| `limit(n)`              | `Query<T>`         | Maximum number of results             |
+| `offset(n)`             | `Query<T>`         | Skip first n results                  |
+| `execute()`             | `T[]`              | Run query and return matching records |
+| `first()`               | `T \| null`        | Return first matching record          |
+| `count()`               | `number`           | Count matching records                |
+| `groupBy(field)`        | `GroupResult<T>[]` | Group results by field                |
+
 ### Filter operators
 
 `=`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `in`, `search`
@@ -415,11 +453,11 @@ const ids = indexStore.searchCombined("idx_Cars", "model", "320i");
 npm test
 ```
 
-Runs **337 unit and benchmark tests** across 11 test suites using Jest + ts-jest with in-memory mock adapters:
+Runs **340 unit and benchmark tests** across 11 test suites using Jest + ts-jest with in-memory mock adapters:
 
 | Suite                      | Tests | Description                                  |
 | -------------------------- | ----- | -------------------------------------------- |
-| `record.test.ts`           | 78    | ActiveRecord API (save, find, query, Query)  |
+| `record.test.ts`           | 81    | ActiveRecord API (save, find, query, Query)  |
 | `query-engine.test.ts`     | 60    | Filter, sort, paginate, group                |
 | `serialization.test.ts`    | 47    | Row ↔ Entity conversion                      |
 | `index-store.test.ts`      | 44    | Secondary index CRUD                         |
@@ -480,7 +518,8 @@ npm test
 
 Run in Google Apps Script (real Sheets API):
 
-- `runTestsStageOne()` / `runTestsStageTwo()` / `runTestsStageThree()` — staged runtime parity suite
+- `runTestsStageOne()` / `runTestsStageTwo()` / `runTestsStageThree()` / `runTestsStageFour()` — staged
+  runtime parity suite
 - `validateTests()` — validates mapping only (fast drift check)
 
 ### GAS Runtime Benchmark
@@ -500,9 +539,10 @@ callable as triggers). Everything else is an internal implementation detail bund
 
 | Function               | Purpose                                                                                          |
 | ---------------------- | ------------------------------------------------------------------------------------------------ |
-| `runTestsStageOne()`   | Stage-one parity tests (basic CRUD + query) against the active spreadsheet.                      |
-| `runTestsStageTwo()`   | Stage-two parity tests (indexes + search).                                                       |
-| `runTestsStageThree()` | Stage-three parity tests (advanced queries + pagination).                                        |
+| `runTestsStageOne()`   | Stage-one parity tests: cache, index-store, query, query-engine (~162 tests).                    |
+| `runTestsStageTwo()`   | Stage-two parity tests: serialization, uuid (~52 tests).                                         |
+| `runTestsStageThree()` | Stage-three parity tests: record (~81 tests).                                                    |
+| `runTestsStageFour()`  | Stage-four parity tests: sheet-repository (~35 tests).                                           |
 | `validateTests()`      | Checks Jest ↔ GAS handler mapping parity — no Sheets API calls, fails immediately on drift.      |
 | `runBenchmark()`       | Write/read/query/delete cycle for Cars + Workers (100 records each); logs per-operation timings. |
 | `removeAllSheets()`    | Deletes every sheet in the active spreadsheet (destructive — use with caution).                  |
