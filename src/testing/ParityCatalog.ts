@@ -345,6 +345,9 @@ const PARITY_SUITES: ParitySuite[] = [
       "does not protect sheet when isProtected returns false",
       "does not re-protect sheet on subsequent saves",
       "protects sheet with empty editors list",
+      "hides sheet on first save when isHidden returns true",
+      "does not hide sheet when isHidden returns false",
+      "does not re-hide sheet on subsequent saves",
     ],
   },
   {

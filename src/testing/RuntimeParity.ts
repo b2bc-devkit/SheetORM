@@ -14,10 +14,10 @@
  *   every Jest `test()` block.  Each handler exercises the same logic but using
  *   real Google Sheets API calls instead of mocks.
  * - {@link RuntimeParity} — public API (static methods) invoked from GAS menu:
- *   - `runStageOne()` / `runStageTwo()` / `runStageThree()` — execute test subsets.
+ *   - `runStageOne()` / `runStageTwo()` / `runStageThree()` / `runStageFour()` — execute test subsets.
  *   - `validate()` — cross-check collected results against {@link ParityCatalog}.
  *
- * Tests are split into three stages to stay within the 6-minute GAS execution
+ * Tests are split into four stages to stay within the 6-minute GAS execution
  * time limit.  Each stage persists results to a `__parity_results_*` sheet so
  * that `validate()` can aggregate them later.
  *
@@ -3655,6 +3655,76 @@ const runtimeSuiteHandlers: RuntimeSuiteHandlers = {
         const protections = sheet!.getProtections(SpreadsheetApp.ProtectionType.SHEET);
         assertTrue(protections.length > 0, "sheet should be protected even with no editors");
       },
+      "hides sheet on first save when isHidden returns true": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("hidden");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class HiddenLog extends BaseRecord {
+          static override get tableName() {
+            return `HidLog_${suffix}`;
+          }
+          static override isHidden(): boolean {
+            return true;
+          }
+          entry: string;
+        }
+
+        const log = new HiddenLog();
+        log.entry = "secret log";
+        log.save();
+
+        const spreadsheet = ctx.state.getSpreadsheet();
+        const sheet = spreadsheet.getSheetByName(`HidLog_${suffix}`);
+        assertTrue(sheet !== null, "hidden sheet should exist");
+        assertTrue(sheet!.isSheetHidden(), "sheet should be hidden");
+      },
+      "does not hide sheet when isHidden returns false": (ctx: RuntimeCaseContext) => {
+        const { Car } = setup(ctx);
+        const car = new Car();
+        car.make = "Toyota";
+        car.model = "Corolla";
+        car.save();
+
+        const spreadsheet = ctx.state.getSpreadsheet();
+        const sheet = spreadsheet.getSheetByName(Car.tableName);
+        assertTrue(sheet !== null, "sheet should exist");
+        assertTrue(!sheet!.isSheetHidden(), "sheet should not be hidden");
+      },
+      "does not re-hide sheet on subsequent saves": (ctx: RuntimeCaseContext) => {
+        const adapter = ctx.state.getAdapter();
+        const suffix = ctx.state.nextTableName("rehid");
+        Registry.reset();
+        resetDecoratorCaches();
+        Registry.getInstance().configure({ adapter });
+
+        class TrackedHidden extends BaseRecord {
+          static override get tableName() {
+            return `TrkHid_${suffix}`;
+          }
+          static override isHidden(): boolean {
+            return true;
+          }
+          value: string;
+        }
+
+        const item1 = new TrackedHidden();
+        item1.value = "first";
+        item1.save();
+
+        const spreadsheet = ctx.state.getSpreadsheet();
+        const sheet = spreadsheet.getSheetByName(`TrkHid_${suffix}`);
+        assertTrue(sheet !== null, "sheet should exist");
+        assertTrue(sheet!.isSheetHidden(), "sheet should be hidden after first save");
+
+        const item2 = new TrackedHidden();
+        item2.value = "second";
+        item2.save();
+
+        assertTrue(sheet!.isSheetHidden(), "sheet should still be hidden after second save");
+      },
     } as Record<string, RuntimeCaseHandler>;
   })(),
   "sheet-repository.test.ts": {
@@ -5055,15 +5125,22 @@ function runTestsStageOne(): string {
   return runTestsForSuites(ParityCatalog.SUITES.slice(0, 4));
 }
 
-/** Stage 2: serialization, uuid, record (~126 tests, ~250s). */
+/** Stage 2: serialization, uuid (~52 tests, ~60s). */
 function runTestsStageTwo(): string {
   SheetOrmLogger.verbose = false;
   validateTests();
-  return runTestsForSuites(ParityCatalog.SUITES.slice(4, 7));
+  return runTestsForSuites(ParityCatalog.SUITES.slice(4, 6));
 }
 
-/** Stage 3: sheet-repository (~35 tests, ~120s). */
+/** Stage 3: record (~81 tests, ~250s). */
 function runTestsStageThree(): string {
+  SheetOrmLogger.verbose = false;
+  validateTests();
+  return runTestsForSuites(ParityCatalog.SUITES.slice(6, 7));
+}
+
+/** Stage 4: sheet-repository (~35 tests, ~120s). */
+function runTestsStageFour(): string {
   SheetOrmLogger.verbose = false;
   validateTests();
   return runTestsForSuites(ParityCatalog.SUITES.slice(7));
@@ -5079,10 +5156,12 @@ function runTestsStageThree(): string {
 export class RuntimeParity {
   /** Execute stage-one parity tests (cache, index-store, query, query-engine). */
   static runStageOne = runTestsStageOne;
-  /** Execute stage-two parity tests (serialization, uuid, record). */
+  /** Execute stage-two parity tests (serialization, uuid). */
   static runStageTwo = runTestsStageTwo;
-  /** Execute stage-three parity tests (sheet-repository). */
+  /** Execute stage-three parity tests (record). */
   static runStageThree = runTestsStageThree;
+  /** Execute stage-four parity tests (sheet-repository). */
+  static runStageFour = runTestsStageFour;
   /** Cross-check that all ParityCatalog case IDs have runtime handlers. */
   static validate = validateTests;
   /** Complete list of runtime parity case IDs (for external cross-reference). */

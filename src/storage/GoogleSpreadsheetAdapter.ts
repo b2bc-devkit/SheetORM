@@ -128,4 +128,16 @@ export class GoogleSpreadsheetAdapter implements ISpreadsheetAdapter {
       protection.addEditors(editors);
     }
   }
+
+  /**
+   * Hide a sheet tab from the bottom tab bar.
+   * Uses `sheet.hideSheet()` from the GAS API.
+   * No-op if the sheet does not exist.
+   */
+  hideSheet(name: string): void {
+    const sheet = this.spreadsheet.getSheetByName(name);
+    if (!sheet) return;
+    SheetOrmLogger.log(`[Spreadsheet] hideSheet("${name}")`);
+    sheet.hideSheet();
+  }
 }

@@ -5,6 +5,7 @@ import { MockSheetAdapter } from "./MockSheetAdapter";
 export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
   private sheets = new Map<string, MockSheetAdapter>();
   private protections = new Map<string, string[]>();
+  private hiddenSheets = new Set<string>();
 
   getSheetByName(name: string): ISheetAdapter | null {
     return this.sheets.get(name) ?? null;
@@ -39,10 +40,15 @@ export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
   removeAllSheets(): void {
     this.sheets.clear();
     this.protections.clear();
+    this.hiddenSheets.clear();
   }
 
   protectSheet(name: string, editors: string[]): void {
     this.protections.set(name, [...editors]);
+  }
+
+  hideSheet(name: string): void {
+    this.hiddenSheets.add(name);
   }
 
   _getSheet(name: string): MockSheetAdapter | undefined {
@@ -55,5 +61,9 @@ export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
 
   _clearProtections(): void {
     this.protections.clear();
+  }
+
+  _isHidden(name: string): boolean {
+    return this.hiddenSheets.has(name);
   }
 }

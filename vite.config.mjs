@@ -9,6 +9,7 @@ export default defineConfig({
           "runTestsStageOne",
           "runTestsStageTwo",
           "runTestsStageThree",
+          "runTestsStageFour",
           "validateTests",
           "runBenchmark",
           "removeAllSheets",
@@ -38,8 +39,6 @@ export default defineConfig({
         entryFileNames: "Code.js",
         // No module exports — everything is assigned to globalThis.
         exports: "none",
-        // Merge all dynamic imports into a single chunk (GAS has no module loader).
-        inlineDynamicImports: true,
       },
     },
     // Use Terser for minification (more configurable than esbuild for GAS needs).
