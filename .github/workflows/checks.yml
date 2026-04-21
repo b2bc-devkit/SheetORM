@@ -20,6 +20,8 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+      - name: Upgrade npm to v11
+        run: npm install -g npm@11
       - name: Install Dependencies
         run: npm ci
       - name: Lint
