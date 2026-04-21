@@ -23,7 +23,7 @@ jobs:
           cache: npm
 
       - name: Upgrade npm to v11
-        run: npm install -g npm@11
+        run: corepack enable && corepack prepare npm@11 --activate
 
       - name: Install dependencies
         run: npm ci
@@ -51,7 +51,7 @@ jobs:
           cache: npm
 
       - name: Upgrade npm to v11
-        run: npm install -g npm@11
+        run: corepack enable && corepack prepare npm@11 --activate
 
       - run: npm ci
 
