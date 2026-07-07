@@ -1,6 +1,6 @@
 {
   "name": "@b2bc-devkit/sheetorm",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "TypeScript ORM for Google Sheets (Google Apps Script runtime)",
   "type": "module",
   "license": "GPL-3.0-or-later",
@@ -140,7 +140,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/b2bc-devkit/SheetORM.git"
+    "url": "git+https://github.com/b2bc-devkit/SheetORM.git"
   },
   "homepage": "https://github.com/b2bc-devkit/SheetORM#readme",
   "bugs": {
