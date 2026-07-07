@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/SheetOrm.ts",
+    "scripts/publish-gas.mjs",
+    "scripts/publish-npm.mjs",
+    "examples/cars-crud.ts"
+  ],
+  "project": ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts", "scripts/**/*.mjs"]
+}
