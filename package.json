@@ -35,7 +35,7 @@
       "output": []
     },
     "trivy:scan": {
-      "command": "trivy-scan fs --config trivy.yaml .",
+      "command": "npx @b2bc-devkit/trivy-scan fs --config trivy.yaml .",
       "files": [
         "package-lock.json",
         "trivy.yaml"
@@ -151,7 +151,6 @@
   },
   "devDependencies": {
     "@b2bc-devkit/gas-class-entrypoints": "^1.0.0",
-    "@b2bc-devkit/trivy-scan": "^1.0.2",
     "@google/clasp": "^3.3.0",
     "@types/google-apps-script": "^2.0.8",
     "@types/jest": "^30.0.0",
