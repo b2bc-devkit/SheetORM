@@ -131,28 +131,6 @@
         "showReuseMessage": false
       },
       "problemMatcher": []
-    },
-    {
-      "label": "Publish: Apps Script library",
-      "type": "shell",
-      "command": "node scripts/publish-gas.mjs",
-      "group": "build",
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
-      }
-    },
-    {
-      "label": "Publish: npm package",
-      "type": "shell",
-      "command": "node scripts/publish-npm.mjs",
-      "group": "build",
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
-      }
     }
   ]
 }
