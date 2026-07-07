@@ -34,7 +34,7 @@ const jestGlobals = {
 module.exports = [
   // Ignore generated output directories and compiled JS files.
   {
-    ignores: ["build/**", "dist/**", "node_modules/**", "coverage/**", "**/*.js"],
+    ignores: ["build/**", "dist/**", "node_modules/**", "coverage/**", ".wireit/**", "**/*.js"],
   },
   // Apply recommended TypeScript-ESLint rules to all files.
   ...tsEslintPlugin.configs["flat/recommended"],

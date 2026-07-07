@@ -1,6 +1,6 @@
 {
   "name": "@b2bc-devkit/sheetorm",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "TypeScript ORM for Google Sheets (Google Apps Script runtime)",
   "type": "module",
   "license": "GPL-3.0-or-later",
@@ -12,7 +12,8 @@
     "trivy:scan": "wireit",
     "format": "prettier . --write",
     "test": "wireit",
-    "login": "clasp login"
+    "login": "clasp login",
+    "prepublishOnly": "npm run lint && npm test && npm run build:npm"
   },
   "wireit": {
     "knip": {
