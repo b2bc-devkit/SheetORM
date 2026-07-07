@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Knip (unused deps/code detection)
+        run: npm run knip
+
       - name: TypeScript type check
         run: npx tsc --noEmit
 
@@ -58,3 +61,21 @@ jobs:
       - name: Lint
         run: npm run lint
         continue-on-error: true
+
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run Trivy vulnerability scanner on lockfile
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: false
+          # This project has only devDependencies (no runtime deps),
+          # so dev deps must be included or nothing is scanned.
+          args: --include-dev-deps --skip-dirs build/,build-test/,dist/,node_modules/,tmp/

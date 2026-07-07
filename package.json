@@ -8,6 +8,7 @@
     "build": "node scripts/build.mjs",
     "build:npm": "node scripts/build-npm.mjs",
     "lint": "eslint .",
+    "knip": "knip",
     "format": "prettier . --write",
     "test": "jest --verbose",
     "login": "clasp login"
@@ -71,6 +72,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-googleappsscript": "^1.0.5",
     "jest": "^30.3.0",
+    "knip": "^6.25.0",
     "prettier": "^3.8.1",
     "terser": "^5.44.1",
     "ts-jest": "^29.4.6",
