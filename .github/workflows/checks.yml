@@ -39,7 +39,7 @@ jobs:
     name: Trivy CVE Scan
     steps:
       - name: Fetch Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Setup Node.js
