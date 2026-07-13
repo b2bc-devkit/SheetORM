@@ -81,7 +81,7 @@ jobs:
       - run: npm ci
 
       - name: Cache Trivy binary
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/trivy-scan
           key: trivy-scan-${{ runner.os }}
