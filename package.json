@@ -165,7 +165,7 @@
     "prettier": "^3.8.1",
     "terser": "^5.44.1",
     "ts-jest": "^29.4.6",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vite": "^8.0.8",
     "wireit": "^0.14.13"
   }
