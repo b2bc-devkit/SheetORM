@@ -23,7 +23,9 @@ import { GoogleSpreadsheetAdapter } from "../storage/GoogleSpreadsheetAdapter.js
 import { Decorators } from "./Decorators.js";
 import type { RecordStatic } from "./RecordStatic.js";
 import { SystemColumns } from "./types/SystemColumns.js";
+import { Serialization } from "../utils/Serialization.js";
 import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
+import { fingerprintMatches, writeFingerprint } from "../storage/SchemaFingerprint.js";
 
 /**
  * Central registry for SheetORM.
@@ -88,16 +90,17 @@ export class Registry {
 
   /**
    * Lazily create the shared IndexStore.
-   * The IndexStore receives its **own** MemoryCache instance so that
-   * `cache.clear()` inside it does not wipe the entity data cache.
+   * The IndexStore shares the configured cache provider so a persistent
+   * implementation (e.g. {@link GasCacheProvider}) warms `cidx:` entries
+   * across executions too — invalidation is per-key (`cidx:<table>`), never
+   * a blanket `clear()`, so it cannot contaminate entity caches.  With no
+   * configured provider it falls back to a private MemoryCache as before.
    */
   private ensureIndexStore(): IndexStore {
     if (!this.indexStore) {
       const adapter = this.getAdapter();
       if (!this.cache) this.cache = new MemoryCache();
-      // IndexStore gets its own cache instance so that invalidateCache() → cache.clear()
-      // does NOT contaminate the entity data cache used by SheetRepository.
-      this.indexStore = new IndexStore(adapter, new MemoryCache());
+      this.indexStore = new IndexStore(adapter, this.cache);
     }
     return this.indexStore;
   }
@@ -119,35 +122,95 @@ export class Registry {
     const adapter = this.getAdapter();
     SheetOrmLogger.log(`[Registry] ensureTable "${schema.tableName}" (indexes=${schema.indexes.length})`);
 
-    // Check if the sheet tab already exists
-    let sheet = adapter.getSheetByName(schema.tableName);
-    let created = false;
-    if (!sheet) {
-      sheet = adapter.insertSheet(schema.tableName);
-      created = true;
-    }
-    SheetOrmLogger.log(
-      `[Registry] ensureTable "${schema.tableName}" → ${created ? "insertSheet (G4 new)" : "existing sheet"}`,
-    );
     // Always ensure headers are present on the sheet.
     // Previously headers for new sheets were deferred to the first data write
     // (L1 optimisation), but this caused a bug: if a read-only operation
     // (e.g. findOne) triggered ensureTable, the GAS execution could end
     // before any write flushed the deferred headers, leaving the sheet
     // without headers for all subsequent executions.
-    const expectedHeaders = [
-      SystemColumns.ID,
-      SystemColumns.CREATED_AT,
-      SystemColumns.UPDATED_AT,
-      ...schema.fields.map((f) => f.name),
-    ];
-    const existingHeaders = sheet.getHeaders();
-    const hasValidHeaders = existingHeaders.length > 0 && existingHeaders.some((h) => h !== "");
-    if (!hasValidHeaders) {
-      sheet.setHeaders(expectedHeaders);
+    const expectedHeaders = schema.packed
+      ? Serialization.buildPackedHeaders()
+      : [
+          SystemColumns.ID,
+          SystemColumns.CREATED_AT,
+          SystemColumns.UPDATED_AT,
+          ...schema.fields.map((f) => f.name),
+        ];
+
+    // Check-first strategy: when the Sheets API metadata cache is warm,
+    // getSheetByName() costs ZERO RPCs — so probing is free and the common
+    // "table already exists" path (shared class names across tests) pays
+    // nothing.  Only a real miss proceeds to creation.
+    let sheet: ISheetAdapter | null = adapter.getSheetByName(schema.tableName);
+    let created = false;
+
+    if (!sheet) {
+      // Data-table tabs are ALWAYS created through SpreadsheetApp: tests and
+      // protection/hide APIs address the sheet through the raw GAS handle,
+      // and a Sheets-API-created tab can stay invisible to SpreadsheetApp for
+      // an unpredictable amount of time.  Index tabs are never raw-checked,
+      // so they keep the fast API path inside createCombinedIndex.
+      const rawInserter = (adapter as { insertSheetRaw?: (n: string) => ISheetAdapter }).insertSheetRaw;
+      try {
+        sheet = rawInserter
+          ? rawInserter.call(adapter, schema.tableName)
+          : adapter.insertSheet(schema.tableName);
+        created = true;
+      } catch {
+        // Duplicate-name or transient failure — re-resolve to be sure.
+        sheet = adapter.getSheetByName(schema.tableName);
+        created = false;
+      }
+      if (!sheet) {
+        // insertSheet threw for a non-duplicate reason (e.g. quota/permission)
+        // and no sheet exists — retry the insert so the real error surfaces.
+        sheet = adapter.insertSheet(schema.tableName);
+        created = true;
+      }
+    }
+    SheetOrmLogger.log(
+      `[Registry] ensureTable "${schema.tableName}" → ${created ? "insertSheet (G4 new)" : "existing sheet"}`,
+    );
+
+    // Schema fingerprint (PropertiesService): a verified (schema hash +
+    // sheetId + TTL) match proves this tab already carries the expected
+    // headers → skip BOTH the header-verification read AND the entity-grid
+    // prefetch (the grid loads lazily on first data access — write-only
+    // executions then pay zero read RPCs for this table).
+    const ssId = adapter.getSpreadsheetId?.() ?? null;
+    const sheetId = sheet.getSheetId?.() ?? null;
+    const fpHit = !created && fingerprintMatches(ssId, schema, sheetId);
+
+    const hasIndex = schema.indexTableName !== undefined && schema.indexes.length > 0;
+    if (fpHit) {
+      // Still warm the index grid — it is ORM-internal and always consistent.
+      if (hasIndex) {
+        if (!adapter.warmUpSheets?.([schema.indexTableName!])) {
+          adapter.prefetchSheets?.([schema.indexTableName!]);
+        }
+      }
       SheetOrmLogger.log(
-        `[Registry] ensureTable "${schema.tableName}" → wrote ${expectedHeaders.length} headers`,
+        `[Registry] ensureTable "${schema.tableName}" → fingerprint hit, header check skipped`,
       );
+    } else {
+      // Fused grid warm-up: prefers the parallel cold-start path (fetchAll —
+      // meta + grids concurrently); falls back to ONE serial Values.batchGet
+      // seeding the entity grid AND the combined-index grid.  Sheets absent
+      // from the shared metadata are skipped by the adapter.
+      const warmNames = hasIndex ? [schema.tableName, schema.indexTableName!] : [schema.tableName];
+      if (!adapter.warmUpSheets?.(warmNames)) {
+        adapter.prefetchSheets?.(warmNames);
+      }
+      const existingHeaders = sheet.getHeaders();
+      const hasValidHeaders = existingHeaders.length > 0 && existingHeaders.some((h) => h !== "");
+      if (!hasValidHeaders) {
+        sheet.setHeaders(expectedHeaders);
+        SheetOrmLogger.log(
+          `[Registry] ensureTable "${schema.tableName}" → wrote ${expectedHeaders.length} headers`,
+        );
+      }
+      // Persist the verified fingerprint for future cold starts.
+      writeFingerprint(ssId, schema, created ? (sheet.getSheetId?.() ?? null) : sheetId);
     }
 
     // Apply sheet protection when the sheet is newly created and the class opts in
@@ -175,8 +238,13 @@ export class Registry {
       );
     }
 
-    // Create the combined index sheet and register each field index
+    // Create the combined index sheet (meta-cached check-first; created via
+    // the Sheets API path since index tabs are never inspected through the
+    // raw SpreadsheetApp handle)
     indexStore.createCombinedIndex(schema.indexTableName);
+    if (schema.cacheTtlMs !== undefined) {
+      indexStore.setIndexCacheTtl(schema.indexTableName, schema.cacheTtlMs);
+    }
     for (const idx of schema.indexes) {
       indexStore.registerIndex(schema.indexTableName, idx.field, idx.unique ?? false);
     }
@@ -235,6 +303,11 @@ export class Registry {
       indexTableName: indexes.length > 0 ? ctor.indexTableName : undefined,
       fields: Decorators.getFields(ctor),
       indexes,
+      // Per-class cache TTL (overridable via static cacheTtlMs()).
+      cacheTtlMs: typeof ctor.cacheTtlMs === "function" ? ctor.cacheTtlMs() : undefined,
+      // Opt-in storage modes (overridable via statics).
+      tombstones: typeof ctor.tombstoneDeletes === "function" ? ctor.tombstoneDeletes() : false,
+      packed: typeof ctor.packedStorage === "function" ? ctor.packedStorage() : false,
     };
 
     // Create the sheet tab (or get existing) and register indexes

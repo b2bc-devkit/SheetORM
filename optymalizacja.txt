@@ -1,0 +1,375 @@
+Większość standardowych porad dotyczących Google Apps Script kończy się na „używaj `getValues()` zamiast pojedynczych komórek”. Prawdziwie zaawansowana optymalizacja GAS wynika jednak ze zrozumienia, że **wąskim gardłem nie jest sam silnik V8 (który jest ekstremalnie szybki), lecz narzut serializacji i wywołań RPC (Remote Procedure Call)** na styku V8 z infrastrukturą Google.
+
+Oto 3 autorskie i zaawansowane wzorce inżynieryjne stosowane do osiągania wydajności enterprise w GAS:
+
+
+### 1. Algorytm „Sparse Matrix Diffing” (Wykrywanie brudnych wycinków)
+
+Najczęstszy błąd przy pracy z danymi to ponowne zapisywanie całej matrycy $N \times M$ przez `setValues()`, co wymusza pełną serializację tysięcy niezmienionych komórek i przeliczenie formuł w całym arkuszu. Drugim błędem jest zapisywanie każdej zmienionej komórki osobno.
+
+Algorytm **Dirty Slicing** porównuje stan początkowy i końcowy w V8 (operacja zajmuje ułamki milisekund), a następnie grupuje sąsiadujące zmienione wiersze w minimalną liczbę ciągłych bloków (bounding boxes), wysyłając tylko paczki faktycznie zmodyfikowane.
+
+```javascript
+/**
+ * Zwraca minimalną liczbę ciągłych zakresów do zapisu zamiast całej tablicy
+ */
+function getDirtyRanges(originalMatrix, modifiedMatrix) {
+  const dirtySlices = [];
+  let inSlice = false;
+  let startRow = null;
+
+  for (let r = 0; r < originalMatrix.length; r++) {
+    let rowChanged = false;
+    for (let c = 0; c < originalMatrix[r].length; c++) {
+      if (originalMatrix[r][c] !== modifiedMatrix[r][c]) {
+        rowChanged = true;
+        break;
+      }
+    }
+
+    if (rowChanged && !inSlice) {
+      inSlice = true;
+      startRow = r;
+    } else if (!rowChanged && inSlice) {
+      dirtySlices.push({ startRow: startRow, endRow: r - 1 });
+      inSlice = false;
+    }
+  }
+
+  if (inSlice) {
+    dirtySlices.push({ startRow: startRow, endRow: originalMatrix.length - 1 });
+  }
+
+  return dirtySlices; // np. [{startRow: 10, endRow: 14}, {startRow: 500, endRow: 502}]
+}
+
+// Zamiast: sheet.getRange(1, 1, H, W).setValues(modifiedMatrix)
+// Zapisujesz tylko wycinki za pomocą:
+// ranges.forEach(s => sheet.getRange(s.startRow + 1, 1, s.endRow - s.startRow + 1, W).setValues(...))
+
+```
+
+---
+
+### 2. Sharded Cache-Engine (Omijanie limitu 100 KB w CacheService)
+
+Odczyt z `CacheService` zajmuje ~3 ms, podczas gdy `SpreadsheetApp.getDataRange()` trwa od 800 do 3 000 ms. Problem w tym, że `CacheService` ma sztywny limit **100 KB na wpis**.
+
+Algorytm **Sharded Cache** serializuje obiekt/matrycę, dzieli string na 90-kilobajtowe fragmenty (shardy), zapisuje je pod wspólnym kluczem z prefiksem i odczytuje natychmiastowo za pomocą zbiorczego `Cache.getAll(keys)`:
+
+```javascript
+const ShardedCache = {
+  CHUNK_SIZE: 90 * 1024, // 90 KB dla bezpieczeństwa (limit 100 KB)
+
+  set: function(baseKey, dataObject, expirationSec = 21600) {
+    const jsonStr = JSON.stringify(dataObject);
+    const chunks = [];
+    let i = 0;
+
+    while (i < jsonStr.length) {
+      chunks.push(jsonStr.substring(i, i + this.CHUNK_SIZE));
+      i += this.CHUNK_SIZE;
+    }
+
+    const payload = {};
+    const keyList = [];
+    chunks.forEach((chunk, index) => {
+      const chunkKey = `${baseKey}_p${index}`;
+      payload[chunkKey] = chunk;
+      keyList.push(chunkKey);
+    });
+
+    payload[`${baseKey}_meta`] = JSON.stringify({ count: chunks.length });
+    
+    const cache = CacheService.getScriptCache();
+    cache.putAll(payload, expirationSec);
+  },
+
+  get: function(baseKey) {
+    const cache = CacheService.getScriptCache();
+    const metaRaw = cache.get(`${baseKey}_meta`);
+    if (!metaRaw) return null;
+
+    const meta = JSON.parse(metaRaw);
+    const keys = Array.from({ length: meta.count }, (_, idx) => `${baseKey}_p${idx}`);
+    
+    // Pojedyncze wywołanie RPC pobiera wszystkie shardy naraz
+    const shardMap = cache.getAll(keys);
+    let completeStr = '';
+    for (let k of keys) {
+      if (!shardMap[k]) return null; // Brak chociażby jednego fragmentu = utrata spójności
+      completeStr += shardMap[k];
+    }
+
+    return JSON.parse(completeStr);
+  }
+};
+
+```
+
+---
+
+### 3. RLE & Bitmap Encoding (Tysiące statusów w 9 KB `PropertiesService`)
+
+Gdy kolejkujesz przetwarzanie dużej bazy (np. 50 000 wierszy) w `PropertiesService`, zapisywanie tablicy przetworzonych identyfikatorów `[1, 2, 3, ...]` natychmiast przepełni limit 9 KB na pojedynczy klucz.
+
+Zamiast tego stosuje się algorytm kompresji **Run-Length Encoding (RLE) na przedziałach** lub zapis **bitowy (BitSet)**:
+
+* **Zwykły JSON:** `[1, 2, 3, 4, 5, ..., 1000]` $\rightarrow$ **~5 000 bajtów**.
+* **Zakres RLE:** `"1-1000"` $\rightarrow$ **6 bajtów**.
+* Jeśli identyfikatory są rzadkie (sparse), np. `1, 2, 3, 5, 6, 7, 10`, zapisujesz to jako skondensowany ciąg: `"1-3,5-7,10"`.
+
+Parser takiego łańcucha w V8 wykonuje się w mikrosekundy, a w limicie 9 KB jesteś w stanie utrzymać stan wykonania idący w setki tysięcy elementów.
+
+---
+
+Oto kompletna, zoptymalizowana implementacja **kompresora i parsera przedziałów RLE (Interval Run-Length Encoding)** w standardzie ES6+, przygotowana bezpośrednio pod środowisko Google Apps Script (V8).
+
+Rozwiązanie operuje na posortowanych przedziałach `[start, end]`. Dzięki temu sprawdzenie statusu elementu (`has`) oraz obliczenie łącznej liczby przetworzonych zadań (`count`) odbywa się w czasie **$O(\log k)$** lub **$O(k)$** (gdzie $k$ to liczba rozłącznych bloków, a nie poszczególnych elementów), **bez konieczności alokowania w pamięci RAM dziesiątek tysięcy liczb**.
+
+---
+
+### Kompletny moduł `RleIndexTracker`
+
+```javascript
+/**
+ * Kompresor i parser zakresów RLE dla kolejki zadań w Google Apps Script.
+ * Konwertuje zbiory indeksów (np. wierszy) na format: "1-500,502,510-1200"
+ */
+class RleIndexTracker {
+  /**
+   * @param {string} [serializedString=""] - Opcjonalny łańcuch RLE do wczytania
+   */
+  constructor(serializedString = '') {
+    // Reprezentacja wewnętrzna: tablica par [start, end] posortowana rosnąco
+    this.intervals = [];
+    if (serializedString && serializedString.trim() !== '') {
+      this.parse(serializedString);
+    }
+  }
+
+  /**
+   * Parsuje ciąg znaków RLE do postaci tablicy przedziałów [start, end]
+   * @param {string} rleStr - Np. "1-100,105,200-250"
+   */
+  parse(rleStr) {
+    this.intervals = [];
+    const tokens = rleStr.split(',');
+
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i].trim();
+      if (!token) continue;
+
+      const dashIdx = token.indexOf('-');
+      if (dashIdx !== -1) {
+        const start = parseInt(token.slice(0, dashIdx), 10);
+        const end = parseInt(token.slice(dashIdx + 1), 10);
+        if (!isNaN(start) && !isNaN(end) && start <= end) {
+          this.intervals.push([start, end]);
+        }
+      } else {
+        const val = parseInt(token, 10);
+        if (!isNaN(val)) {
+          this.intervals.push([val, val]);
+        }
+      }
+    }
+    this._normalize();
+  }
+
+  /**
+   * Serializuje wewnętrzne przedziały do minimalnego ciągu tekstowego
+   * @returns {string} Np. "1-500,502,510-1200"
+   */
+  serialize() {
+    if (this.intervals.length === 0) return '';
+    
+    return this.intervals
+      .map(([start, end]) => (start === end ? `${start}` : `${start}-${end}`))
+      .join(',');
+  }
+
+  /**
+   * Dodaje pojedynczy indeks do zbioru
+   * @param {number} num 
+   */
+  add(num) {
+    this.addBatch([num]);
+  }
+
+  /**
+   * Dodaje tablicę indeksów i łączy je w spójne przedziały
+   * @param {number[]} numbers 
+   */
+  addBatch(numbers) {
+    if (!numbers || numbers.length === 0) return;
+
+    for (let i = 0; i < numbers.length; i++) {
+      const n = numbers[i];
+      this.intervals.push([n, n]);
+    }
+    this._normalize();
+  }
+
+  /**
+   * Sprawdza, czy dany indeks został już przetworzony (Wyszukiwanie binarne O(log k))
+   * Nie alokuje tablicy w pamięci.
+   * @param {number} num
+   * @returns {boolean}
+   */
+  has(num) {
+    let low = 0;
+    let high = this.intervals.length - 1;
+
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const [start, end] = this.intervals[mid];
+
+      if (num >= start && num <= end) {
+        return true;
+      } else if (num < start) {
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Zwraca całkowitą liczbę oznaczonych indeksów bez ich rozpakowywania
+   * @returns {number}
+   */
+  count() {
+    let total = 0;
+    for (let i = 0; i < this.intervals.length; i++) {
+      total += (this.intervals[i][1] - this.intervals[i][0] + 1);
+    }
+    return total;
+  }
+
+  /**
+   * Rozpakowuje przedziały do pełnej tablicy liczb (używać ostrożnie przy >100k elementów)
+   * @returns {number[]}
+   */
+  toArray() {
+    const result = [];
+    for (let i = 0; i < this.intervals.length; i++) {
+      const [start, end] = this.intervals[i];
+      for (let j = start; j <= end; j++) {
+        result.push(j);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Łączy nachodzące lub stykające się przedziały (scalanie interwałów)
+   * @private
+   */
+  _normalize() {
+    if (this.intervals.length <= 1) return;
+
+    // Sortuj przedziały wg początku
+    this.intervals.sort((a, b) => a[0] - b[0]);
+
+    const merged = [this.intervals[0]];
+
+    for (let i = 1; i < this.intervals.length; i++) {
+      const current = this.intervals[i];
+      const last = merged[merged.length - 1];
+
+      // Jeśli przedział nachodzi na poprzedni LUB bezpośrednio z nim styka (np. 1-10 i 11-20)
+      if (current[0] <= last[1] + 1) {
+        last[1] = Math.max(last[1], current[1]);
+      } else {
+        merged.push(current);
+      }
+    }
+
+    this.intervals = merged;
+  }
+}
+
+```
+
+---
+
+### Integracja z `PropertiesService` w GAS
+
+Poniższy przykład pokazuje, jak w bezpieczny sposób przetwarzać wiersze partiami i zapisywać stan w `ScriptProperties`. Nawet jeśli przetwarzanie poszczególnych wierszy zakończy się błędem lub zadania będą wykonywane wybiórczo, stan pozostanie spójny i skompresowany.
+
+```javascript
+const QUEUE_KEY = 'PROCESSED_ROWS_RLE';
+
+function runIncrementalBatchJob() {
+  const scriptProps = PropertiesService.getScriptProperties();
+  
+  // 1. Wczytaj istniejący stan (np. "1-2500,2502-3000")
+  const rawState = scriptProps.getProperty(QUEUE_KEY) || '';
+  const tracker = new RleIndexTracker(rawState);
+
+  console.log(`Dotychczas przetworzono elementów: ${tracker.count()}`);
+
+  const totalRows = 20000;
+  const batchSize = 1000;
+  const successfullyProcessed = [];
+
+  // 2. Przetwarzaj tylko te elementy, które jeszcze nie są gotowe
+  for (let row = 1; row <= totalRows; row++) {
+    if (tracker.has(row)) {
+      continue; // Pomiń już wykonane
+    }
+
+    // --- Logika biznesowa ---
+    const success = processRowData(row);
+    // ------------------------
+
+    if (success) {
+      successfullyProcessed.push(row);
+    }
+
+    if (successfullyProcessed.length >= batchSize) {
+      break; // Zakończ partię
+    }
+  }
+
+  // 3. Połącz nową partię z istniejącym stanem
+  if (successfullyProcessed.length > 0) {
+    tracker.addBatch(successfullyProcessed);
+
+    // 4. Zapisz z powrotem do PropertiesService
+    const compressedString = tracker.serialize();
+    scriptProps.setProperty(QUEUE_KEY, compressedString);
+
+    console.log(`Nowy stan kolejki zapisany.`);
+    console.log(`Długość łańcucha w Properties: ${compressedString.length} znaków.`);
+    console.log(`Łącznie wykonano: ${tracker.count()} / ${totalRows}`);
+  }
+}
+
+function processRowData(rowIndex) {
+  // Przykładowa operacja na wierszu
+  return true;
+}
+
+function resetTracker() {
+  PropertiesService.getScriptProperties().deleteProperty(QUEUE_KEY);
+  console.log('Stan zresetowany.');
+}
+
+```
+
+---
+
+### Porównanie zużycia pamięci `PropertiesService` (Limit: 9 KB)
+
+Dla scenariusza **50 000 przetworzonych wierszy** (od 1 do 50 000):
+
+| Format zapisu | Zawartość | Rozmiar w bajtach | % limitu 9 KB |
+| --- | --- | --- | --- |
+| **Standardowy JSON (`number[]`)** | `[1,2,3,4,5,...,50000]` | **~338 890 bajtów** | **~3760%** (Błąd przekroczenia limitu) |
+| **RLE Interval (`RleIndexTracker`)** | `1-50000` | **7 bajtów** | **0.07%** (Mieści się bez problemu) |
+| **RLE ze 100 dziurami (błędy/wyjątki)** | `1-450,452-1200,...` | **~1 200 bajtów** | **~13%** (Bezpieczny margines) |
+
+Wzorzec ten gwarantuje, że nawet po setkach wznowień skryptu nigdy nie zostanie wyrzucony błąd `Argument too large: value (limit 9216 bytes)`.

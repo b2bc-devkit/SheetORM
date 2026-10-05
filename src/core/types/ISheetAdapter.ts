@@ -48,6 +48,37 @@ export interface ISheetAdapter {
   /** Read a single row at the given 0-based data index. */
   getRow(rowIndex: number): unknown[];
 
+  /**
+   * Read specific data rows by 0-based index in ONE batched call where the
+   * backend supports it (Sheets `Values.batchGet` with N row ranges).
+   * Returns rows aligned with `rowIndexes`; `null` entries mark missing rows.
+   * Optional — callers fall back to per-row getRow() or a full scan.
+   */
+  readRowsAt?(rowIndexes: number[]): Array<unknown[] | null>;
+
+  /**
+   * Read a single sheet COLUMN (data rows only, row 2+), returned as a
+   * per-row scalar array.  Used to rebuild id→rowIndex maps with a narrow
+   * payload (one column instead of the full grid).  Optional.
+   */
+  readIdsColumn?(colIndex: number): unknown[] | null;
+
+  /**
+   * Write only the specified cells of a data row (sparse dirty-column update).
+   * `cells` is an array of `[colIndex, value]` pairs over the FULL header
+   * layout (0-based, incl. system columns); implementations may merge adjacent
+   * columns into span writes.  Optional — callers fall back to updateRow().
+   */
+  updateRowSparse?(rowIndex: number, cells: Array<readonly [number, unknown]>): void;
+
+  /**
+   * Numeric Sheets `sheetId` (grid scope), or `null` when unavailable.
+   * Used for cross-execution identity checks (schema fingerprints) — a sheet
+   * recreated under the same name receives a NEW sheetId, which makes stale
+   * fingerprints detectable.
+   */
+  getSheetId?(): number | null;
+
   /** Replace all data rows (row 2+) with the provided 2D array; surplus old rows are cleared. */
   replaceAllData(rows: unknown[][]): void;
 

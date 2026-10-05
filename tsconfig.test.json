@@ -5,9 +5,10 @@
   "compilerOptions": {
     "target": "ESNext",
     // CommonJS is required by Jest's default module system.
+    // Default module resolution for CommonJS is used (node10 was removed in TS 7;
+    // NodeNext/bundler are not usable here — package.json "type":"module" would
+    // flip emit to ESM and break Jest's CommonJS transform).
     "module": "CommonJS",
-    // Classic Node resolution for CommonJS require() calls.
-    "moduleResolution": "Node",
     "strict": true,
     // Disabled because Record fields are initialised via decorators, not constructors.
     "strictPropertyInitialization": false,

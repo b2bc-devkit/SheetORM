@@ -1,0 +1,14 @@
+// IDE-facing config so editors resolve Jest globals for test files.
+// The base tsconfig.json sets types: ["google-apps-script"] only; the actual
+// test type-check runs via tsconfig.test.json (referenced by jest.config.cjs).
+// This file exists purely so tsserver/IDEs pick the test config for files
+// under tests/ (nearest-tsconfig resolution).
+{
+  "extends": "../tsconfig.test.json",
+  "compilerOptions": {
+    // Anchor rootDir at the repo root so ../src files stay under it.
+    "rootDir": ".."
+  },
+  // include paths resolve relative to THIS directory — cover tests + src.
+  "include": ["**/*.ts", "../src/**/*.ts"]
+}

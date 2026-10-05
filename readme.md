@@ -23,13 +23,20 @@ extend `Record`, and everything just works.
   indexed fields
 - **N-gram text search** — Solr-like trigram search on `@Indexed` fields via `IndexStore.searchCombined()`;
   also available as the `search` filter operator in queries
-- **In-memory caching** — Configurable TTL cache to reduce sheet reads
+- **In-memory caching** — Configurable TTL cache to reduce sheet reads; opt-in persistent `GasCacheProvider`
+  (CacheService-backed, gzip-sharded) survives across GAS executions
 - **Lifecycle hooks** — `beforeSave`, `afterSave`, `beforeDelete`, `afterDelete`
 - **Batch operations** — `beginBatch` / `commitBatch` / `rollbackBatch` for safe bulk writes
 - **Pagination & grouping** — `select()` returns `PaginatedResult<T>`, `groupBy()` returns `GroupResult<T>`
 - **Sheet protection** — Auto-protect sheets on creation via `isProtected()` / `protectedFor()` overrides
 - **Hidden sheets** — Auto-hide sheets on creation via `isHidden()` override; hidden sheets remain accessible
   from the "All sheets" menu
+- **Index-driven queries** — Equality/`in` filters on `@Indexed` fields resolve through the combined index and
+  fetch only matching rows (sparse reads) instead of scanning the whole table
+- **Opt-in storage modes** — `tombstoneDeletes()` for marker-based deletes with periodic compaction,
+  `packedStorage()` for a compact `__id | __data` two-column layout
+- **Fused RPC layer** — Deferred value writes merge into single `batchUpdate` calls; parallel `fetchAll`
+  warm-up; schema fingerprints skip redundant header verification on warm starts
 - **Zero runtime dependencies** — Bundles into a single `Code.js` via Vite
 
 ## Quick Start
@@ -266,6 +273,53 @@ Car.groupBy("make");
 
 See [`examples/cars-crud.ts`](examples/cars-crud.ts) for a complete runnable example.
 
+### 7. Opt-in storage modes
+
+Two static overrides change how a table physically stores rows. Both default to `false` — enable them only
+when the trade-offs fit your use case.
+
+#### `tombstoneDeletes()` — marker deletes with compaction
+
+```ts
+class Event extends Record {
+  name: string;
+
+  static override tombstoneDeletes(): boolean {
+    return true;
+  }
+}
+```
+
+Deletes write a `#TOMB#` marker into `__id` instead of removing the row — one cell write, zero row-shifting.
+Reads transparently skip tombstoned rows. A compaction pass (batched `deleteDimension`) reclaims dead space
+once tombstones reach ~25% of physical rows, or when all rows are dead.
+
+Trade-off: deleted rows stay physically visible in the sheet (as `#TOMB#` markers) until compaction runs.
+
+#### `packedStorage()` — two-column packed layout
+
+```ts
+class Telemetry extends Record {
+  @Indexed()
+  deviceId: string;
+
+  payload: string;
+
+  static override packedStorage(): boolean {
+    return true;
+  }
+}
+```
+
+Each entity is stored as `__id | __data` — the whole field payload serialised into one JSON cell. Write
+payloads shrink drastically (2 cells per row regardless of field count) while field-level type coercion is
+preserved (`@Field` types are serialised before packing and deserialised on read).
+
+Trade-off: the sheet is no longer human-readable — every row is an id plus a JSON blob.
+
+Changing either mode invalidates the stored schema fingerprint, so `ensureTable` re-verifies headers on the
+next run.
+
 ## Architecture
 
 ```
@@ -297,9 +351,12 @@ src/
   query/QueryEngine.ts    — filter, sort, paginate, group pipeline
   index/IndexMeta.ts      — Index metadata contract
   index/IndexStore.ts     — Secondary index management
-  storage/GoogleSheetAdapter.ts — Native GAS sheet wrapper
-  storage/GoogleSpreadsheetAdapter.ts — Native GAS spreadsheet wrapper
+  storage/GoogleSheetAdapter.ts — Sheets API sheet wrapper (fused batchUpdate + SpreadsheetApp fallback)
+  storage/GoogleSpreadsheetAdapter.ts — Spreadsheet wrapper, parallel fetchAll warm-up
+  storage/SheetsRpc.ts       — Sheets Advanced Service plumbing, quota windows, deferred value writes
+  storage/SchemaFingerprint.ts — Warm-start schema validation via PropertiesService
   core/cache/MemoryCache.ts — In-memory cache implementation
+  core/cache/GasCacheProvider.ts — Persistent CacheService cache (gzip + 90 kB sharding)
   utils/Uuid.ts           — UUID v4 generation (GAS / fallback)
   utils/Serialization.ts  — Row ↔ Entity conversion
   utils/SheetOrmLogger.ts — Verbose logger for API-call tracing
@@ -390,6 +447,19 @@ explicit type.
 | `select(offset, limit, options?)` | `PaginatedResult<T>` | Paginated query                       |
 | `groupBy(field, options?)`        | `GroupResult<T>[]`   | Group by field                        |
 
+#### Static configuration overrides
+
+| Method                 | Returns    | Default        | Description                                              |
+| ---------------------- | ---------- | -------------- | -------------------------------------------------------- |
+| `tableName` (get)      | `string`   | `tbl_{Class}s` | Sheet name for the table                                 |
+| `indexTableName` (get) | `string`   | `idx_{Class}s` | Combined index sheet name                                |
+| `isProtected()`        | `boolean`  | `false`        | Protect the sheet on creation                            |
+| `protectedFor()`       | `string[]` | `[]`           | Editor emails for the protected sheet                    |
+| `isHidden()`           | `boolean`  | `false`        | Hide the sheet tab on creation                           |
+| `cacheTtlMs()`         | `number`   | 60 s           | TTL for entity (`data:`) and index (`cidx:`) cache reads |
+| `tombstoneDeletes()`   | `boolean`  | `false`        | Marker-based deletes + periodic compaction               |
+| `packedStorage()`      | `boolean`  | `false`        | Two-column `__id \| __data` packed layout                |
+
 ### Query\<T\>
 
 ```ts
@@ -453,21 +523,23 @@ const ids = indexStore.searchCombined("idx_Cars", "model", "320i");
 npm test
 ```
 
-Runs **340 unit and benchmark tests** across 11 test suites using Jest + ts-jest with in-memory mock adapters:
+Runs **403 unit and benchmark tests** across 13 test suites using Jest + ts-jest with in-memory mock adapters:
 
-| Suite                      | Tests | Description                                  |
-| -------------------------- | ----- | -------------------------------------------- |
-| `record.test.ts`           | 81    | ActiveRecord API (save, find, query, Query)  |
-| `query-engine.test.ts`     | 60    | Filter, sort, paginate, group                |
-| `serialization.test.ts`    | 47    | Row ↔ Entity conversion                      |
-| `index-store.test.ts`      | 44    | Secondary index CRUD                         |
-| `query.test.ts`            | 41    | Fluent query API                             |
-| `sheet-repository.test.ts` | 35    | SheetRepository CRUD, batch, hooks           |
-| `cache.test.ts`            | 16    | MemoryCache TTL behavior                     |
-| `benchmark.test.ts`        | 6     | 1 000-record perf benchmark: Cars vs Workers |
-| `uuid.test.ts`             | 5     | UUID generation                              |
-| `parity-validator.test.ts` | 3     | Jest ↔ GAS runtime parity check              |
-| `sheetorm.test.ts`         | 2     | npm entry point smoke tests                  |
+| Suite                        | Tests | Description                                             |
+| ---------------------------- | ----- | ------------------------------------------------------- |
+| `record.test.ts`             | 81    | ActiveRecord API (save, find, query, Query)             |
+| `query-engine.test.ts`       | 60    | Filter, sort, paginate, group                           |
+| `serialization.test.ts`      | 47    | Row ↔ Entity conversion                                 |
+| `optimizations.test.ts`      | 45    | Index planner, sparse updates/deletes, tombstone/packed |
+| `index-store.test.ts`        | 44    | Secondary index CRUD                                    |
+| `query.test.ts`              | 41    | Fluent query API                                        |
+| `sheet-repository.test.ts`   | 35    | SheetRepository CRUD, batch, hooks                      |
+| `gas-cache-provider.test.ts` | 18    | CacheService provider: sharding, gzip, TTL              |
+| `cache.test.ts`              | 16    | MemoryCache TTL behavior                                |
+| `benchmark.test.ts`          | 6     | 1 000-record perf benchmark: Cars vs Workers            |
+| `uuid.test.ts`               | 5     | UUID generation                                         |
+| `parity-validator.test.ts`   | 3     | Jest ↔ GAS runtime parity check                         |
+| `sheetorm.test.ts`           | 2     | npm entry point smoke tests                             |
 
 ### Benchmark Tests (`benchmark.test.ts`)
 
@@ -522,11 +594,15 @@ Run in Google Apps Script (real Sheets API):
   runtime parity suite
 - `validateTests()` — validates mapping only (fast drift check)
 
+A runbook for driving these functions from the Apps Script editor via Playwright MCP (including expected
+counts, timing baselines and the custom listbox quirk) lives in
+[`playwright/README.md`](playwright/README.md).
+
 ### GAS Runtime Benchmark
 
 A runtime benchmark mirrors `tests/benchmark.test.ts` and runs against the real Sheets API:
 
-- `src/testing/RuntimeBenchmark.ts` — benchmark runner for Cars + Workers (100 records each)
+- `src/testing/RuntimeBenchmark.ts` — benchmark runner for Cars + Workers (1 000 records)
 
 Run in Google Apps Script (real Sheets API):
 
@@ -537,19 +613,19 @@ Run in Google Apps Script (real Sheets API):
 The following callable functions are surfaced as GAS globals (visible in the Apps Script editor Run menu and
 callable as triggers). Everything else is an internal implementation detail bundled into `Code.js`.
 
-| Function               | Purpose                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------------------ |
-| `runTestsStageOne()`   | Stage-one parity tests: cache, index-store, query, query-engine (~162 tests).                    |
-| `runTestsStageTwo()`   | Stage-two parity tests: serialization, uuid (~52 tests).                                         |
-| `runTestsStageThree()` | Stage-three parity tests: record (~81 tests).                                                    |
-| `runTestsStageFour()`  | Stage-four parity tests: sheet-repository (~35 tests).                                           |
-| `validateTests()`      | Checks Jest ↔ GAS handler mapping parity — no Sheets API calls, fails immediately on drift.      |
-| `runBenchmark()`       | Write/read/query/delete cycle for Cars + Workers (100 records each); logs per-operation timings. |
-| `removeAllSheets()`    | Deletes every sheet in the active spreadsheet (destructive — use with caution).                  |
-| `demoCreate()`         | Creates 5 sample DemoCar records in the sheet.                                                   |
-| `demoRead()`           | Reads and logs DemoCar records using find/query/where.                                           |
-| `demoUpdate()`         | Updates existing DemoCar records and logs changes.                                               |
-| `demoDelete()`         | Deletes DemoCar records and verifies removal.                                                    |
+| Function               | Purpose                                                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| `runTestsStageOne()`   | Stage-one parity tests: cache, index-store, query, query-engine (161 tests).                         |
+| `runTestsStageTwo()`   | Stage-two parity tests: serialization, uuid (52 tests).                                              |
+| `runTestsStageThree()` | Stage-three parity tests: record (81 tests).                                                         |
+| `runTestsStageFour()`  | Stage-four parity tests: sheet-repository (35 tests).                                                |
+| `validateTests()`      | Checks Jest ↔ GAS handler mapping parity — no Sheets API calls, fails immediately on drift.          |
+| `runBenchmark()`       | Write/read/query/delete cycle for Cars + Workers (1 000 records); logs per-operation timings + JSON. |
+| `removeAllSheets()`    | Deletes every sheet in the active spreadsheet (destructive — use with caution).                      |
+| `demoCreate()`         | Creates 5 sample DemoCar records in the sheet.                                                       |
+| `demoRead()`           | Reads and logs DemoCar records using find/query/where.                                               |
+| `demoUpdate()`         | Updates existing DemoCar records and logs changes.                                                   |
+| `demoDelete()`         | Deletes DemoCar records and verifies removal.                                                        |
 
 ## Available Scripts
 
@@ -565,6 +641,13 @@ callable as triggers). Everything else is an internal implementation detail bund
 
 Each registered table occupies one sheet. Row 1 contains headers: `__id`, `__createdAt`, `__updatedAt`,
 followed by schema-defined fields. Data starts at row 2.
+
+Opt-in layouts:
+
+- **Packed storage** (`packedStorage()` → `true`) — headers are `__id | __data`; every entity lives in two
+  cells regardless of field count.
+- **Tombstone deletes** (`tombstoneDeletes()` → `true`) — deleted rows keep their slot with `__id` set to
+  `#TOMB#` until periodic compaction reclaims them; reads skip them transparently.
 
 Special sheets:
 
@@ -589,8 +672,11 @@ One production adapter pair is provided:
 
 **Location**: `src/storage/GoogleSpreadsheetAdapter.ts`, `src/storage/GoogleSheetAdapter.ts`
 
-Uses the native GAS `SpreadsheetApp` / `Sheet` objects directly. This is the default adapter — no
-configuration required.
+This is the default adapter — no configuration required. Writes go through the **Sheets Advanced Service**
+(`spreadsheets.batchUpdate` / `values.batchUpdate`) with automatic fusion: deferred value writes queued during
+a batch flush as a single request, and merge into structural `batchUpdate` calls as `updateCells` when
+possible. `SpreadsheetApp` remains as the fallback path. Independent cold-start reads run in parallel via
+`UrlFetchApp.fetchAll`.
 
 ```ts
 import { GoogleSpreadsheetAdapter } from "./src/storage/GoogleSpreadsheetAdapter";
@@ -605,15 +691,34 @@ Registry.getInstance().configure({
 });
 ```
 
-| Property            | Value                                                               |
-| ------------------- | ------------------------------------------------------------------- |
-| Write mechanism     | `Range.setValues()` — GAS native API                                |
-| Calls per `saveAll` | **2** — one `setValues` for entity sheet + one for index sheet      |
-| Flush required      | No — writes are synchronous and immediately visible                 |
-| Quota impact        | Counts against SpreadsheetApp call budget (no daily UrlFetch quota) |
-| Read operations     | Native `Range.getValues()`                                          |
-| GAS V8 latency      | ~300–500 ms per `setValues` call on large ranges                    |
-| Best for            | All production use; default choice                                  |
+| Property            | Value                                                                          |
+| ------------------- | ------------------------------------------------------------------------------ |
+| Write mechanism     | Sheets Advanced Service `batchUpdate` (fused) + `SpreadsheetApp` fallback      |
+| Calls per `saveAll` | **~1–2** fused RPCs — value writes coalesce into one `Values.batchUpdate`      |
+| Flush required      | No — writes are deferred internally and flushed automatically                  |
+| Quota impact        | Internal quota windows pace Advanced Service calls; retries handled            |
+| Read operations     | `Values.batchGet` (multi-range), sparse `readRowsAt`, parallel `fetchAll` warm |
+| GAS V8 latency      | Dominated by RPC latency (~150 ms/call); fusion minimises call count           |
+| Best for            | All production use; default choice                                             |
+
+## Cache Providers
+
+`Registry.configure({ cache })` accepts any `ICacheProvider`. The default is `MemoryCache` (per-execution,
+in-memory). For persistence **across** GAS executions use `GasCacheProvider`:
+
+```ts
+import { GasCacheProvider } from "./src/core/cache/GasCacheProvider";
+
+Registry.getInstance().configure({
+  cache: new GasCacheProvider(),
+});
+```
+
+`GasCacheProvider` stores entries in `CacheService` — payloads above ~1 kB are gzip-compressed
+(`Utilities.gzip` + base64, typically 3–5× smaller on entity JSON) and split into 90 kB shards, so large
+tables fit far more than the native 100 kB key limit. It also backs the persisted `dix:` (row-index), `chash:`
+(index hash) and `cidx:` (combined index data) keys, giving warm starts `O(1)` `findById`/index lookups
+without re-reading sheets.
 
 ## Development Notes
 

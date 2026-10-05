@@ -12,6 +12,7 @@
  */
 
 import type { ICacheProvider } from "../types/ICacheProvider.js";
+import { DEFAULT_CACHE_TTL_MS } from "../types/ICacheProvider.js";
 import { SheetOrmLogger } from "../../utils/SheetOrmLogger.js";
 
 /** Internal wrapper holding the cached data and its absolute expiration time. */
@@ -22,8 +23,8 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-/** Default time-to-live for cache entries: 60 seconds. */
-const DEFAULT_TTL_MS = 60_000;
+/** Default time-to-live for cache entries (shared with Record.cacheTtlMs). */
+const DEFAULT_TTL_MS = DEFAULT_CACHE_TTL_MS;
 
 /**
  * Simple in-memory cache backed by a `Map`.

@@ -1,9 +1,13 @@
 import type { ISheetAdapter } from "../src/core/types/ISheetAdapter";
 
+let nextSheetId = 1;
+
 export class MockSheetAdapter implements ISheetAdapter {
   private name: string;
   private headers: string[] = [];
   private data: unknown[][] = [];
+  /** Monotonic id — a recreated sheet gets a NEW one (mirrors real sheetIds). */
+  private sheetId: number = nextSheetId++;
 
   constructor(name: string) {
     this.name = name;
@@ -90,6 +94,28 @@ export class MockSheetAdapter implements ISheetAdapter {
     }
     // Out of range: return array of empty strings matching header width (mirrors real adapter)
     return this.headers.length > 0 ? new Array(this.headers.length).fill("") : [];
+  }
+
+  readRowsAt(rowIndexes: number[]): Array<unknown[] | null> {
+    return rowIndexes.map((i) => (i >= 0 && i < this.data.length ? [...this.data[i]] : null));
+  }
+
+  readIdsColumn(colIndex: number): unknown[] | null {
+    return this.data.map((r) => r[colIndex]);
+  }
+
+  updateRowSparse(rowIndex: number, cells: Array<readonly [number, unknown]>): void {
+    if (cells.length === 0 || rowIndex < 0) return;
+    const headerLen = this.headers.length;
+    while (this.data.length <= rowIndex) {
+      this.data.push(new Array(headerLen).fill(""));
+    }
+    const row = this.data[rowIndex] as unknown[];
+    for (const [col, val] of cells) row[col] = val;
+  }
+
+  getSheetId(): number | null {
+    return this.sheetId;
   }
 
   replaceAllData(rows: unknown[][]): void {

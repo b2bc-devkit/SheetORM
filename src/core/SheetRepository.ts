@@ -23,6 +23,7 @@ import type { ISpreadsheetAdapter } from "../core/types/ISpreadsheetAdapter.js";
 import type { ISheetAdapter } from "../core/types/ISheetAdapter.js";
 import type { TableSchema } from "../core/types/TableSchema.js";
 import type { QueryOptions } from "../core/types/QueryOptions.js";
+import type { Filter } from "../core/types/Filter.js";
 import type { PaginatedResult } from "../core/types/PaginatedResult.js";
 import type { GroupResult } from "../core/types/GroupResult.js";
 import type { LifecycleHooks } from "../core/types/LifecycleHooks.js";
@@ -53,6 +54,8 @@ export class SheetRepository<T extends Entity> {
   private requiredFields: TableSchema["fields"];
   private defaultableFields: TableSchema["fields"];
   private dataCacheKey: string;
+  /** Cache key for the persisted id→rowIndex map (derived-structure warm start). */
+  private dixCacheKey: string;
   private fieldMap: Map<string, FieldDefinition>;
   /** Fast-lookup map: entity ID → 1-based sheet row index for O(1) row access. */
   private idToRowIndex: Map<string, number> | null = null;
@@ -76,6 +79,8 @@ export class SheetRepository<T extends Entity> {
   private batchSheet: ISheetAdapter | null = null;
   /** Row count captured once at saveAll() start — avoids 1000× getLastRow(). */
   private batchBaseRowCount: number | null = null;
+  /** Running count of buffered "create" entries — avoids O(n²) entityBatch.filter() per save. */
+  private batchCreateCount = 0;
   /** Cached entity array used by updateCacheAfterSave in batch mode — avoids 1000× cache.get() log calls. */
   private batchCachedData: T[] | null = null;
   /** Indexed fields metadata, cached for the duration of saveAll() — avoids 1000× getIndexedFields() array alloc. */
@@ -90,6 +95,11 @@ export class SheetRepository<T extends Entity> {
   private indexedFieldNames: Set<string>;
   /** True when headers haven't been written to the sheet yet (new sheet from ensureTable). */
   private headersDeferred: boolean;
+  /** Tombstoned (logically deleted) physical rows — only when schema.tombstones. */
+  private tombstoneRows = 0;
+
+  /** Marker written into `__id` by tombstone deletes (`schema.tombstones`). */
+  private static readonly TOMBSTONE_ID = "#TOMB#";
 
   /**
    * Constructs a new repository for the given table schema.
@@ -123,8 +133,11 @@ export class SheetRepository<T extends Entity> {
     this.sheetCache = initialSheet ?? null;
     this.physicalRowCount = initialRowCount ?? null;
 
-    // Build column header array from field definitions (used for serialisation)
-    this.headers = Serialization.buildHeaders(schema.fields);
+    // Build column header array from field definitions (used for serialisation).
+    // Packed storage: `__id | __data` — fields live inside the JSON payload.
+    this.headers = schema.packed
+      ? Serialization.buildPackedHeaders()
+      : Serialization.buildHeaders(schema.fields);
     // Locate the __id column position for fast primary-key lookups
     this.idColIdx = this.headers.indexOf(SystemColumns.ID);
 
@@ -134,6 +147,7 @@ export class SheetRepository<T extends Entity> {
 
     // Cache key for the data cache (all-entity array)
     this.dataCacheKey = `data:${schema.tableName}`;
+    this.dixCacheKey = `dix:${schema.tableName}`;
 
     // Pre-build field lookup map once (reused by entityToRow / rowToEntity)
     this.fieldMap = new Map();
@@ -236,12 +250,7 @@ export class SheetRepository<T extends Entity> {
             rowIndex.set(rowId, i);
             if (rowId === partial.__id) {
               existingIdx = i;
-              existingEntity = Serialization.rowToEntity<T>(
-                data[i],
-                this.headers,
-                this.schema.fields,
-                this.fieldMap,
-              );
+              existingEntity = this.rowToEntity<T>(data[i], this.headers, this.schema.fields, this.fieldMap);
             }
           }
           // Rebuild the full index as a side effect of the scan
@@ -302,7 +311,7 @@ export class SheetRepository<T extends Entity> {
         __updatedAt: now,
       } as T;
 
-      const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
+      const row = this.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
 
       // Compute the 0-based data row index for writing.
       // In batch mode (saveAll), batchBaseRowCount was captured once at batch start.
@@ -314,8 +323,7 @@ export class SheetRepository<T extends Entity> {
             ? this.physicalRowCount
             : sheet.getRowCount();
       // Account for already-buffered CREATE entities that haven't been flushed yet
-      const dataIndex =
-        baseCount + (this.entityBatch ? this.entityBatch.filter((item) => item.mode === "create").length : 0);
+      const dataIndex = baseCount + (this.entityBatch ? this.batchCreateCount : 0);
 
       // Bootstrap idToRowIndex and cache when first entity is written to an empty sheet
       if (!this.idToRowIndex) {
@@ -325,7 +333,7 @@ export class SheetRepository<T extends Entity> {
           this.idToRowIndexComplete = true;
           // Seed empty cache so subsequent finds are cache hits
           if (this.cache && !this.cache.has(this.dataCacheKey)) {
-            this.cache.set(this.dataCacheKey, []);
+            this.cache.set(this.dataCacheKey, [], this.schema.cacheTtlMs);
           }
         }
       }
@@ -333,6 +341,7 @@ export class SheetRepository<T extends Entity> {
       // In entity batch mode (saveAll): buffer the row; otherwise write immediately
       if (this.entityBatch !== null) {
         this.entityBatch.push({ entity, row, dataIndex, mode: "create" });
+        this.batchCreateCount++;
       } else {
         // Write headers + first data row in a single API call for newly-created sheets
         if (this.headersDeferred) {
@@ -362,9 +371,19 @@ export class SheetRepository<T extends Entity> {
         __updatedAt: now,
       } as T;
 
-      const row = Serialization.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
+      const row = this.entityToRow(entity, this.schema.fields, this.headers, this.fieldMap);
       if (this.entityBatch !== null) {
         this.entityBatch.push({ entity, row, dataIndex: existingIdx!, mode: "update" });
+      } else if (sheet.updateRowSparse) {
+        // Sparse write — emit only cells whose SERIALISED value changed
+        // (always includes __updatedAt).  A no-op field save becomes a
+        // single-cell write instead of a full-row rewrite.
+        const oldRow = this.entityToRow(existingEntity!, this.schema.fields, this.headers, this.fieldMap);
+        const cells: Array<readonly [number, unknown]> = [];
+        for (let i = 0; i < row.length; i++) {
+          if (row[i] !== oldRow[i]) cells.push([i, row[i]]);
+        }
+        sheet.updateRowSparse(existingIdx!, cells);
       } else {
         sheet.updateRow(existingIdx!, row);
       }
@@ -413,6 +432,7 @@ export class SheetRepository<T extends Entity> {
 
     // Initialise batch state
     this.entityBatch = [];
+    this.batchCreateCount = 0;
     this.batchSheet = sheet;
 
     // Reuse physicalRowCount when available — avoids a getLastRow() API call (~700 ms)
@@ -430,7 +450,7 @@ export class SheetRepository<T extends Entity> {
       const results = entities.map((e) => this.doSave(e));
 
       // Count how many new rows were created to update physicalRowCount
-      const savedCreates = (this.entityBatch ?? []).filter((i) => i.mode === "create").length;
+      const savedCreates = this.batchCreateCount;
 
       // Flush buffered rows to the sheet in one updateRows() call
       this.flushEntityBatch(sheet);
@@ -438,6 +458,13 @@ export class SheetRepository<T extends Entity> {
       // Flush index batch (single write per index sheet)
       if (this.schema.indexTableName) {
         this.indexStore.flushIndexBatch();
+      }
+
+      // Single write-through commit for all in-place cache mutations made
+      // during the batch (updateCacheAfterSave defers them in batch mode).
+      if (this.cache) {
+        const cached = this.batchCachedData ?? this.cache.get<T[]>(this.dataCacheKey);
+        if (cached) this.commitDataCache(cached);
       }
 
       // Update physicalRowCount with the number of new rows
@@ -455,6 +482,7 @@ export class SheetRepository<T extends Entity> {
     } catch (err) {
       // Error recovery: clear all batch state and invalidate caches
       this.entityBatch = null;
+      this.batchCreateCount = 0;
       this.batchSheet = null;
       this.batchBaseRowCount = null;
       this.batchCachedData = null;
@@ -462,7 +490,10 @@ export class SheetRepository<T extends Entity> {
       if (this.schema.indexTableName) {
         this.indexStore.cancelIndexBatch();
       }
-      if (this.cache) this.cache.delete(this.dataCacheKey);
+      if (this.cache) {
+        this.cache.delete(this.dataCacheKey);
+        this.cache.delete(this.dixCacheKey);
+      }
       this.idToRowIndex = null;
       this.physicalRowCount = null;
       this.idToRowIndexComplete = false;
@@ -512,42 +543,73 @@ export class SheetRepository<T extends Entity> {
    * @returns Array of matching entities.
    */
   find(options?: QueryOptions): T[] {
-    const all = this.loadAllEntities();
-    if (!options) return this.cloneEntities(all);
+    if (!options) return this.cloneEntities(this.loadAllEntities());
 
     if (options.where && !options.whereGroups && this.schema.indexTableName) {
-      // Separate search-operator filters (n-gram indexed) from other filters
+      const idxTable = this.schema.indexTableName;
+      // Separate index-answerable predicates from residual filters
       const searchFilters: { field: string; value: string }[] = [];
+      const eqFilters: Filter[] = [];
       const otherFilters: typeof options.where = [];
 
       for (const f of options.where) {
         if (f.operator === "search" && this.isIndexedField(f.field)) {
           searchFilters.push({ field: f.field, value: String(f.value) });
+        } else if (this.isIndexNarrowable(f)) {
+          eqFilters.push(f);
         } else {
           otherFilters.push(f);
         }
       }
 
-      // N-gram index optimisation: narrow candidates via IndexStore.searchCombined
-      // before running the full filter pipeline (analogous to Solr pre-filtering)
-      if (searchFilters.length > 0) {
+      // Index narrowing — n-gram postings (search) AND equality postings
+      // (`=`/`in`) both resolve to entity-id sets via the combined index;
+      // intersecting them preserves AND semantics.
+      if (searchFilters.length > 0 || eqFilters.length > 0) {
         let candidateIds: Set<string> | null = null;
+        const intersect = (cur: Set<string> | null, idSet: Set<string>): Set<string> => {
+          if (cur === null) return idSet;
+          for (const id of cur) {
+            if (!idSet.has(id)) cur.delete(id);
+          }
+          return cur;
+        };
+
         for (const sf of searchFilters) {
-          const ids = this.indexStore.searchCombined(this.schema.indexTableName, sf.field, sf.value);
-          const idSet = new Set(ids);
-          // Intersect candidate sets across multiple search filters (AND semantics)
-          if (candidateIds === null) {
-            candidateIds = idSet;
-          } else {
-            for (const id of candidateIds) {
-              if (!idSet.has(id)) candidateIds.delete(id);
+          candidateIds = intersect(
+            candidateIds,
+            new Set(this.indexStore.searchCombined(idxTable, sf.field, sf.value)),
+          );
+        }
+        for (const ef of eqFilters) {
+          const vals = ef.operator === "in" ? (ef.value as unknown[]) : [ef.value];
+          const set = new Set<string>();
+          for (const v of vals) {
+            for (const id of this.indexStore.lookupCombined(idxTable, ef.field, String(v))) {
+              set.add(id);
             }
           }
+          candidateIds = intersect(candidateIds, set);
         }
 
         if (!candidateIds || candidateIds.size === 0) return [];
 
-        // Filter the in-memory entities to only those matching the index hits
+        // Sparse-read path: fetch ONLY the candidate rows (one batchGet)
+        // instead of scanning the whole table — executed BEFORE any full
+        // loadAllEntities() so a selective query never pays for it.
+        // Drift-safe — every fetched row's __id must itself be a candidate;
+        // any mismatch falls back to the scan path.
+        if (candidateIds.size <= 500) {
+          const sparse = this.readEntitiesByIds(candidateIds);
+          if (sparse !== null) {
+            // Re-apply the FULL predicate set — the index only narrows the
+            // search space; correctness is re-proven row by row.
+            return this.cloneEntities(QueryEngine.executeQuery(sparse, options));
+          }
+        }
+
+        // Fallback: narrow the fully-loaded entity list in memory.
+        const all = this.loadAllEntities();
         const narrowed = all.filter((e) => candidateIds!.has(e.__id));
         return this.cloneEntities(
           QueryEngine.executeQuery(narrowed, {
@@ -559,6 +621,7 @@ export class SheetRepository<T extends Entity> {
     }
 
     // Standard path: run full QueryEngine pipeline on all entities
+    const all = this.loadAllEntities();
     return this.cloneEntities(QueryEngine.executeQuery(all, options));
   }
 
@@ -646,6 +709,19 @@ export class SheetRepository<T extends Entity> {
       this.indexStore.removeAllFromCombined(this.schema.indexTableName, id);
     }
 
+    if (this.schema.tombstones) {
+      // Tombstone delete: overwrite __id with the marker — one cell write,
+      // zero row-shifting.  The physical row is reclaimed by compaction once
+      // dead space crosses the threshold.
+      this.markTombstoneRow(sheet, rowIdx);
+      this.idToRowIndex?.delete(id); // no shift: physical rows don't move
+      this.tombstoneRows++;
+      this.updateCacheAfterDelete(id);
+      if (this.hooks.afterDelete) this.hooks.afterDelete(id);
+      this.maybeCompactTombstones();
+      return true;
+    }
+
     // Delete the sheet row and adjust the tracked row count
     sheet.deleteRow(rowIdx);
     if (this.physicalRowCount !== null) this.physicalRowCount--;
@@ -695,16 +771,11 @@ export class SheetRepository<T extends Entity> {
     const toDelete = options ? QueryEngine.executeQuery(all, options) : [...all];
     if (toDelete.length === 0) return 0;
 
-    // For small batches (≤2), individual deletes are cheaper than replaceAllData
-    if (toDelete.length <= 2) {
-      let count = 0;
-      for (const entity of toDelete) {
-        if (this.doDelete(entity.__id)) count++;
-      }
-      return count;
+    // Single deletions: the dedicated path handles bookkeeping inline.
+    if (toDelete.length === 1) {
+      return this.doDelete(toDelete[0].__id) ? 1 : 0;
     }
 
-    // ── Bulk delete: snapshot → filter out deleted → write back (2 API calls vs N) ──
     const deleteIds = new Set<string>();
     for (const entity of toDelete) {
       // beforeDelete can veto individual deletions
@@ -716,11 +787,68 @@ export class SheetRepository<T extends Entity> {
     // Retain only entities not in the delete set
     const remaining = all.filter((e) => !deleteIds.has(e.__id));
     const sheet = this.getSheet();
-    const rows = remaining.map((e) =>
-      Serialization.entityToRow(e, this.schema.fields, this.headers, this.fieldMap),
-    );
-    // Replace the entire sheet data with the filtered rows
-    sheet.replaceAllData(rows);
+
+    // ── Tombstone mode ────────────────────────────────────────────────────
+    // Mark deleted rows in place (one batched sparse write for all of them —
+    // zero row-shift) unless the delete covers EVERYTHING, where a physical
+    // clear is strictly better than leaving a full sheet of tombstones.
+    if (this.schema.tombstones && remaining.length > 0) {
+      for (const entity of toDelete) {
+        if (!deleteIds.has(entity.__id)) continue;
+        const idx = this.idToRowIndex?.get(entity.__id);
+        if (idx !== undefined) this.markTombstoneRow(sheet, idx);
+      }
+      if (this.schema.indexTableName) {
+        this.indexStore.removeMultipleFromCombined(this.schema.indexTableName, [...deleteIds]);
+      }
+      for (const id of deleteIds) {
+        if (this.hooks.afterDelete) this.hooks.afterDelete(id);
+      }
+      if (this.idToRowIndex) {
+        for (const id of deleteIds) this.idToRowIndex.delete(id); // no shift
+      }
+      if (this.cache) {
+        const cached = this.cache.get<T[]>(this.dataCacheKey);
+        if (cached) {
+          for (let i = 0; i < cached.length; i++) {
+            if (cached[i] && deleteIds.has(cached[i].__id)) {
+              cached[i] = { __id: SheetRepository.TOMBSTONE_ID } as T;
+            }
+          }
+          this.commitDataCache(cached);
+        }
+      }
+      this.tombstoneRows += deleteIds.size;
+      this.persistRowIndex();
+      this.maybeCompactTombstones();
+      return deleteIds.size;
+    }
+
+    // ── Adaptive strategy ─────────────────────────────────────────────────
+    // Sparse deletions (deleted < remaining): ONE batched deleteDimension
+    // request — request payload ∝ deleted rows, survivors never rewritten.
+    // Dense deletions: replaceAllData — payload ∝ survivors instead.
+    // Both are ~1 write RPC; the choice minimises bytes on the wire.
+    const sparse = deleteIds.size < remaining.length;
+    let deletedIndexes: number[] | null = null;
+    if (sparse) {
+      deletedIndexes = [];
+      for (const id of deleteIds) {
+        const idx = this.idToRowIndex?.get(id);
+        if (idx === undefined) {
+          deletedIndexes = null; // unresolvable position → dense fallback
+          break;
+        }
+        deletedIndexes.push(idx);
+      }
+      if (deletedIndexes !== null) {
+        sheet.deleteRows(deletedIndexes);
+      }
+    }
+    if (deletedIndexes === null) {
+      const rows = remaining.map((e) => this.entityToRow(e, this.schema.fields, this.headers, this.fieldMap));
+      sheet.replaceAllData(rows);
+    }
 
     // Clean up secondary indexes for all deleted entities
     if (this.schema.indexTableName) {
@@ -733,16 +861,39 @@ export class SheetRepository<T extends Entity> {
 
     // Rebuild cache and idToRowIndex from the remaining entities
     if (this.cache) {
-      this.cache.set(this.dataCacheKey, remaining);
+      this.cache.set(this.dataCacheKey, remaining, this.schema.cacheTtlMs);
     }
 
     const rowIndex = new Map<string, number>();
-    for (let i = 0; i < remaining.length; i++) {
-      rowIndex.set(remaining[i].__id, i);
+    if (deletedIndexes !== null) {
+      // Sparse path: survivors keep relative order; their physical index
+      // shifts left by the number of deleted rows below them.
+      const sortedDel = [...deletedIndexes].sort((a, b) => a - b);
+      for (const e of remaining) {
+        const oldIdx = this.idToRowIndex?.get(e.__id);
+        if (oldIdx === undefined) continue;
+        // Count deleted indexes strictly below oldIdx (binary search on sorted list)
+        let lo = 0;
+        let hi = sortedDel.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (sortedDel[mid] < oldIdx) lo = mid + 1;
+          else hi = mid;
+        }
+        rowIndex.set(e.__id, oldIdx - lo);
+      }
+      if (this.physicalRowCount !== null) this.physicalRowCount -= deleteIds.size;
+    } else {
+      // Dense path: survivors were rewritten contiguously at the top.
+      for (let i = 0; i < remaining.length; i++) {
+        rowIndex.set(remaining[i].__id, i);
+      }
+      this.physicalRowCount = remaining.length;
+      this.tombstoneRows = 0; // physical rewrite dropped every marker
     }
     this.idToRowIndex = rowIndex;
-    this.physicalRowCount = rows.length;
     this.idToRowIndexComplete = true;
+    this.persistRowIndex();
 
     return deleteIds.size;
   }
@@ -754,8 +905,40 @@ export class SheetRepository<T extends Entity> {
    * @returns Total count of matching entities.
    */
   count(options?: QueryOptions): number {
+    // Preserve the re-entrancy guard: reads are forbidden while an entity
+    // batch (saveAll) is active — delegates to loadAllEntities' throw.
+    if (this.entityBatch) this.loadAllEntities();
+    if (!options || (!options.where && !options.whereGroups)) {
+      // No-filter fast paths — zero deserialization:
+      //   · cache hit          → cached entity count (exact)
+      //   · complete row index → its size IS the valid-entity count
+      //   · cold start         → physical row count via the adapter's cached
+      //                          grid/meta (one cheap call; for ORM-managed
+      //                          sheets physical rows == valid entities —
+      //                          phantom rows only arise from corruption).
+      const cached = this.cache?.get<T[]>(this.dataCacheKey);
+      if (cached != null) {
+        if (!this.schema.tombstones) return cached.length;
+        // Tombstone mode: slots include dead rows — count live ids only.
+        let live = 0;
+        for (const e of cached) if (this.isLiveId(e?.__id)) live++;
+        return live;
+      }
+      if (this.idToRowIndexComplete && this.idToRowIndex) return this.idToRowIndex.size;
+      if (this.schema.tombstones) {
+        // Physical row count includes tombstoned rows — need the live-id
+        // count.  One narrow column read beats a full-grid load.
+        const ids = this.getSheet().readIdsColumn?.(this.idColIdx);
+        if (ids) {
+          let live = 0;
+          for (const v of ids) if (this.isLiveId(v === null || v === undefined ? v : String(v))) live++;
+          return live;
+        }
+        return this.loadAllEntities().length;
+      }
+      return this.getSheet().getRowCount();
+    }
     const all = this.loadAllEntities();
-    if (!options || (!options.where && !options.whereGroups)) return all.length;
     return QueryEngine.executeQuery(all, options).length;
   }
 
@@ -845,7 +1028,10 @@ export class SheetRepository<T extends Entity> {
       }
     } catch (err) {
       // On error: invalidate caches to avoid stale state
-      if (this.cache) this.cache.delete(this.dataCacheKey);
+      if (this.cache) {
+        this.cache.delete(this.dataCacheKey);
+        this.cache.delete(this.dixCacheKey);
+      }
       this.idToRowIndex = null;
       this.physicalRowCount = null;
       this.idToRowIndexComplete = false;
@@ -891,12 +1077,45 @@ export class SheetRepository<T extends Entity> {
     // Filter out deleted entities and rewrite the entire sheet
     const deleteSet = new Set(deleteIds);
     const remaining = all.filter((e) => !deleteSet.has(e.__id));
-    const rows = remaining.map((e) =>
-      Serialization.entityToRow(e, this.schema.fields, this.headers, this.fieldMap),
-    );
 
     const sheet = this.getSheet();
+
+    // Tombstone mode: mark deleted rows in place instead of rewriting the
+    // survivors (unless nothing survives — then a physical clear wins).
+    if (this.schema.tombstones && remaining.length > 0) {
+      for (const id of deleteIds) {
+        const idx = this.idToRowIndex?.get(id);
+        if (idx !== undefined) this.markTombstoneRow(sheet, idx);
+      }
+      if (this.schema.indexTableName) {
+        this.indexStore.removeMultipleFromCombined(this.schema.indexTableName, deleteIds);
+      }
+      if (this.hooks.afterDelete) {
+        for (const id of deleteIds) this.hooks.afterDelete(id);
+      }
+      if (this.idToRowIndex) {
+        for (const id of deleteIds) this.idToRowIndex.delete(id);
+      }
+      if (this.cache) {
+        const cached = this.cache.get<T[]>(this.dataCacheKey);
+        if (cached) {
+          for (let i = 0; i < cached.length; i++) {
+            if (cached[i] && deleteSet.has(cached[i].__id)) {
+              cached[i] = { __id: SheetRepository.TOMBSTONE_ID } as T;
+            }
+          }
+          this.commitDataCache(cached);
+        }
+      }
+      this.tombstoneRows += deleteIds.length;
+      this.persistRowIndex();
+      this.maybeCompactTombstones();
+      return;
+    }
+
+    const rows = remaining.map((e) => this.entityToRow(e, this.schema.fields, this.headers, this.fieldMap));
     sheet.replaceAllData(rows);
+    this.tombstoneRows = 0; // physical rewrite dropped every marker
 
     // Clean up secondary indexes for deleted entities
     if (this.schema.indexTableName) {
@@ -912,7 +1131,7 @@ export class SheetRepository<T extends Entity> {
 
     // Rebuild cache and idToRowIndex from the remaining entities
     if (this.cache) {
-      this.cache.set(this.dataCacheKey, remaining);
+      this.cache.set(this.dataCacheKey, remaining, this.schema.cacheTtlMs);
     }
 
     const rowIndex = new Map<string, number>();
@@ -922,11 +1141,8 @@ export class SheetRepository<T extends Entity> {
     this.idToRowIndex = rowIndex;
     this.physicalRowCount = rows.length;
     this.idToRowIndexComplete = true;
+    this.persistRowIndex();
   }
-
-  /**
-   * Discard all buffered operations without applying them.
-   */
   rollbackBatch(): void {
     this.batchBuffer = null;
   }
@@ -977,14 +1193,38 @@ export class SheetRepository<T extends Entity> {
       );
     }
 
-    // Cache hit path
+    // Cache hit path — also rehydrate the derived structures the miss path
+    // builds (idToRowIndex / physicalRowCount / complete flag).  A persisted
+    // data cache (GasCacheProvider) makes this the ONLY thing needed for a
+    // warm cross-execution start: no extra RPC, no separate index payload —
+    // entity array order IS row order.  Guard: the mapping is only valid
+    // when every physical row produced an entity (length match), otherwise
+    // phantom/gap rows would shift all indexes.
+    const sheet = this.getSheet();
     if (this.cache) {
       const cached = this.cache.get<T[]>(this.dataCacheKey);
-      if (cached !== null) return cached;
+      if (cached !== null) {
+        const physical = sheet.getRowCount();
+        if (physical === cached.length) {
+          const rowIndex = new Map<string, number>();
+          let tombs = 0;
+          for (let i = 0; i < cached.length; i++) {
+            const id = cached[i].__id;
+            if (id === SheetRepository.TOMBSTONE_ID) tombs++;
+            else if (this.isLiveId(id)) rowIndex.set(id, i);
+          }
+          this.idToRowIndex = rowIndex;
+          this.physicalRowCount = physical;
+          this.idToRowIndexComplete = true;
+          if (this.schema.tombstones) this.tombstoneRows = tombs;
+          this.persistRowIndex(); // keep dix: warm for cold-start executions
+        }
+        // Tombstone mode: cached slots include dead rows — return live only.
+        return this.schema.tombstones ? cached.filter((e) => this.isLiveId(e?.__id)) : cached;
+      }
     }
 
     // Cache miss: read all rows from the sheet
-    const sheet = this.getSheet();
     const data = sheet.getAllData();
     const len = data.length;
     const headers = this.headers;
@@ -992,14 +1232,25 @@ export class SheetRepository<T extends Entity> {
     const fMap = this.fieldMap;
     const entities: T[] = [];
     const rowIndex = new Map<string, number>();
+    // Tombstone mode: the cache payload must preserve physical row slots —
+    // dead rows go in as marker entities so cached.length stays === physical.
+    const slots: T[] | null = this.schema.tombstones ? [] : null;
+    let tombs = 0;
 
     // Deserialise each row, skipping rows with invalid/missing IDs
     for (let i = 0; i < len; i++) {
-      const entity = Serialization.rowToEntity<T>(data[i], headers, fields, fMap);
-      if (!entity.__id || entity.__id === "undefined" || entity.__id === "null") continue;
-      rowIndex.set(entity.__id, i);
-      entities.push(entity);
+      const entity = this.rowToEntity<T>(data[i], headers, fields, fMap);
+      const id = entity.__id;
+      if (this.isLiveId(id)) {
+        rowIndex.set(id, i);
+        entities.push(entity);
+        slots?.push(entity);
+      } else if (slots) {
+        if (id === SheetRepository.TOMBSTONE_ID) tombs++;
+        slots.push({ __id: id === SheetRepository.TOMBSTONE_ID ? SheetRepository.TOMBSTONE_ID : "" } as T);
+      }
     }
+    if (slots) this.tombstoneRows = tombs;
 
     // Update in-memory state
     this.idToRowIndex = rowIndex;
@@ -1007,8 +1258,10 @@ export class SheetRepository<T extends Entity> {
     this.idToRowIndexComplete = true;
 
     if (this.cache) {
-      this.cache.set(this.dataCacheKey, entities);
+      this.cache.set(this.dataCacheKey, slots ?? entities, this.schema.cacheTtlMs);
     }
+    this.persistRowIndex();
+    if (slots) this.maybeCompactTombstones();
 
     return entities;
   }
@@ -1031,12 +1284,13 @@ export class SheetRepository<T extends Entity> {
     let result: number | null = null;
     for (let i = 0; i < data.length; i++) {
       const rowId = String(data[i][col]);
-      rowIndex.set(rowId, i);
+      if (this.isLiveId(rowId)) rowIndex.set(rowId, i);
       if (rowId === id) result = i;
     }
     this.idToRowIndex = rowIndex;
     this.physicalRowCount = data.length;
     this.idToRowIndexComplete = true;
+    this.persistRowIndex();
     return result;
   }
 
@@ -1078,10 +1332,12 @@ export class SheetRepository<T extends Entity> {
   private flushEntityBatch(sheet: ISheetAdapter): void {
     if (!this.entityBatch || this.entityBatch.length === 0) {
       this.entityBatch = null;
+      this.batchCreateCount = 0;
       return;
     }
     const batch = this.entityBatch;
     this.entityBatch = null;
+    this.batchCreateCount = 0;
     const creates = batch.filter((i) => i.mode === "create").length;
     const updates = batch.filter((i) => i.mode === "update").length;
     SheetOrmLogger.log(
@@ -1097,8 +1353,67 @@ export class SheetRepository<T extends Entity> {
       );
       this.headersDeferred = false;
     } else {
-      sheet.updateRows(sorted.map((item) => ({ rowIndex: item.dataIndex, values: item.row })));
+      // Dirty-slice merging: build write spans that are contiguous on the
+      // sheet.  When an UPDATE row is separated from the previous span row by
+      // a gap, the gap positions are re-filled with reserialised rows of the
+      // entities currently occupying them (rewritten with identical values),
+      // turning N scattered writes into one bounding-box setValues() call.
+      // If a gap row can't be resolved from cache, the span is flushed and a
+      // new one starts — falling back to the old contiguous-group behaviour.
+      const idxToEntity = this.buildIndexToEntityMap();
+      let spanStart = sorted[0].dataIndex;
+      let spanRows: unknown[][] = [sorted[0].row];
+      let prev = sorted[0].dataIndex;
+      const emitSpan = () => sheet.writeRowsAt(spanStart, spanRows);
+      for (let i = 1; i < sorted.length; i++) {
+        const idx = sorted[i].dataIndex;
+        if (idx === prev + 1) {
+          spanRows.push(sorted[i].row);
+        } else if (idx > prev + 1 && idxToEntity !== null) {
+          // Fill gap rows prev+1 .. idx-1 from the entity cache
+          const fill: unknown[][] = [];
+          let resolvable = true;
+          for (let g = prev + 1; g < idx; g++) {
+            const gapEntity = idxToEntity.get(g);
+            if (!gapEntity) {
+              resolvable = false;
+              break;
+            }
+            fill.push(this.entityToRow(gapEntity, this.schema.fields, this.headers, this.fieldMap));
+          }
+          if (resolvable) {
+            spanRows.push(...fill, sorted[i].row);
+          } else {
+            emitSpan();
+            spanStart = idx;
+            spanRows = [sorted[i].row];
+          }
+        } else {
+          emitSpan();
+          spanStart = idx;
+          spanRows = [sorted[i].row];
+        }
+        prev = idx;
+      }
+      emitSpan();
     }
+  }
+
+  /**
+   * Build a dataIndex → entity map for gap-filling merged write spans.
+   * Returns null when the entity cache or row index is unavailable, in which
+   * case flushEntityBatch falls back to contiguous grouping only.
+   */
+  private buildIndexToEntityMap(): Map<number, T> | null {
+    if (!this.cache || !this.idToRowIndex) return null;
+    const cached = this.batchCachedData ?? this.cache.get<T[]>(this.dataCacheKey);
+    if (!cached) return null;
+    const map = new Map<number, T>();
+    for (const entity of cached) {
+      const idx = this.idToRowIndex.get(entity.__id);
+      if (idx !== undefined) map.set(idx, entity);
+    }
+    return map;
   }
 
   /** Shallow-clone an entity to prevent external mutation of cached data. */
@@ -1112,10 +1427,27 @@ export class SheetRepository<T extends Entity> {
   }
 
   /**
+   * Re-persist a mutated entity array under `data:<table>`.
+   *
+   * In-place mutations (push/splice/replace) update a reference-stored
+   * MemoryCache transparently, but providers with a remote tier
+   * (e.g. {@link GasCacheProvider}) only observe explicit `set()` calls —
+   * without this re-set the remote copy would stay stale for the whole TTL
+   * and leak into subsequent executions.
+   *
+   * @param cached - The entity array that was just mutated in place.
+   */
+  private commitDataCache(cached: T[]): void {
+    this.cache?.set(this.dataCacheKey, cached, this.schema.cacheTtlMs);
+  }
+
+  /**
    * Update the entity cache in place after a save (create or update).
    *
    * In batch mode, reuses {@link batchCachedData} to avoid repeated
-   * `cache.get()` calls that would trigger verbose logging overhead.
+   * `cache.get()` calls that would trigger verbose logging overhead, and
+   * defers the remote write-through to a single commit at the end of
+   * {@link saveAll} (one `set()` for the whole batch, not one per entity).
    *
    * @param entity - The saved entity.
    * @param isNew  - Whether this was a create (append) or update (replace).
@@ -1125,8 +1457,9 @@ export class SheetRepository<T extends Entity> {
     // In batch mode, reuse pre-fetched array ref to avoid N × cache.get() Logger.log() calls in GAS.
     // batchCachedData is lazily initialised here on the first entity (after the cache entry is created
     // by the CREATE path in doSave for entity #1 when dataIndex === 0).
+    const inBatch = this.entityBatch !== null;
     let cached: T[] | null;
-    if (this.entityBatch !== null) {
+    if (inBatch) {
       if (!this.batchCachedData) {
         this.batchCachedData = this.cache.get<T[]>(this.dataCacheKey);
       }
@@ -1144,10 +1477,12 @@ export class SheetRepository<T extends Entity> {
       for (let i = 0; i < cached.length; i++) {
         if (cached[i]?.__id === entity.__id) {
           cached[i] = entity;
-          return;
+          break;
         }
       }
     }
+    // Batch mode defers the remote write-through to saveAll()'s single commit.
+    if (!inBatch) this.commitDataCache(cached);
   }
 
   /**
@@ -1165,7 +1500,14 @@ export class SheetRepository<T extends Entity> {
 
     for (let i = 0; i < cached.length; i++) {
       if (cached[i]?.__id === id) {
-        cached.splice(i, 1);
+        if (this.schema.tombstones) {
+          // Tombstone mode: keep the slot (the physical row still exists) —
+          // mark it in place so cache↔row alignment is preserved.
+          cached[i] = { __id: SheetRepository.TOMBSTONE_ID } as T;
+        } else {
+          cached.splice(i, 1);
+        }
+        this.commitDataCache(cached); // write-through for remote-tier providers
         return;
       }
     }
@@ -1181,5 +1523,244 @@ export class SheetRepository<T extends Entity> {
    */
   private isIndexedField(fieldName: string): boolean {
     return this.indexedFieldNames.has(fieldName);
+  }
+
+  /**
+   * True when a filter predicate can be answered by the combined index:
+   * `=`/`in` on an @Indexed field with no null/empty arm (those values are
+   * deliberately not indexed — `addToIndexes` skips them, so they would
+   * break recall).
+   */
+  private isIndexNarrowable(f: Filter): boolean {
+    if (!this.isIndexedField(f.field)) return false;
+    const nonEmpty = (v: unknown) => v !== null && v !== undefined && v !== "";
+    if (f.operator === "=") return nonEmpty(f.value);
+    if (f.operator === "in") {
+      return Array.isArray(f.value) && f.value.length > 0 && f.value.every(nonEmpty);
+    }
+    return false;
+  }
+
+  /**
+   * Serialise an entity into its sheet row — packed storage writes
+   * `[__id, json]`; the default layout writes one column per field.
+   * Same signature as `Serialization.entityToRow` so call sites stay
+   * layout-agnostic.
+   */
+  private entityToRow(
+    entity: T,
+    fields: FieldDefinition[],
+    headers: string[],
+    fieldMap: Map<string, FieldDefinition>,
+  ): unknown[] {
+    return this.schema.packed
+      ? Serialization.entityToPackedRow(entity, fields, fieldMap)
+      : Serialization.entityToRow(entity, fields, headers, fieldMap);
+  }
+
+  /** Deserialise a sheet row into an entity — packed-aware counterpart of {@link entityToRow}. */
+  private rowToEntity<T2 extends Entity>(
+    row: unknown[],
+    headers: string[],
+    fields: FieldDefinition[],
+    fieldMap: Map<string, FieldDefinition>,
+  ): T2 {
+    return this.schema.packed
+      ? Serialization.packedRowToEntity<T2>(row, fields, fieldMap)
+      : Serialization.rowToEntity<T2>(row, headers, fields, fieldMap);
+  }
+
+  /** Whether an `__id` cell value represents a live (queryable) entity. */
+  private isLiveId(id: unknown): boolean {
+    return (
+      id !== undefined &&
+      id !== null &&
+      id !== "" &&
+      id !== "undefined" &&
+      id !== "null" &&
+      id !== SheetRepository.TOMBSTONE_ID
+    );
+  }
+
+  /**
+   * Tombstone-delete the physical row at `rowIdx`: overwrite `__id` with the
+   * marker — no row-shift, no rewrite of surviving rows.  Uses a sparse cell
+   * write when the adapter supports it, otherwise a full-row overwrite with
+   * the marker spliced in.
+   */
+  private markTombstoneRow(sheet: ISheetAdapter, rowIdx: number): void {
+    if (sheet.updateRowSparse) {
+      sheet.updateRowSparse(rowIdx, [[this.idColIdx, SheetRepository.TOMBSTONE_ID]]);
+      return;
+    }
+    const row = sheet.getRow(rowIdx);
+    row[this.idColIdx] = SheetRepository.TOMBSTONE_ID;
+    sheet.updateRow(rowIdx, row);
+  }
+
+  /**
+   * Reclaim tombstoned rows once dead space crosses the threshold
+   * (≥4 tombstones AND ≥25% of physical rows).  One batched deleteDimension
+   * per pass; `idToRowIndex`, the entity cache and the row counter are all
+   * rebuilt afterwards.
+   */
+  private maybeCompactTombstones(): void {
+    if (!this.schema.tombstones || this.tombstoneRows === 0) return;
+    const phys = this.physicalRowCount;
+    if (phys === null) return;
+    // Compact when dead space crosses 25% (with a 4-row minimum to avoid
+    // churn on tiny tables), or when EVERY row is dead — a table of pure
+    // tombstones should always collapse to empty.
+    const dead = this.tombstoneRows;
+    if (!(dead === phys || (dead >= 4 && dead * 4 >= phys))) return;
+
+    const sheet = this.getSheet();
+    const data = sheet.getAllData();
+    const col = this.idColIdx;
+    const tombIdx: number[] = [];
+    for (let i = 0; i < data.length; i++) {
+      if (data[i][col] === SheetRepository.TOMBSTONE_ID) tombIdx.push(i);
+    }
+    if (tombIdx.length === 0) {
+      this.tombstoneRows = 0;
+      return;
+    }
+    sheet.deleteRows(tombIdx);
+
+    // Survivors shift left by the count of tombstones below them.
+    const sortedDel = tombIdx; // already ascending (scan order)
+    const rowIndex = new Map<string, number>();
+    if (this.idToRowIndex) {
+      for (const [id, oldIdx] of this.idToRowIndex) {
+        let lo = 0;
+        let hi = sortedDel.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (sortedDel[mid] < oldIdx) lo = mid + 1;
+          else hi = mid;
+        }
+        rowIndex.set(id, oldIdx - lo);
+      }
+      this.idToRowIndex = rowIndex;
+    }
+    this.physicalRowCount = data.length - tombIdx.length;
+    this.tombstoneRows = 0;
+
+    // Drop tombstone slots from the entity cache (kept aligned with rows).
+    if (this.cache) {
+      const cached = this.cache.get<T[]>(this.dataCacheKey);
+      if (cached) {
+        const delSet = new Set(tombIdx);
+        this.commitDataCache(cached.filter((_, i) => !delSet.has(i)));
+      }
+    }
+    this.persistRowIndex();
+    SheetOrmLogger.log(
+      `[Repo:${this.schema.tableName}] tombstone compaction — reclaimed ${tombIdx.length} rows`,
+    );
+  }
+
+  /**
+   * Persist the current id→rowIndex map under `dix:<table>` — the derived
+   * structure survives across executions through a persistent provider
+   * (GasCacheProvider).  Always paired with `physicalRowCount` so staleness
+   * is detectable via a cheap rowCount comparison.
+   */
+  private persistRowIndex(): void {
+    if (!this.cache || !this.idToRowIndex || this.physicalRowCount === null) return;
+    this.cache.set(
+      this.dixCacheKey,
+      { r: this.physicalRowCount, m: [...this.idToRowIndex] },
+      this.schema.cacheTtlMs,
+    );
+  }
+
+  /**
+   * Resolve a COMPLETE id→dataRowIndex map without a full-grid read, or
+   * return `null` to signal "fall back to loadAllEntities".
+   *
+   * Order of attempts:
+   *  1. In-session complete map (already verified this execution).
+   *  2. Persisted `dix:` entry — trusted only when its stored physical row
+   *     count still matches the sheet (catches structural drift; content
+   *     drift is caught per-row by readEntitiesByIds' id verification).
+   *  3. A single narrow ids-column read (`A2:A`) — tiny payload, rebuilds
+   *     the full map and re-persists it.
+   */
+  private resolveRowIndex(sheet: ISheetAdapter): Map<string, number> | null {
+    if (this.idToRowIndexComplete && this.idToRowIndex) return this.idToRowIndex;
+
+    if (this.cache) {
+      const dix = this.cache.get<{ r: number; m: Array<[string, number]> }>(this.dixCacheKey);
+      if (dix !== null) {
+        if (dix.r === sheet.getRowCount()) {
+          const map = new Map<string, number>(dix.m);
+          this.idToRowIndex = map;
+          this.physicalRowCount = dix.r;
+          this.idToRowIndexComplete = true;
+          return map;
+        }
+        // Stale row count — drop the derived entry.
+        this.cache.delete(this.dixCacheKey);
+      }
+    }
+
+    if (sheet.readIdsColumn) {
+      const ids = sheet.readIdsColumn(this.idColIdx);
+      if (ids) {
+        const map = new Map<string, number>();
+        let tombs = 0;
+        for (let i = 0; i < ids.length; i++) {
+          const v = ids[i];
+          if (v === SheetRepository.TOMBSTONE_ID) tombs++;
+          else if (this.isLiveId(v)) map.set(String(v), i);
+        }
+        this.idToRowIndex = map;
+        this.physicalRowCount = ids.length;
+        this.idToRowIndexComplete = true;
+        if (this.schema.tombstones) {
+          this.tombstoneRows = tombs;
+          this.maybeCompactTombstones();
+        }
+        this.persistRowIndex();
+        return map;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Fetch ONLY the rows for `candidateIds` — one `Values.batchGet` with N
+   * row ranges instead of a full-table read.  Rows are deserialised in
+   * sheet order (same ordering a full scan produces).
+   *
+   * Drift safety: every fetched row must carry an `__id` that is itself a
+   * candidate; any mismatch/empty row means the row map drifted → return
+   * `null` and let the caller fall back to the full-scan path.
+   */
+  private readEntitiesByIds(candidateIds: Set<string>): T[] | null {
+    const sheet = this.getSheet();
+    if (!sheet.readRowsAt) return null;
+    const map = this.resolveRowIndex(sheet);
+    if (!map) return null;
+
+    const hits: Array<{ idx: number }> = [];
+    for (const id of candidateIds) {
+      const idx = map.get(id);
+      if (idx !== undefined) hits.push({ idx });
+      // id absent from a verified map → stale index residue; skip.
+    }
+    hits.sort((a, b) => a.idx - b.idx); // preserve sheet-order semantics
+
+    const rows = sheet.readRowsAt(hits.map((h) => h.idx));
+    if (rows.length !== hits.length) return null;
+    const entities: T[] = [];
+    for (const row of rows) {
+      if (!row) return null;
+      const ent = this.rowToEntity<T>(row, this.headers, this.schema.fields, this.fieldMap);
+      if (!ent.__id || !candidateIds.has(ent.__id)) return null; // drift → rescan
+      entities.push(ent);
+    }
+    return entities;
   }
 }

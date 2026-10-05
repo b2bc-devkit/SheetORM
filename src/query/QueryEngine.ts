@@ -155,31 +155,88 @@ function compileFilter(f: Filter): (entity: Entity) => boolean {
 }
 
 /**
+ * Heuristic selectivity/cost rank for a filter — lower runs first.
+ * Predicates are pure, so reordering AND conditions is semantics-preserving:
+ * the result set is identical, only the short-circuit order changes.
+ *
+ * Ranking rationale (per-row cost × rejection probability):
+ *   `=` strict-equal  — cheapest, most selective      → 0
+ *   `in` membership   — Set O(1) / small-array scan   → 1
+ *   `<`/`>`/`<=`/`>=` — number compares               → 2
+ *   `!=`              — cheap but rarely selective    → 3
+ *   `startsWith`      — string prefix scan            → 4
+ *   `contains`/`search`— substring scan, most costly  → 5
+ * Nested-path accessors (dot/slash) add 0.5 — they walk objects.
+ */
+function selectivityRank(f: Filter): number {
+  let rank: number;
+  switch (f.operator) {
+    case "=":
+      rank = 0;
+      break;
+    case "in":
+      rank = 1;
+      break;
+    case "<":
+    case ">":
+    case "<=":
+    case ">=":
+      rank = 2;
+      break;
+    case "!=":
+      rank = 3;
+      break;
+    case "startsWith":
+      rank = 4;
+      break;
+    default:
+      rank = 5; // contains / search / unknown
+  }
+  if (f.field.indexOf(".") !== -1 || f.field.indexOf("/") !== -1) rank += 0.5;
+  return rank;
+}
+
+/** Stable sort of filters by selectivity rank (pure — semantics preserved). */
+function orderFilters(filters: Filter[]): Filter[] {
+  // Single filter or already-ordered input exits without allocation.
+  if (filters.length < 2) return filters;
+  const ranked = filters.map((f, i) => ({ f, i, r: selectivityRank(f) }));
+  ranked.sort((a, b) => a.r - b.r || a.i - b.i);
+  return ranked.map((x) => x.f);
+}
+
+/**
  * Filter entities by an array of filters using AND logic.
  *
- * All predicates are compiled once; the hot loop uses a labeled `continue outer`
- * to short-circuit on the first failing predicate per entity (minimal GC pressure).
+ * All predicates are compiled once (ordered by selectivity); the hot loop
+ * uses a labeled `continue outer` to short-circuit on the first failing
+ * predicate per entity (minimal GC pressure).  When `cap` is given, the
+ * scan stops after `cap` matches — equivalent to slicing the full result,
+ * because entities are visited in array order.
  *
  * @typeParam T - Entity type.
  * @param entities - Source array (not mutated).
  * @param filters  - Filters to apply (all must match — AND).
- * @returns New array of matching entities.
+ * @param cap      - Optional early-exit: stop after `cap` matches.
+ * @returns New array of matching entities (first `cap` in array order).
  */
-function filterEntities<T extends Entity>(entities: T[], filters: Filter[]): T[] {
+function filterEntities<T extends Entity>(entities: T[], filters: Filter[], cap?: number): T[] {
   if (!filters || filters.length === 0) return entities;
 
-  // Compile all filter predicates once
-  const predicates = new Array<(entity: Entity) => boolean>(filters.length);
-  for (let i = 0; i < filters.length; i++) {
-    predicates[i] = compileFilter(filters[i]);
+  // Compile predicates once, most-selective first
+  const ordered = orderFilters(filters);
+  const predicates = new Array<(entity: Entity) => boolean>(ordered.length);
+  for (let i = 0; i < ordered.length; i++) {
+    predicates[i] = compileFilter(ordered[i]);
   }
 
   const len = entities.length;
   const predLen = predicates.length;
   const result: T[] = [];
+  const stop = cap !== undefined && cap >= 0 ? cap : Infinity;
 
   // Labeled loop: `continue outer` skips to next entity on first failing predicate
-  outer: for (let i = 0; i < len; i++) {
+  outer: for (let i = 0; i < len && result.length < stop; i++) {
     const entity = entities[i];
     for (let j = 0; j < predLen; j++) {
       if (!predicates[j](entity)) continue outer;
@@ -201,16 +258,16 @@ function filterEntities<T extends Entity>(entities: T[], filters: Filter[]): T[]
  * @param groups   - Array of filter groups (outer=OR, inner=AND).
  * @returns New array of matching entities.
  */
-function filterEntitiesOr<T extends Entity>(entities: T[], groups: Filter[][]): T[] {
+function filterEntitiesOr<T extends Entity>(entities: T[], groups: Filter[][], cap?: number): T[] {
   if (!groups || groups.length === 0) return entities;
 
-  // Compile each group into an array of predicate closures
+  // Compile each group (AND ordered by selectivity) into predicate closures
   const compiledGroups: Array<Array<(entity: Entity) => boolean>> = new Array(groups.length);
   for (let g = 0; g < groups.length; g++) {
-    const group = groups[g];
-    const predicates = new Array<(entity: Entity) => boolean>(group.length);
-    for (let i = 0; i < group.length; i++) {
-      predicates[i] = compileFilter(group[i]);
+    const ordered = orderFilters(groups[g]);
+    const predicates = new Array<(entity: Entity) => boolean>(ordered.length);
+    for (let i = 0; i < ordered.length; i++) {
+      predicates[i] = compileFilter(ordered[i]);
     }
     compiledGroups[g] = predicates;
   }
@@ -218,8 +275,9 @@ function filterEntitiesOr<T extends Entity>(entities: T[], groups: Filter[][]): 
   const len = entities.length;
   const numGroups = compiledGroups.length;
   const result: T[] = [];
+  const stop = cap !== undefined && cap >= 0 ? cap : Infinity;
 
-  for (let i = 0; i < len; i++) {
+  for (let i = 0; i < len && result.length < stop; i++) {
     const entity = entities[i];
     let matched = false;
 
@@ -422,11 +480,25 @@ function executeQuery<T extends Entity>(entities: T[], options: QueryOptions): T
   );
   let result = entities;
 
+  // Early-exit: with NO sort the filtered stream preserves array order, so
+  // slicing after the first `offset + limit` matches is identical to
+  // filtering everything then slicing — the scan may stop early.
+  const sorted = (options.orderBy?.length ?? 0) > 0;
+  let cap: number | undefined;
+  if (!sorted && options.limit !== undefined) {
+    const lim = options.limit;
+    if (Number.isFinite(lim) && lim >= 0) {
+      const rawOff = options.offset ?? 0;
+      const off = Number.isFinite(rawOff) && rawOff >= 0 ? Math.floor(rawOff) : 0;
+      cap = off + Math.floor(lim);
+    }
+  }
+
   // Stage 1: Filter — whereGroups (OR of ANDs) takes precedence over where (AND)
   if (options.whereGroups && options.whereGroups.length > 0) {
-    result = filterEntitiesOr(result, options.whereGroups);
+    result = filterEntitiesOr(result, options.whereGroups, cap);
   } else if (options.where && options.where.length > 0) {
-    result = filterEntities(result, options.where);
+    result = filterEntities(result, options.where, cap);
   }
 
   // Stage 2: Sort — multi-field ordering

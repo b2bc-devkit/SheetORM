@@ -22,6 +22,7 @@
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
 import { Decorators } from "./core/Decorators.js";
+import { GasCacheProvider } from "./core/cache/GasCacheProvider.js";
 import { Record } from "./core/Record.js";
 import { Registry } from "./core/Registry.js";
 import { IndexStore } from "./index/IndexStore.js";
@@ -102,6 +103,12 @@ export class GasEntrypoints {
   static readonly IndexStore = IndexStore;
   /** Singleton entity-class registry. */
   static readonly Registry = Registry;
+  /**
+   * Persistent cache provider backed by GAS CacheService (sharded >90 KB).
+   * Opt-in: `Registry.getInstance().configure({ cache: new GasEntrypoints.GasCacheProvider() })`
+   * keeps entity/index reads warm across executions.
+   */
+  static readonly GasCacheProvider = GasCacheProvider;
   /** Verbose logger — set `SheetOrmLogger.verbose = true` for API-call traces. */
   static readonly SheetOrmLogger = SheetOrmLogger;
 

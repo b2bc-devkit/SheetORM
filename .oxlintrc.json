@@ -1,0 +1,102 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "jest"],
+  "categories": {
+    "correctness": "error"
+  },
+  "env": {
+    "builtin": true,
+    "node": true
+  },
+  "rules": {
+    "typescript/no-base-to-string": "off"
+  },
+  "globals": {
+    "AdSense": "readonly",
+    "AdminDirectory": "readonly",
+    "AdminGroupsMigration": "readonly",
+    "AdminGroupsSettings": "readonly",
+    "AdminLicenseManager": "readonly",
+    "AdminReports": "readonly",
+    "AdminReseller": "readonly",
+    "Analytics": "readonly",
+    "AnalyticsReporting": "readonly",
+    "AppsActivity": "readonly",
+    "BigQuery": "readonly",
+    "Browser": "readonly",
+    "CacheService": "readonly",
+    "Calendar": "readonly",
+    "CalendarApp": "readonly",
+    "CardService": "readonly",
+    "Charts": "readonly",
+    "Classroom": "readonly",
+    "ConferenceDataService": "readonly",
+    "ContactsApp": "readonly",
+    "ContentService": "readonly",
+    "DataStudioApp": "readonly",
+    "Docs": "readonly",
+    "DocumentApp": "readonly",
+    "DoubleClickCampaigns": "readonly",
+    "Drive": "readonly",
+    "DriveActivity": "readonly",
+    "DriveApp": "readonly",
+    "FormApp": "readonly",
+    "FusionTables": "readonly",
+    "Gmail": "readonly",
+    "GmailApp": "readonly",
+    "GoogleAppsScript": "readonly",
+    "GroupsApp": "readonly",
+    "HtmlService": "readonly",
+    "Jdbc": "readonly",
+    "LanguageApp": "readonly",
+    "LinearOptimizationService": "readonly",
+    "LockService": "readonly",
+    "Logger": "readonly",
+    "MailApp": "readonly",
+    "Maps": "readonly",
+    "MimeType": "readonly",
+    "Mirror": "readonly",
+    "People": "readonly",
+    "PropertiesService": "readonly",
+    "ScriptApp": "readonly",
+    "Session": "readonly",
+    "Sheets": "readonly",
+    "ShoppingContent": "readonly",
+    "SitesApp": "readonly",
+    "Slides": "readonly",
+    "SlidesApp": "readonly",
+    "SpreadsheetApp": "readonly",
+    "TagManager": "readonly",
+    "Tasks": "readonly",
+    "UrlFetchApp": "readonly",
+    "Utilities": "readonly",
+    "XmlService": "readonly",
+    "YouTube": "readonly",
+    "YouTubeAnalytics": "readonly",
+    "YouTubeContentId": "readonly",
+    "console": "readonly"
+  },
+  "ignorePatterns": [
+    "build/**",
+    "build-test/**",
+    "dist/**",
+    "coverage/**",
+    ".wireit/**",
+    ".playwright-mcp/**",
+    "Code.js",
+    "**/*.js",
+    "**/*.cjs"
+  ],
+  "overrides": [
+    {
+      "files": ["tests/**/*.ts"],
+      "env": {
+        "jest": true
+      },
+      "rules": {
+        "jest/require-to-throw-message": "off",
+        "jest/expect-expect": "off"
+      }
+    }
+  ]
+}

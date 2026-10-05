@@ -20,9 +20,33 @@ export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
   }
 
   insertSheet(name: string): ISheetAdapter {
+    // Mirror real GAS behaviour: duplicate sheet names throw.
+    if (this.sheets.has(name)) {
+      throw new Error(`Sheet with name "${name}" already exists`);
+    }
     const sheet = new MockSheetAdapter(name);
     this.sheets.set(name, sheet);
     return sheet;
+  }
+
+  insertSheets(names: string[]): ISheetAdapter[] | null {
+    // All-or-nothing mock of the batched API path: fail (return null) when any
+    // name already exists so callers exercise the per-name fallback too.
+    if (names.some((n) => this.sheets.has(n))) return null;
+    return names.map((n) => this.insertSheet(n));
+  }
+
+  insertSheetsWithData(
+    specs: Array<{ name: string; headers?: string[]; rows?: unknown[][] }>,
+  ): ISheetAdapter[] | null {
+    if (specs.some((s) => this.sheets.has(s.name))) return null;
+    return specs.map((spec) => {
+      const sheet = this.insertSheet(spec.name) as MockSheetAdapter;
+      if (spec.headers !== undefined || (spec.rows && spec.rows.length > 0)) {
+        sheet.writeAllRowsWithHeaders(spec.headers ?? [], spec.rows ?? []);
+      }
+      return sheet;
+    });
   }
 
   deleteSheet(name: string): void {
@@ -41,6 +65,19 @@ export class MockSpreadsheetAdapter implements ISpreadsheetAdapter {
     this.sheets.clear();
     this.protections.clear();
     this.hiddenSheets.clear();
+  }
+
+  prefetchSheets(names: string[]): void {
+    void names; // all data is in-memory — nothing to warm
+  }
+
+  getSpreadsheetId(): string | null {
+    return "mock-spreadsheet";
+  }
+
+  warmUpSheets(names: string[]): boolean {
+    void names;
+    return false; // serial fallback — the in-memory mock needs no warm-up
   }
 
   protectSheet(name: string, editors: string[]): void {

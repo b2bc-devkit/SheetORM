@@ -1,14 +1,13 @@
 /**
  * Jest configuration for SheetORM.
  *
- * Uses ts-jest to compile TypeScript on the fly with the test-specific
- * tsconfig (tsconfig.test.json) which emits CommonJS for Jest compatibility.
+ * Uses @swc/jest to transpile TypeScript on the fly — it does not depend on the
+ * TypeScript compiler API, so it works with TypeScript 7 (native, no JS API).
+ * Test type-checking is covered separately by `tsc -p tsconfig.test.json`.
  *
- * @type {import('ts-jest').JestConfigWithTsJest}
+ * @type {import('jest').Config}
  */
 module.exports = {
-  // ts-jest preset provides TypeScript transform and source-map support.
-  preset: "ts-jest",
   // Run tests in Node.js (no DOM needed).
   testEnvironment: "node",
   testEnvironmentOptions: {
@@ -19,11 +18,27 @@ module.exports = {
   // All test files live under tests/.
   roots: ["<rootDir>/tests"],
   transform: {
-    // Transform .ts and .tsx files via ts-jest using the test-specific config.
+    // Transform .ts and .tsx files via @swc/jest.
     "^.+\\.tsx?$": [
-      "ts-jest",
+      "@swc/jest",
       {
-        tsconfig: "tsconfig.test.json",
+        sourceMaps: "inline",
+        jsc: {
+          target: "es2022",
+          parser: {
+            syntax: "typescript",
+            tsx: false,
+            decorators: true,
+          },
+          transform: {
+            // Matches tsconfig "experimentalDecorators": true.
+            legacyDecorator: true,
+          },
+        },
+        module: {
+          // CommonJS is required by Jest's default module system.
+          type: "commonjs",
+        },
       },
     ],
   },

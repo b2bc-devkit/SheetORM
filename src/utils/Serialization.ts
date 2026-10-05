@@ -268,6 +268,71 @@ function rowToEntity<T extends Entity>(
 }
 
 /**
+ * Header for packed-storage tables: `__id | __data`.
+ * `__id` stays a plain column so id-scans, findById and tombstone markers
+ * keep working without parsing JSON.
+ */
+const PACKED_DATA_COL = "__data";
+
+function buildPackedHeaders(): string[] {
+  return [SystemColumns.ID, PACKED_DATA_COL];
+}
+
+/**
+ * Convert an entity to a packed two-cell row `[__id, json]`.
+ * Fields go through {@link serializeValue} first so type coercion is
+ * identical to the per-column layout — the JSON just packages the results.
+ */
+function entityToPackedRow(
+  entity: Entity,
+  fields: FieldDefinition[],
+  fieldMap?: Map<string, FieldDefinition>,
+): unknown[] {
+  const payload: Record<string, unknown> = {
+    c: entity.__createdAt ?? "",
+    u: entity.__updatedAt ?? "",
+  };
+  for (const f of fields) {
+    payload[f.name] = serializeValue(entity[f.name], f);
+  }
+  void fieldMap; // serialise-by-definition order; fieldMap unnecessary here
+  return [entity.__id ?? "", JSON.stringify(payload)];
+}
+
+/**
+ * Convert a packed row `[__id, json]` back into an entity.  Malformed JSON
+ * yields an id-only entity (defensive — a corrupt cell shouldn't crash a
+ * full-table load).
+ */
+function packedRowToEntity<T extends Entity>(
+  row: unknown[],
+  fields: FieldDefinition[],
+  fieldMap?: Map<string, FieldDefinition>,
+): T {
+  const entity: Record<string, unknown> = { __id: String(row[0] ?? "") };
+  const raw = row.length > 1 ? row[1] : "";
+  let payload: Record<string, unknown> | null = null;
+  if (typeof raw === "string" && raw.length > 0) {
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      payload = null;
+    }
+  } else if (raw !== null && typeof raw === "object") {
+    payload = raw as Record<string, unknown>;
+  }
+  if (payload) {
+    entity.__createdAt = payload.c !== "" && payload.c !== undefined ? payload.c : undefined;
+    entity.__updatedAt = payload.u !== "" && payload.u !== undefined ? payload.u : undefined;
+    for (const f of fields) {
+      entity[f.name] = deserializeValue(payload[f.name] ?? "", f);
+    }
+  }
+  void fieldMap;
+  return entity as T;
+}
+
+/**
  * Public serialization utility class.
  *
  * Wraps five static methods that handle the Entity ←→ row conversion:
@@ -285,9 +350,18 @@ export class Serialization {
   /** Build the full header row (system + user columns). */
   static buildHeaders = buildHeaders;
 
+  /** Build the packed-storage header row (`__id | __data`). */
+  static buildPackedHeaders = buildPackedHeaders;
+
   /** Convert an entity to a sheet row array. */
   static entityToRow = entityToRow;
 
   /** Convert a sheet row array to an entity object. */
   static rowToEntity = rowToEntity;
+
+  /** Convert an entity to a packed `[__id, json]` row. */
+  static entityToPackedRow = entityToPackedRow;
+
+  /** Convert a packed `[__id, json]` row to an entity object. */
+  static packedRowToEntity = packedRowToEntity;
 }

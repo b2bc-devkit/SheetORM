@@ -28,4 +28,13 @@ export interface RecordStatic {
 
   /** Whether the auto-created sheet should be hidden from the tab bar. */
   isHidden(): boolean;
+
+  /** Cache TTL (ms) for this entity's cached data and index rows. */
+  cacheTtlMs(): number;
+
+  /** Opt-in: tombstone-marker deletes instead of structural row removal. */
+  tombstoneDeletes(): boolean;
+
+  /** Opt-in: single packed-JSON column instead of per-field columns. */
+  packedStorage(): boolean;
 }

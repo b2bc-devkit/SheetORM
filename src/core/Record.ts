@@ -26,6 +26,7 @@ import type { FilterOperator } from "./types/FilterOperator.js";
 import type { QueryOptions } from "./types/QueryOptions.js";
 import type { PaginatedResult } from "./types/PaginatedResult.js";
 import type { GroupResult } from "./types/GroupResult.js";
+import { DEFAULT_CACHE_TTL_MS } from "./types/ICacheProvider.js";
 import { Registry } from "./Registry.js";
 import type { RecordStatic } from "./RecordStatic.js";
 import { Query } from "../query/Query.js";
@@ -129,6 +130,40 @@ export class Record implements Entity {
    * Hidden sheets are still accessible from the "All sheets" menu.
    */
   static isHidden(): boolean {
+    return false;
+  }
+
+  /**
+   * Cache TTL (in milliseconds) for this entity's cached data —
+   * entity rows under `data:<tableName>` and combined index rows under
+   * `cidx:<indexTableName>`.  Defaults to {@link DEFAULT_CACHE_TTL_MS}.
+   * Override in a subclass to cache longer (stable data) or shorter
+   * (frequently mutated data); return 0 to effectively skip reads from cache.
+   */
+  static cacheTtlMs(): number {
+    return DEFAULT_CACHE_TTL_MS;
+  }
+
+  /**
+   * Whether deletes should write a tombstone marker instead of structurally
+   * removing the row.  Opt-in: tombstoned rows stay physically present
+   * (their `__id` becomes `#TOMB#`) until a compaction pass reclaims them —
+   * reads transparently skip them, and `delete()` costs one cell write
+   * with zero row-shifting.  Periodic compaction (batched deleteDimension)
+   * triggers once tombstones reach ~25% of physical rows.
+   */
+  static tombstoneDeletes(): boolean {
+    return false;
+  }
+
+  /**
+   * Whether the table stores each entity as a packed JSON payload instead of
+   * one column per field.  Opt-in: sheet layout becomes `__id | __data`,
+   * shrinking write payloads drastically (2 cells per row regardless of
+   * field count).  Field-level type coercion is preserved — values are
+   * serialised per-field before packing and deserialised on read.
+   */
+  static packedStorage(): boolean {
     return false;
   }
 

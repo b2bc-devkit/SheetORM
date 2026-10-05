@@ -1,4 +1,10 @@
 /**
+ * Default cache TTL applied when a Record subclass does not override
+ * `cacheTtlMs()` and when a `set()` call omits an explicit TTL.
+ */
+export const DEFAULT_CACHE_TTL_MS = 60_000;
+
+/**
  * Generic cache provider interface used throughout SheetORM.
  *
  * The built-in implementation is MemoryCache (in-memory Map with TTL).

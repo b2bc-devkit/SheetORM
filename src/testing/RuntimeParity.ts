@@ -46,6 +46,7 @@ import { Serialization } from "../utils/Serialization.js";
 import { Uuid } from "../utils/Uuid.js";
 import { ParityCatalog } from "./ParityCatalog.js";
 import { SheetOrmLogger } from "../utils/SheetOrmLogger.js";
+import { flushPendingWrites } from "../storage/SheetsRpc.js";
 
 /** Destructure decorator functions for concise usage in test model definitions. */
 const { Indexed, Required, Field, resetDecoratorCaches } = Decorators;
@@ -123,31 +124,16 @@ class RuntimeParityState {
   clearAllSheets(log?: (msg: string) => void): void {
     const emit = log ?? (() => {});
     const spreadsheet = this.getSpreadsheet();
-    const originalSheets = spreadsheet.getSheets();
-    emit(`[SheetORM] Sheets found before cleanup: ${originalSheets.length}`);
 
-    if (originalSheets.length === 0) {
-      const keeper = spreadsheet.insertSheet("Sheet1");
-      keeper.clear();
-      emit('[SheetORM] No sheets existed. Created and prepared keeper: "Sheet1"');
-      return;
-    }
-
-    // Reuse first existing sheet as keeper to avoid temporarily increasing cell count
-    // (insertSheet can fail when spreadsheet is close to 10M-cell limit).
-    const keeper = originalSheets[0];
-    emit(`[SheetORM] Keeper sheet: "${keeper.getName()}"`);
-
-    let remainingToDelete = originalSheets.length - 1;
-    for (let i = 1; i < originalSheets.length; i += 1) {
-      const sheetToDelete = originalSheets[i];
-      emit(`[SheetORM] Deleting sheet: "${sheetToDelete.getName()}" | remaining: ${remainingToDelete}`);
-      spreadsheet.deleteSheet(sheetToDelete);
-      remainingToDelete -= 1;
-      emit(`[SheetORM] Deleted. Remaining: ${remainingToDelete}`);
-    }
+    // Fast path: the Sheets API advanced service collapses the whole cleanup
+    // (list + delete every tab + clear/rename the keeper) into ~2 RPCs.
+    // removeAllSheets() falls back to SpreadsheetApp calls internally when the
+    // service is not bound.
+    new GoogleSpreadsheetAdapter(spreadsheet).removeAllSheets();
+    emit("[SheetORM] removeAllSheets done");
 
     // Keep one clean, minimal sheet so subsequent test sheets fit under cell limits.
+    const keeper = spreadsheet.getSheets()[0];
     keeper.clear();
 
     const maxRows = keeper.getMaxRows();
@@ -5045,6 +5031,9 @@ function runTestsForSuites(suites: typeof ParityCatalog.SUITES): string {
       try {
         const handler = getRuntimeCaseHandler(id);
         handler({ state });
+        // Commit any deferred values writes — a flush failure must be
+        // attributed to the test that produced the writes.
+        flushPendingWrites();
         const durationMs = Date.now() - startedAt;
         results.push({ id, ok: true, durationMs });
         log(`  PASS [${num}/${total}] ${testName} (${durationMs} ms)`);

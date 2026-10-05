@@ -79,6 +79,44 @@ export class IndexStore {
   private indexSheetCache: Map<string, ISheetAdapter> = new Map();
   /** Tracks known row count per index table — avoids full getAllData() reads to determine append position. */
   private indexRowCount: Map<string, number> = new Map();
+  /**
+   * Re-persist a mutated combined-index array under `cidx:<table>`.
+   * In-place mutations (push/splice/row replace) update a reference-stored
+   * MemoryCache transparently, but remote-tier providers (e.g.
+   * {@link GasCacheProvider}) only observe explicit `set()` calls — without
+   * this the remote copy stays stale for the whole TTL and leaks into the
+   * next execution.
+   */
+  private commitCombined(indexTableName: string, data: unknown[][]): void {
+    this.touchCombined(indexTableName); // content changed — derived hash stale
+    this.cache?.set(`cidx:${indexTableName}`, data, this.ttlFor(indexTableName));
+    // The persisted hash is now stale too — drop it; it rebuilds lazily.
+    this.cache?.delete(`chash:${indexTableName}`);
+  }
+
+  /** Per-index-table cache TTL (ms) — from the owning class's cacheTtlMs(). */
+  private indexTtl: Map<string, number> = new Map();
+
+  /**
+   * Derived `field\x00value → Set<entityId>` hash index per index table —
+   * turns {@link lookupCombined} from an O(rows) scan into an O(1) map hit.
+   * Rebuilt lazily: staleness is detected via (array identity, length,
+   * touch-version) so pushes/replacements invalidate automatically and only
+   * same-length in-place edits need an explicit {@link touchCombined}.
+   */
+  private combinedHash = new Map<
+    string,
+    {
+      ref: unknown[][] | null;
+      len: number;
+      touch: number;
+      idx: Map<string, Set<string>>;
+      /** True when hydrated from `chash:` without loading cidx rows. */
+      persisted?: boolean;
+    }
+  >();
+  private combinedTouchVer = new Map<string, number>();
+
   /** Character-level n-gram length used for search indexing (trigram = 3). */
   private static readonly NGRAM_SIZE = 3;
 
@@ -133,6 +171,20 @@ export class IndexStore {
     });
   }
 
+  /**
+   * Set the cache TTL (ms) for a combined index table's cached row data —
+   * derived from the owning Record subclass's `cacheTtlMs()`.
+   * Called by {@link Registry.ensureTable} during schema initialisation.
+   */
+  setIndexCacheTtl(indexTableName: string, ttlMs: number): void {
+    this.indexTtl.set(indexTableName, ttlMs);
+  }
+
+  /** TTL for `cidx:` entries of a table — undefined uses provider default. */
+  private ttlFor(indexTableName: string): number | undefined {
+    return this.indexTtl.get(indexTableName);
+  }
+
   // ─── Batch index write buffering ────────────────────────────────────────────
   // When batch mode is active (`indexBatch !== null`), all index writes are
   // accumulated in an in-memory Map instead of hitting the sheet immediately.
@@ -178,6 +230,7 @@ export class IndexStore {
         sheet.writeRowsAt(data.length, rows);
         for (const row of rows) data.push(row);
         this.indexRowCount.set(indexTableName, data.length);
+        this.commitCombined(indexTableName, data);
         this.invalidateSearchCacheForTable(indexTableName);
       } else {
         // No-cache path: use known row count to avoid getAllData()
@@ -241,23 +294,42 @@ export class IndexStore {
    *                          signal the sheet definitely does not exist.
    */
   createCombinedIndex(indexTableName: string, preloadedSheet?: ISheetAdapter | null): void {
-    // undefined = not provided (fall back to getSheetByName)
-    // null      = caller confirmed the sheet does not exist (skip getSheetByName, go straight to insertSheet)
+    // undefined = probe via getSheetByName (0 RPC when the Sheets-API meta
+    //             cache is warm) then insert only when absent.
+    // null      = caller confirmed the sheet does not exist (go straight to insertSheet)
     // ISheetAdapter = use this sheet directly
-    const existing =
-      preloadedSheet !== undefined ? preloadedSheet : this.adapter.getSheetByName(indexTableName);
-    if (!existing) {
-      // Create new index sheet — no header row needed (column positions are hard-coded)
-      const sheet = this.adapter.insertSheet(indexTableName);
+    let created: ISheetAdapter | null = null;
+    let existing: ISheetAdapter | null;
+    if (preloadedSheet !== undefined) {
+      existing = preloadedSheet;
+    } else {
+      existing = this.adapter.getSheetByName(indexTableName);
+      if (existing === null) {
+        try {
+          created = this.adapter.insertSheet(indexTableName);
+        } catch {
+          // Race/stale-meta duplicate — re-resolve to the existing sheet.
+          existing = this.adapter.getSheetByName(indexTableName);
+        }
+      }
+    }
+    if (created !== null || existing === null) {
+      // Create new index sheet — no header row needed (column positions are hard-coded).
+      // If the earlier insert threw for a non-duplicate reason this second call
+      // rethrows the real error; if the sheet appeared in the meantime it throws
+      // a duplicate-name error, which is also correct behaviour.
+      const sheet = created ?? this.adapter.insertSheet(indexTableName);
       this.indexSheetCache.set(indexTableName, sheet);
       this.indexRowCount.set(indexTableName, 0); // Brand new sheet has 0 data rows
       SheetOrmLogger.log(
         `[Index] createCombinedIndex "${indexTableName}" → insertSheet (J1 no-header) rowCount=0`,
       );
     } else {
-      // Sheet already exists — seed row count with one getLastRow() call
+      // Sheet already exists — one getAllData() call seeds the row count AND
+      // warms the adapter's grid cache, so the first getCombinedData() that
+      // follows is a zero-RPC cache hit.
       this.indexSheetCache.set(indexTableName, existing);
-      const rowCount = existing.getRowCount();
+      const rowCount = existing.getAllData().length;
       this.indexRowCount.set(indexTableName, rowCount);
       SheetOrmLogger.log(
         `[Index] createCombinedIndex "${indexTableName}" → existing (C1) rowCount=${rowCount}`,
@@ -315,6 +387,7 @@ export class IndexStore {
       sheet.writeRowsAt(data.length, [newRow]);
       data.push(newRow);
       this.indexRowCount.set(indexTableName, data.length);
+      this.commitCombined(indexTableName, data);
       this.searchIndexCache.delete(`${this.registryKey(indexTableName, field)}`);
     } else {
       // No-cache path: use known row count or fall back to appendRow
@@ -425,6 +498,7 @@ export class IndexStore {
           sheet.writeRowsAt(cachedData.length, rows);
           for (const row of rows) cachedData.push(row);
           this.indexRowCount.set(indexTableName, cachedData.length);
+          this.commitCombined(indexTableName, cachedData);
         } else {
           const knownCount = this.indexRowCount.get(indexTableName);
           if (knownCount !== undefined) {
@@ -437,6 +511,7 @@ export class IndexStore {
             sheet.writeRowsAt(cacheData.length, rows);
             for (const row of rows) cacheData.push(row);
             this.indexRowCount.set(indexTableName, cacheData.length);
+            this.commitCombined(indexTableName, cacheData);
           }
         }
         this.searchIndexCache.clear(); // Invalidate n-gram search caches
@@ -480,7 +555,9 @@ export class IndexStore {
     sheet.replaceAllData(remaining);
     this.indexRowCount.set(indexTableName, remaining.length);
     if (this.cache) {
-      this.cache.set(`cidx:${indexTableName}`, remaining);
+      this.cache.set(`cidx:${indexTableName}`, remaining, this.ttlFor(indexTableName));
+      this.touchCombined(indexTableName);
+      this.cache.delete(`chash:${indexTableName}`);
       this.searchIndexCache.clear();
     } else {
       this.clearCache();
@@ -513,7 +590,9 @@ export class IndexStore {
     sheet.replaceAllData(remaining);
     this.indexRowCount.set(indexTableName, remaining.length);
     if (this.cache) {
-      this.cache.set(`cidx:${indexTableName}`, remaining);
+      this.cache.set(`cidx:${indexTableName}`, remaining, this.ttlFor(indexTableName));
+      this.touchCombined(indexTableName);
+      this.cache.delete(`chash:${indexTableName}`);
       this.searchIndexCache.clear();
     } else {
       this.clearCache();
@@ -602,7 +681,11 @@ export class IndexStore {
         if (oldStr !== null) fieldOldMapOpt.set(field, oldStr);
         if (newStr !== null) fieldNewMapOpt.set(field, newStr);
       }
-      // Single pass over data: find rows matching (field, oldValue, entityId) and overwrite
+      // Single pass over data: collect rows matching (field, oldValue, entityId),
+      // then overwrite them in ONE batched updateRows() call.  An entity's index
+      // rows are contiguous on the sheet, so the adapter's contiguous-group
+      // batching turns this into a single setValues() RPC instead of one per row.
+      const updates: Array<{ rowIndex: number; values: unknown[] }> = [];
       for (let i = 0; i < data.length; i++) {
         const fc = String(data[i][0]);
         const oldStr = fieldOldMapOpt.get(fc);
@@ -611,9 +694,13 @@ export class IndexStore {
         const newStr = fieldNewMapOpt.get(fc);
         if (newStr !== undefined) {
           const newRow: unknown[] = [fc, newStr, entityId];
-          sheet.writeRowsAt(i, [newRow]); // Overwrite in-place
+          updates.push({ rowIndex: i, values: newRow });
           data[i] = newRow; // Keep cache consistent
         }
+      }
+      if (updates.length > 0) {
+        sheet.updateRows(updates);
+        this.touchCombined(indexTableName); // same-length in-place edit
       }
       // Handle pure insertions: field was empty/null → now has a value (no existing row to overwrite)
       const insertRows: unknown[][] = changes
@@ -625,13 +712,16 @@ export class IndexStore {
           for (const r of insertRows) data.push(r);
           this.indexRowCount.set(indexTableName, data.length);
         } else {
-          for (const r of insertRows) sheet.appendRow(r as unknown[]);
+          sheet.appendRows(insertRows as unknown[][]);
           const prev = this.indexRowCount.get(indexTableName);
           if (prev !== undefined) this.indexRowCount.set(indexTableName, prev + insertRows.length);
         }
       }
       if (!this.cache) this.clearCache();
-      else this.searchIndexCache.clear();
+      else {
+        this.commitCombined(indexTableName, data); // write-through remote tier
+        this.searchIndexCache.clear();
+      }
       return;
     }
 
@@ -676,9 +766,10 @@ export class IndexStore {
         sheet.writeRowsAt(data.length, newRows);
         for (const row of newRows) data.push(row);
         this.indexRowCount.set(indexTableName, data.length);
+        this.commitCombined(indexTableName, data);
         this.searchIndexCache.clear();
       } else {
-        for (const row of newRows) sheet.appendRow(row as unknown[]);
+        sheet.appendRows(newRows as unknown[][]);
         const prev = this.indexRowCount.get(indexTableName);
         if (prev !== undefined) this.indexRowCount.set(indexTableName, prev + newRows.length);
         this.clearCache();
@@ -686,6 +777,9 @@ export class IndexStore {
     } else if (!this.cache) {
       this.clearCache();
     } else {
+      // Deletion-only path mutated the cached array — write it back so a
+      // remote-tier provider (GasCacheProvider) does not serve stale rows.
+      this.commitCombined(indexTableName, data);
       this.searchIndexCache.clear();
     }
   }
@@ -702,20 +796,108 @@ export class IndexStore {
    * @returns Array of matching entity UUIDs (deduplicated).
    */
   lookupCombined(indexTableName: string, field: string, value: unknown): string[] {
-    const data = this.getCombinedData(indexTableName);
-    const valueStr = String(value);
-    const seen = new Set<string>();
-    const ids: string[] = [];
-    for (let i = 0; i < data.length; i++) {
-      if (String(data[i][0]) === field && String(data[i][1]) === valueStr) {
-        const id = String(data[i][2]);
-        if (!seen.has(id)) {
-          seen.add(id);
-          ids.push(id);
+    const touch = this.combinedTouchVer.get(indexTableName) ?? 0;
+    const entry = this.combinedHash.get(indexTableName);
+    const key = `${field}\x00${String(value)}`;
+
+    // In-memory hash still valid → O(1) hit.  A persisted (chash-hydrated)
+    // entry trusts touch-version alone; a data-built entry must also match
+    // the array it was derived from, but we don't have `data` here without
+    // a read — so only the persisted path short-circuits.
+    if (entry && entry.persisted && entry.touch === touch) {
+      const set = entry.idx.get(key);
+      return set ? [...set] : [];
+    }
+
+    // Cold start: try the persisted hash FIRST — it skips deserialising the
+    // full `cidx:` row payload entirely (and avoids any sheet read when the
+    // remote tier is warm).  Co-invalidation: every mutation path either
+    // bumps `touch` (commitCombined) or deletes `chash:` outright.
+    const persisted = this.cache?.get<{ n: number; e: Array<[string, string, string[]]> }>(
+      `chash:${indexTableName}`,
+    );
+    if (persisted && Array.isArray(persisted.e)) {
+      const idx = new Map<string, Set<string>>();
+      for (const [f, v, ids] of persisted.e) {
+        let s = idx.get(`${f}\x00${v}`);
+        if (!s) {
+          s = new Set<string>();
+          idx.set(`${f}\x00${v}`, s);
         }
+        for (const id of ids) s.add(id);
+      }
+      this.combinedHash.set(indexTableName, {
+        ref: null,
+        len: persisted.n,
+        touch,
+        idx,
+        persisted: true,
+      });
+      const set = idx.get(key);
+      return set ? [...set] : [];
+    }
+
+    // Fallback: build from the combined rows (and re-persist the hash).
+    const data = this.getCombinedData(indexTableName);
+    const set = this.combinedHashFor(indexTableName, data).get(key);
+    return set ? [...set] : [];
+  }
+
+  /**
+   * Version-bump for same-length in-place edits of combined data — the
+   * hash index keys on (ref, length, touch), so pushes/replacements are
+   * detected automatically but `data[i] = x` needs an explicit signal.
+   */
+  private touchCombined(indexTableName: string): void {
+    this.combinedTouchVer.set(indexTableName, (this.combinedTouchVer.get(indexTableName) ?? 0) + 1);
+  }
+
+  /**
+   * Lazily-built `field\x00value → Set<id>` hash over the combined rows.
+   * Rebuilt only when the underlying array was replaced, grown, or touched;
+   * insertion order in each Set preserves the original row order.
+   */
+  private combinedHashFor(indexTableName: string, data: unknown[][]): Map<string, Set<string>> {
+    const touch = this.combinedTouchVer.get(indexTableName) ?? 0;
+    const entry = this.combinedHash.get(indexTableName);
+    if (entry && entry.touch === touch) {
+      if (entry.persisted) {
+        // Persisted entry stays valid while the row count it was built from
+        // still matches the live data; a mismatch means chash lagged a write
+        // (shouldn't happen — commits delete chash — but stay correct).
+        if (entry.len === data.length) return entry.idx;
+      } else if (entry.ref === data && entry.len === data.length) {
+        return entry.idx;
       }
     }
-    return ids;
+    const idx = new Map<string, Set<string>>();
+    for (const row of data) {
+      const k = `${String(row[0])}\x00${String(row[1])}`;
+      let s = idx.get(k);
+      if (!s) {
+        s = new Set<string>();
+        idx.set(k, s);
+      }
+      s.add(String(row[2]));
+    }
+    this.combinedHash.set(indexTableName, { ref: data, len: data.length, touch, idx });
+    this.persistCombinedHash(indexTableName, data.length, idx);
+    return idx;
+  }
+
+  /**
+   * Persist the derived hash under `chash:<table>` — compact form
+   * `{n, e:[[field, value, [ids]]]}` so a cold execution can answer
+   * {@link lookupCombined} without deserialising the `cidx:` row payload.
+   */
+  private persistCombinedHash(indexTableName: string, rowCount: number, idx: Map<string, Set<string>>): void {
+    if (!this.cache) return;
+    const e: Array<[string, string, string[]]> = [];
+    for (const [k, ids] of idx) {
+      const sep = k.indexOf("\x00");
+      e.push([k.slice(0, sep), k.slice(sep + 1), [...ids]]);
+    }
+    this.cache.set(`chash:${indexTableName}`, { n: rowCount, e }, this.ttlFor(indexTableName));
   }
 
   /**
@@ -1078,7 +1260,7 @@ export class IndexStore {
       // skip the getAllData() API call that would wastefully read 0 rows from GAS.
       if (this.indexRowCount.get(indexTableName) === 0) {
         const empty: unknown[][] = [];
-        this.cache.set(cacheKey, empty);
+        this.cache.set(cacheKey, empty, this.ttlFor(indexTableName));
         SheetOrmLogger.log(`[Index:${indexTableName}] getCombinedData cache SEED (empty, skip getAllData)`);
         return empty;
       }
@@ -1088,7 +1270,7 @@ export class IndexStore {
       SheetOrmLogger.log(
         `[Index:${indexTableName}] getCombinedData cache MISS — read ${data.length} rows from sheet`,
       );
-      this.cache.set(cacheKey, data);
+      this.cache.set(cacheKey, data, this.ttlFor(indexTableName));
       this.indexRowCount.set(indexTableName, data.length); // Keep row count in sync
       return data;
     }
@@ -1133,6 +1315,7 @@ export class IndexStore {
    */
   private clearCache(): void {
     this.searchIndexCache.clear(); // Drop all in-memory search indexes
+    this.combinedHash.clear(); // Derived hash maps go too
     if (!this.cache) return;
     // Only invalidate index-specific keys rather than clearing entire cache
     const cleared = new Set<string>();
@@ -1141,6 +1324,7 @@ export class IndexStore {
       if (!cleared.has(tableName)) {
         cleared.add(tableName);
         this.cache.delete(`cidx:${tableName}`); // Remove cached raw row data
+        this.cache.delete(`chash:${tableName}`); // Remove persisted hash
       }
     }
   }
