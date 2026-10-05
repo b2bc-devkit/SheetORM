@@ -1,0 +1,8 @@
+# braces@3.0.3 — CVE-2026-93687 (HIGH): DoS via deeply nested glob patterns.
+# No fixed upstream release exists yet (3.0.3 is the latest; 3.0.2 had its own
+# CVE-2024-4068, so downgrading is not an option).
+# Dev-only transitive dep via @google/clasp→micromatch and wireit→chokidar —
+# never ships in the published package ("files": dist/npm only) nor in the GAS
+# bundle. Practical risk: an attacker would need to control glob patterns run
+# by clasp/wireit on a developer machine. Accepted until upstream ships a fix.
+CVE-2026-93687
