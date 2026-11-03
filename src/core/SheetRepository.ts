@@ -197,7 +197,13 @@ export class SheetRepository<T extends Entity> {
       } as T;
     }
 
-    return this.doSave(partial);
+    try {
+      return this.doSave(partial);
+    } finally {
+      // Commit deferred Values writes queued by apiWriteBatch — an execution
+      // that ends with writes still pending silently loses them.
+      this.getSheet().flush();
+    }
   }
 
   /**
@@ -498,6 +504,8 @@ export class SheetRepository<T extends Entity> {
       this.physicalRowCount = null;
       this.idToRowIndexComplete = false;
       throw err;
+    } finally {
+      sheet.flush();
     }
   }
 
@@ -654,7 +662,11 @@ export class SheetRepository<T extends Entity> {
       return true;
     }
 
-    return this.doDelete(id);
+    try {
+      return this.doDelete(id);
+    } finally {
+      this.getSheet().flush();
+    }
   }
 
   /**
@@ -767,6 +779,20 @@ export class SheetRepository<T extends Entity> {
       return entities.length;
     }
 
+    try {
+      return this.doDeleteAll(options);
+    } finally {
+      this.getSheet().flush();
+    }
+  }
+
+  /**
+   * Internal deleteAll implementation — single/ bulk delete strategies.
+   *
+   * @param options - Optional query options to select entities to delete.
+   * @returns Number of entities deleted.
+   */
+  private doDeleteAll(options?: QueryOptions): number {
     const all = this.loadAllEntities();
     const toDelete = options ? QueryEngine.executeQuery(all, options) : [...all];
     if (toDelete.length === 0) return 0;
@@ -1036,6 +1062,8 @@ export class SheetRepository<T extends Entity> {
       this.physicalRowCount = null;
       this.idToRowIndexComplete = false;
       throw err;
+    } finally {
+      this.getSheet().flush();
     }
   }
 
